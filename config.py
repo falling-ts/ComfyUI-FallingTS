@@ -10,10 +10,10 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # 插件根目录 (.env 文件所在位置)
-PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+PLUGIN_ROOT = Path(__file__).resolve().parent
 
 # 环境变量键名
-ENV_API_KEY = "VOLC_ENGINE_API_KEY"
+ENV_API_KEY = "SEEDANCE_API_KEY"
 ENV_MODEL_ID = "SEEDANCE_MODEL_ID"  # 可选: 覆盖默认模型
 ENV_MODEL_NAME = "SEEDANCE_MODEL_NAME"  # 可选: 覆盖默认模型显示名
 

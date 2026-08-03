@@ -2,27 +2,32 @@
 # 自定义视频生成节点插件 - 通过 Volcengine API 接入 Seedance 2.0
 #
 # 加载方式:
-#   1. 自动: 符号链接到 Default/ComfyUI/custom_nodes/comfy-desktop-plugins/
-#   2. 自动: 复制到 Default/ComfyUI/custom_nodes/comfy_desktop_plugins/
-#   3. 手动: 在 main.py 中添加:
-#        import comfy_desktop_plugins.plugin
-#        comfy_desktop_plugins.plugin.inject()
+#   1. 目录链接到 custom_nodes/comfy_desktop_plugins/
+#   2. 在 main.py 中: import comfy_desktop_plugins.plugin; plugin.inject()
 
-from .plugin import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, inject, comfy_entrypoint
-from .nodes.seedance import (
-    Seedance2TextToVideoNode,
-    Seedance2ImageToVideoNode,
+import os
+import sys
+
+# 前端扩展目录:web/ 下的 JS 会被 ComfyUI 前端自动加载(通过 /extensions 接口)
+WEB_DIRECTORY = "./web"
+
+# 将插件目录加入 Python 路径, 确保绝对导入可工作
+_plugin_dir = os.path.dirname(os.path.abspath(__file__))
+if _plugin_dir not in sys.path:
+    sys.path.insert(0, _plugin_dir)
+
+from plugin import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, inject, comfy_entrypoint
+from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
 
 __all__ = [
+    "WEB_DIRECTORY",
     "NODE_CLASS_MAPPINGS",
     "NODE_DISPLAY_NAME_MAPPINGS",
     "inject",
     "comfy_entrypoint",
-    "Seedance2TextToVideoNode",
-    "Seedance2ImageToVideoNode",
     "Seedance2FirstLastFrameNode",
     "Seedance2ReferenceNode",
 ]

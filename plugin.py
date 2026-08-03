@@ -8,11 +8,9 @@ from __future__ import annotations
 import logging
 
 from comfy_api.latest import IO
-from comfy_api.latest._io import ComfyExtension
+from comfy_api.latest import ComfyExtension
 
-from .nodes.seedance import (
-    Seedance2TextToVideoNode,
-    Seedance2ImageToVideoNode,
+from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
@@ -22,17 +20,13 @@ logger = logging.getLogger(__name__)
 # ─── V1 节点注册表 (支持 custom_nodes/ 自动加载) ──────
 
 NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
-    "Seedance2TextToVideo": Seedance2TextToVideoNode,
-    "Seedance2ImageToVideo": Seedance2ImageToVideoNode,
     "Seedance2FirstLastFrame": Seedance2FirstLastFrameNode,
     "Seedance2Reference": Seedance2ReferenceNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
-    "Seedance2TextToVideo": "Seedance 2.0 Text to Video",
-    "Seedance2ImageToVideo": "Seedance 2.0 Image to Video",
-    "Seedance2FirstLastFrame": "Seedance 2.0 First-Last-Frame to Video",
-    "Seedance2Reference": "Seedance 2.0 Reference to Video",
+    "Seedance2FirstLastFrame": "Seedance 2.0 首尾帧生视频",
+    "Seedance2Reference": "Seedance 2.0 多模态参考生视频",
 }
 
 # ─── V3 ComfyExtension (支持 comfy_entrypoint 注册) ─────

@@ -5,10 +5,8 @@ from __future__ import annotations
 import base64
 import logging
 from io import BytesIO
-from typing import Any, Callable
 
 import torch
-from aiohttp import ClientError
 from PIL import Image
 
 from comfy_api.latest import IO, InputImpl
@@ -17,36 +15,29 @@ from comfy_api_nodes.util.client import (
     poll_op_raw,
     sync_op_raw,
 )
-from comfy_api_nodes.util.conversions import (
-    bytesio_to_image_tensor,
-    tensor_to_bytesio,
-)
 from comfy_api_nodes.util.download_helpers import download_url_to_video_output
-from comfy_api_nodes.util.upload_helpers import (
-    upload_images_to_comfyapi,
-    upload_video_to_comfyapi,
-)
+from comfy_api_nodes.util.upload_helpers import upload_video_to_comfyapi
 
-from .config import get_api_key
-from .models import (
-    TaskCreationRequest,
-    TaskCreationResponse,
-    TaskStatusResponse,
-    TaskTextContent,
-    TaskImageContent,
-    TaskImageContentUrl,
-    TaskVideoContent,
-    TaskVideoContentUrl,
-    TaskAudioContent,
-    TaskAudioContentUrl,
-    price_extractor_fn,
-)
+from config import get_api_key
+from .models import price_extractor_fn
 
 logger = logging.getLogger(__name__)
 
 # Volcengine Seedance 2.0 API 端点
 VOLC_API_BASE = "https://ark.cn-beijing.volces.com"
 TASK_ENDPOINT = f"{VOLC_API_BASE}/api/v3/contents/generations/tasks"
+
+
+def _slot_key(name: str) -> tuple[int, int]:
+    """从 slot 名提取排序键, 先按类型分组再按数字排序。
+
+    分组顺序: image→asset→video→audio, 每组内按数字升序。
+    """
+    parts = name.rsplit("_", 1)
+    num = int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else 0
+    prefix = parts[0] if len(parts) == 2 else name
+    order = {"image": 0, "asset": 1, "video": 2, "audio": 3}
+    return (order.get(prefix, 9), num)
 
 
 def _auth_headers(api_key: str) -> dict[str, str]:
@@ -70,28 +61,9 @@ def tensor_to_pil(image: torch.Tensor) -> Image.Image:
     return Image.fromarray(img_np)
 
 
-async def upload_images_as_base64(
-    cls: type[IO.ComfyNode],
-    images: dict[str, torch.Tensor],
-) -> dict[str, str]:
-    """将多张图像转为 base64 URL。"""
-    urls: dict[str, str] = {}
-    for key, img in images.items():
-        urls[key] = _image_to_base64(img)
-    return urls
-
-
-async def upload_images_to_urls(
-    cls: type[IO.ComfyNode],
-    images: dict[str, torch.Tensor],
-) -> dict[str, str]:
-    """将多张图像上传到 Comfy 托管服务, 返回 URL。"""
-    urls: dict[str, str] = {}
-    for key, img in images.items():
-        uploaded = await upload_images_to_comfyapi(cls, img, max_images=1, wait_label=f"Uploading image")
-        if uploaded:
-            urls[key] = uploaded[0]
-    return urls
+def upload_images_as_base64(images: dict[str, torch.Tensor]) -> dict[str, str]:
+    """将多张图像转为 base64 URL (纯同步操作, 无需 await)。"""
+    return {key: _image_to_base64(img) for key, img in images.items()}
 
 
 async def upload_videos_to_urls(
@@ -114,8 +86,7 @@ def _resolve_api_key(api_key: str) -> str:
     if env_key:
         return env_key
     raise ValueError(
-        "Volcengine API Key 未配置。请在节点中输入, "
-        "或在 .env 文件中设置 VOLC_ENGINE_API_KEY=your_key"
+        "Seedance API Key 未配置。请在项目 .env 文件中设置 SEEDANCE_API_KEY=your_key"
     )
 
 
@@ -143,7 +114,8 @@ async def create_seedance_task(
         content.append({"type": "text", "text": prompt})
 
     if image_base64s:
-        for key, b64_url in image_base64s.items():
+        for key in sorted(image_base64s, key=_slot_key):
+            b64_url = image_base64s[key]
             role = (image_roles or {}).get(key, "reference_image")
             content.append({
                 "type": "image_url",
@@ -152,7 +124,8 @@ async def create_seedance_task(
             })
 
     if video_urls:
-        for key, url in video_urls.items():
+        for key in sorted(video_urls, key=_slot_key):
+            url = video_urls[key]
             content.append({
                 "type": "video_url",
                 "video_url": {"url": url},
@@ -160,7 +133,8 @@ async def create_seedance_task(
             })
 
     if audio_urls:
-        for key, url in audio_urls.items():
+        for key in sorted(audio_urls, key=_slot_key):
+            url = audio_urls[key]
             content.append({
                 "type": "audio_url",
                 "audio_url": {"url": url},
@@ -232,9 +206,9 @@ async def poll_seedance_task(
         status_extractor=lambda r: r.get("status") if isinstance(r, dict) else None,
         progress_extractor=lambda r: None,
         price_extractor=price_fn,
-        completed_statuses=["succeeded", "succeed", "success", "completed"],
-        failed_statuses=["failed", "cancelled", "canceled", "error"],
-        queued_statuses=["created", "queued", "queueing", "submitted", "initializing", "wait", "in_queue"],
+        completed_statuses=["succeeded"],
+        failed_statuses=["failed", "expired", "cancelled", "canceled", "error"],
+        queued_statuses=["queued"],
         poll_interval=poll_interval,
         max_poll_attempts=480,
         timeout_per_poll=120,

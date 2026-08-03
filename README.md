@@ -55,12 +55,14 @@ copy D:\Comfy-Desktop\ComfyUI-Installs\comfy-desktop-plugins D:\Comfy-Desktop\Co
 ```
 comfy-desktop-plugins/
 ├── __init__.py          # 入口, 导出 NODE_CLASS_MAPPINGS
-├── plugin.py            # 插件注册逻辑 (支持 NODE_CLASS + comfy_entrypoint + inject())
-├── nodes/
-│   └── seedance.py      # 4 个视频生成节点 (V3 ComfyNode)
-└── api/
-    ├── models.py        # Pydantic 请求/响应模型 + 定价数据
-    └── client.py        # Volcengine API 客户端 (直连, 非代理)
+├── plugin.py            # 节点注册逻辑
+├── config.py            # .env 配置管理 (根级别, 到处可用)
+├── seedance/            # 📹 Seedance 视频生成节点
+│   ├── seedance.py      #   4 个节点定义
+│   ├── api.py           #   Volcengine HTTP 客户端
+│   └── models.py        #   请求/响应数据模型 + 定价
+├── mcp/                 # MCP 服务器文档
+└── .env.example         # 环境配置模板
 ```
 
 ## 依赖
