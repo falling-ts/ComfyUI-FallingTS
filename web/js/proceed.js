@@ -131,11 +131,16 @@ app.registerExtension({
     const originalQueuePrompt = app.queuePrompt?.bind(app);
     if (originalQueuePrompt) {
       app.queuePrompt = async function (number, batch, opts = {}) {
-        const first = firstContinueNode(app.graph);
-        if (first) {
-          const targets = collectOutputsBefore(first);
-          if (targets.length) {
-            opts = { ...opts, queueNodeIds: targets };
+        // 仅当调用方没有显式指定 queueNodeIds 时 (默认 Run / 自动队列),
+        // 才把本次执行限制到"第一个继续节点之前"的第一段;
+        // 「继续/重跑」按钮会显式传 queueNodeIds, 这里绝不能覆盖。
+        if (!opts?.queueNodeIds?.length) {
+          const first = firstContinueNode(app.graph);
+          if (first) {
+            const targets = collectOutputsBefore(first);
+            if (targets.length) {
+              opts = { ...opts, queueNodeIds: targets };
+            }
           }
         }
         return originalQueuePrompt(number, batch, opts);
