@@ -76,7 +76,7 @@ class FallingTSSelectorNode:
 class _FlexibleInputs(dict):
     """接受前端按 input_count 动态添加的任意输入。
 
-    latent_1..latent_N 视为任意类型 (ANY), enable_1..enable_N 视为 BOOLEAN;
+    any_1..any_N 视为任意类型 (ANY), enable_1..enable_N 视为 BOOLEAN;
     ComfyUI 校验/执行时通过 __contains__/__getitem__ 接受这些动态输入。
     """
 
@@ -90,9 +90,9 @@ class _FlexibleInputs(dict):
 
 
 class FallingTSLatentRouterNode:
-    """通用多路路由: 平级输入对 (enable_i, latent_i), 只有 enable=true 的那组数据输出。
+    """通用多路路由: 平级输入对 (enable_i, any_i), 只有 enable=true 的那组数据输出。
 
-    设计目的: 替代嵌套 Switch。latent_i 为任意类型 (参考 proceed 的 AnyType),
+    设计目的: 替代嵌套 Switch。any_i 为任意类型 (参考 proceed 的 AnyType),
     可以路由 Latent / 模型 / 条件 / 图像 / 字符串等任何数据, 输出类型同样是任意。
     加 items 只需增加输入对 (前端 input_count 控制), 不需要改动连接结构。
     约定: 全局有且仅有一组 enable=true; 若没有则抛错提示。
@@ -117,14 +117,14 @@ class FallingTSLatentRouterNode:
         }
 
     RETURN_TYPES = (ANY,)
-    RETURN_NAMES = ("data",)
+    RETURN_NAMES = ("any",)
     FUNCTION = "route"
     CATEGORY = "FallingTS/工具"
 
     def route(self, input_count: int, **kwargs):
         for i in range(1, int(input_count) + 1):
             enable = kwargs.get(f"enable_{i}")
-            data = kwargs.get(f"latent_{i}")
+            data = kwargs.get(f"any_{i}")
             if enable is True and data is not None:
                 return (data,)
         raise ValueError(
@@ -140,5 +140,5 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "FallingTSSelector": "FallingTS 下拉选择器",
-    "FallingTSLatentRouter": "FallingTS 通用路由",
+    "FallingTSLatentRouter": "下拉选择路由",
 }

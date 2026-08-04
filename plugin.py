@@ -32,7 +32,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSSelector": "FallingTS 下拉选择器",
-    "FallingTSLatentRouter": "FallingTS 通用路由",
+    "FallingTSLatentRouter": "下拉选择路由",
     "FallingTSResolution": "FallingTS 分辨率选择",
     "Seedance2FirstLastFrame": "Seedance 2.0 首尾帧生视频",
     "Seedance2Reference": "Seedance 2.0 多模态参考生视频",

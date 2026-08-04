@@ -84,14 +84,14 @@ class FallingTSContinueNode:
     def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "data": (ANY, {"tooltip": "透传数据, 通常接上一节点的图像/任意输出"}),
+                "any": (ANY, {"tooltip": "透传数据, 通常接上一节点的图像/任意输出"}),
                 "run_token": ("INT", {"default": 0, "min": 0, "max": 0x7FFFFFFF, "step": 1, "tooltip": "重跑序号, 每次重跑自动+1 用于破除缓存"}),
             },
             "hidden": {"id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = (ANY,)
-    RETURN_NAMES = ("data",)
+    RETURN_NAMES = ("any",)
     FUNCTION = "execute"
     CATEGORY = "FallingTS/控制"
     OUTPUT_NODE = True
@@ -101,13 +101,13 @@ class FallingTSContinueNode:
         """返回变化值: 使本节点每次必执行, 并因祖先签名变化带动整条下游重跑。"""
         return time.time()
 
-    def execute(self, data: Any = None, run_token: int = 0, id: str | None = None):  # noqa: A002
+    def execute(self, any: Any = None, run_token: int = 0, id: str | None = None):  # noqa: A002
         node_id = id or "?"
 
         # 重跑放行: 上一次点了「重跑」, 本次执行直接通过, 不暂停 (60s 内有效)
         ts = self._restart_pending.pop(node_id, None)
         if ts is not None and time.time() - ts < self._RESTART_TTL:
-            return (data,)
+            return (any,)
 
         self._count[node_id] = self._count.get(node_id, 0) + 1
         ev = threading.Event()
@@ -126,7 +126,7 @@ class FallingTSContinueNode:
                 # 防止残留标志把下一次运行在第一个节点就中断掉。
                 interrupt_current_processing(False)
                 raise InterruptProcessingException("FallingTS Continue: 已取消")
-            return (data,)
+            return (any,)
         finally:
             # 清理本事件 (若路由尚未消费)
             dq = self._waiters.get(node_id)
