@@ -131,15 +131,20 @@ function randomizeValueControlWidgets(graph) {
   if (!vc?.computeNextControlledValue) return;
   for (const node of graph?._nodes ?? []) {
     for (const w of node.widgets ?? []) {
-      if (!w.name?.includes("control_after_generate")) continue;
-      const mode = w.value;
+      // 与官方 nextValueForLinkedTarget 方向一致: 从 value widget 出发,
+      // 在它的 linkedWidgets 里找 control_after_generate 控件
+      // (KSampler 自带 seed 只有 value->control 单向关联, 反向查找会漏掉)
+      const control = (w.linkedWidgets ?? []).find(
+        (x) => x !== w && x.name?.includes("control_after_generate")
+      );
+      if (!control) continue;
+      const mode = control.value;
       if (mode === "fixed") continue;
-      const linked = (w.linkedWidgets ?? []).find((x) => x !== w);
-      if (!linked || typeof linked.value !== "number") continue;
-      const next = vc.computeNextControlledValue(linked, mode, { nodeId: node.id });
+      if (typeof w.value !== "number") continue;
+      const next = vc.computeNextControlledValue(w, mode, { nodeId: node.id });
       if (next !== undefined) {
-        linked.value = next;
-        linked.callback?.(next);
+        w.value = next;
+        w.callback?.(next);
       }
     }
   }
