@@ -25,7 +25,7 @@ ComfyUI 自定义节点插件:通过**火山引擎(Volcengine)ARK API** 接入 *
 ### 方式 A:git clone 到 custom_nodes(推荐)
 
 ```bash
-git clone https://github.com/<你的GitHub用户名>/ComfyUI-FallingTS.git ComfyUI/custom_nodes/ComfyUI-FallingTS
+git clone https://github.com/falling-ts/ComfyUI-FallingTS.git ComfyUI/custom_nodes/ComfyUI-FallingTS
 ```
 
 ### 方式 B:仓库放项目根目录 + 相对软链接
@@ -34,10 +34,6 @@ git clone https://github.com/<你的GitHub用户名>/ComfyUI-FallingTS.git Comfy
 cd ComfyUI\custom_nodes
 mklink /D ComfyUI-FallingTS ..\..\ComfyUI-FallingTS
 ```
-
-### 方式 C:ComfyUI-Manager
-
-在 Manager 的 Custom Nodes 中搜索 `ComfyUI-FallingTS` 安装。
 
 安装后**重启 ComfyUI**。
 
@@ -79,4 +75,4 @@ ComfyUI-FallingTS/
 
 ## License
 
-发布前请在此填写开源许可证(如 MIT / Apache-2.0)。
+MIT
