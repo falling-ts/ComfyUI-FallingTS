@@ -3,15 +3,18 @@
 
 行为:
 - 执行到本节点时暂停, 前端节点上显示「▶ 继续」和「↻ 重跑」按钮;
-- 「继续」: 放行当前运行, 继续往后执行;
+- 「继续」: 放行当前运行, 继续往后执行 (多次排队时一次放行一个运行);
 - 「重跑」: 先中断当前(下游)运行, 再从本节点重新执行下游;
 - 支持反复继续: 每次执行到本节点都会再次暂停;
-- run_token 每次重跑递增, 用于破除 ComfyUI 缓存, 强制下游重新执行。
+- IS_CHANGED 保证本节点每次必执行, 并带动整条下游重跑;
+- run_token 每次重跑递增, 破除 ComfyUI 缓存。
 """
 
 from __future__ import annotations
 
+import threading
 import time
+from collections import deque
 from typing import Any
 
 from aiohttp import web
@@ -30,8 +33,10 @@ ANY = AnyType("*")
 class FallingTSContinueNode:
     """分段执行控制节点: 数据透传 + 暂停/继续/重跑。"""
 
-    # 暂停状态: node_id -> "paused" | "continue" | "cancelled"
-    _status: dict[str, str] = {}
+    # 每个等待中的运行一个 Event: node_id -> deque[threading.Event]
+    _waiters: dict[str, deque[threading.Event]] = {}
+    # Event -> "continue" | "cancelled" (用 Event 对象自身做键, 避免与 execute 的 id 参数冲突)
+    _wait_actions: dict[threading.Event, str] = {}
     # 重跑标记: node_id -> 时间戳 (下一次执行直接放行, 不暂停; 带过期防残留)
     _restart_pending: dict[str, float] = {}
     _RESTART_TTL = 60.0
@@ -65,56 +70,79 @@ class FallingTSContinueNode:
         # 重跑放行: 上一次点了「重跑」, 本次执行直接通过, 不暂停 (60s 内有效)
         ts = self._restart_pending.pop(node_id, None)
         if ts is not None and time.time() - ts < self._RESTART_TTL:
-            return data
+            return (data,)
 
         self._count[node_id] = self._count.get(node_id, 0) + 1
-        self._status[node_id] = "paused"
+        ev = threading.Event()
+        self._waiters.setdefault(node_id, deque()).append(ev)
+        self._wait_actions[ev] = "paused"
         PromptServer.instance.send_sync("fallingts_continue_paused", {"node_id": node_id})
 
         try:
-            while self._status.get(node_id) == "paused":
-                time.sleep(0.1)
-
-            action = self._status.get(node_id)
+            ev.wait()
+            action = self._wait_actions.pop(ev, "cancelled")
             if action == "cancelled":
                 raise InterruptProcessingException("FallingTS Continue: 已取消")
-            return data
+            return (data,)
         finally:
-            self._status.pop(node_id, None)
+            # 清理本事件 (若路由尚未消费)
+            dq = self._waiters.get(node_id)
+            if dq is not None:
+                try:
+                    dq.remove(ev)
+                except ValueError:
+                    pass
+                if not dq:
+                    self._waiters.pop(node_id, None)
+            self._wait_actions.pop(ev, None)
 
 
 def _node_id(request: web.Request) -> str:
     return request.match_info["node_id"].strip()
 
 
+def _cancel_waiters(nid: str) -> None:
+    dq = FallingTSContinueNode._waiters.get(nid)
+    if not dq:
+        return
+    for ev in list(dq):
+        FallingTSContinueNode._wait_actions[ev] = "cancelled"
+        ev.set()
+    dq.clear()
+
+
 @PromptServer.instance.routes.post("/fallingts_continue/continue/{node_id}")
 async def _handle_continue(request: web.Request) -> web.Response:
-    """继续: 放行当前暂停的节点。"""
-    FallingTSContinueNode._status[_node_id(request)] = "continue"
+    """继续: 放行最早一个暂停的运行。"""
+    nid = _node_id(request)
+    dq = FallingTSContinueNode._waiters.get(nid)
+    if dq:
+        ev = dq.popleft()
+        FallingTSContinueNode._wait_actions[ev] = "continue"
+        ev.set()
     return web.json_response({"status": "ok"})
 
 
 @PromptServer.instance.routes.post("/fallingts_continue/cancel/{node_id}")
 async def _handle_cancel(request: web.Request) -> web.Response:
-    """取消: 中断当前暂停的节点(整次运行终止)。"""
-    FallingTSContinueNode._status[_node_id(request)] = "cancelled"
+    """取消: 中断该节点所有暂停的运行。"""
+    _cancel_waiters(_node_id(request))
     return web.json_response({"status": "ok"})
 
 
 @PromptServer.instance.routes.post("/fallingts_continue/restart/{node_id}")
 async def _handle_restart(request: web.Request) -> web.Response:
-    """重跑: 若节点正暂停则先中断当前运行, 并标记下次执行直接放行。"""
+    """重跑: 取消该节点暂停中的运行, 并标记下次执行直接放行。"""
     nid = _node_id(request)
-    if FallingTSContinueNode._status.get(nid) == "paused":
-        FallingTSContinueNode._status[nid] = "cancelled"
+    _cancel_waiters(nid)
     FallingTSContinueNode._restart_pending[nid] = time.time()
     return web.json_response({"status": "ok"})
 
 
 @PromptServer.instance.routes.post("/fallingts_continue/cancel_all")
 async def _handle_cancel_all(_request: web.Request) -> web.Response:
-    for nid in FallingTSContinueNode._status:
-        FallingTSContinueNode._status[nid] = "cancelled"
+    for nid in list(FallingTSContinueNode._waiters):
+        _cancel_waiters(nid)
     return web.json_response({"status": "ok"})
 
 
