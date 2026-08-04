@@ -91,4 +91,4 @@ ComfyUI-FallingTS/
 
 ## License
 
-MIT
+[MIT](LICENSE)
