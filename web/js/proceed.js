@@ -123,6 +123,28 @@ async function queueSegment(targets, number = 0) {
   return true;
 }
 
+// 默认 Run 被我们改成分段执行 (isPartialExecution=true) 后,
+// ComfyUI 官方 nextValueForLinkedTarget 会跳过 randomize/increment/decrement,
+// 导致种子不变、KSampler 一直命中缓存。这里在提交前手动执行一次值更新。
+function randomizeValueControlWidgets(graph) {
+  const vc = window.comfyAPI?.valueControl;
+  if (!vc?.computeNextControlledValue) return;
+  for (const node of graph?._nodes ?? []) {
+    for (const w of node.widgets ?? []) {
+      if (!w.name?.includes("control_after_generate")) continue;
+      const mode = w.value;
+      if (mode === "fixed") continue;
+      const linked = (w.linkedWidgets ?? []).find((x) => x !== w);
+      if (!linked || typeof linked.value !== "number") continue;
+      const next = vc.computeNextControlledValue(linked, mode, { nodeId: node.id });
+      if (next !== undefined) {
+        linked.value = next;
+        linked.callback?.(next);
+      }
+    }
+  }
+}
+
 app.registerExtension({
   name: "FallingTS.Continue",
 
@@ -135,6 +157,8 @@ app.registerExtension({
         // 才把本次执行限制到"第一个继续节点之前"的第一段;
         // 「继续/重跑」按钮会显式传 queueNodeIds, 这里绝不能覆盖。
         if (!opts?.queueNodeIds?.length) {
+          // 分段执行会跳过官方随机化, 手动先更新 randomize/increment/decrement
+          randomizeValueControlWidgets(app.graph);
           const first = firstContinueNode(app.graph);
           if (first) {
             const targets = collectOutputsBefore(first);
