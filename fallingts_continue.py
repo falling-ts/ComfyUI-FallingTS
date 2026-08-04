@@ -32,8 +32,9 @@ class FallingTSContinueNode:
 
     # 暂停状态: node_id -> "paused" | "continue" | "cancelled"
     _status: dict[str, str] = {}
-    # 重跑标记: node_id -> True (下一次执行直接放行, 不暂停)
-    _restart_pending: dict[str, bool] = {}
+    # 重跑标记: node_id -> 时间戳 (下一次执行直接放行, 不暂停; 带过期防残留)
+    _restart_pending: dict[str, float] = {}
+    _RESTART_TTL = 60.0
     # 放行次数统计
     _count: dict[str, int] = {}
 
@@ -61,8 +62,9 @@ class FallingTSContinueNode:
     def execute(self, data: Any = None, run_token: int = 0, id: str | None = None):  # noqa: A002
         node_id = id or "?"
 
-        # 重跑放行: 上一次点了「重跑」, 本次执行直接通过, 不暂停
-        if self._restart_pending.pop(node_id, False):
+        # 重跑放行: 上一次点了「重跑」, 本次执行直接通过, 不暂停 (60s 内有效)
+        ts = self._restart_pending.pop(node_id, None)
+        if ts is not None and time.time() - ts < self._RESTART_TTL:
             return data
 
         self._count[node_id] = self._count.get(node_id, 0) + 1
@@ -105,7 +107,7 @@ async def _handle_restart(request: web.Request) -> web.Response:
     nid = _node_id(request)
     if FallingTSContinueNode._status.get(nid) == "paused":
         FallingTSContinueNode._status[nid] = "cancelled"
-    FallingTSContinueNode._restart_pending[nid] = True
+    FallingTSContinueNode._restart_pending[nid] = time.time()
     return web.json_response({"status": "ok"})
 
 
