@@ -63,10 +63,71 @@ class FallingTSSelectorNode:
         return (options[0] if options else selection,)
 
 
+class _FlexibleInputs(dict):
+    """接受前端按 input_count 动态添加的任意输入。
+
+    latent_1..latent_N 视为 LATENT, enable_1..enable_N 视为 BOOLEAN;
+    ComfyUI 校验/执行时通过 __contains__/__getitem__ 接受这些动态输入。
+    """
+
+    def __getitem__(self, key):
+        if str(key).startswith("enable_"):
+            return ("BOOLEAN",)
+        return ("LATENT",)
+
+    def __contains__(self, key):
+        return True
+
+
+class FallingTSLatentRouterNode:
+    """多路 Latent 路由: 平级输入对 (enable_i, latent_i), 只有 enable=true 的那组 latent 输出。
+
+    设计目的: 替代嵌套 Switch。下拉选择多少比例都行, 每组比较+空 Latent 平级接入,
+    加 items 只需增加输入对 (前端 input_count 控制), 不需要改动连接结构。
+    约定: 全局有且仅有一组 enable=true; 若没有则抛错提示。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "input_count": (
+                    "INT",
+                    {
+                        "default": 2,
+                        "min": 1,
+                        "max": 100,
+                        "step": 1,
+                        "tooltip": "输入对数量 (每对 = enable_i + latent_i), 前端会自动增删输入槽",
+                    },
+                ),
+            },
+            "optional": _FlexibleInputs(),
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    RETURN_NAMES = ("latent",)
+    FUNCTION = "route"
+    CATEGORY = "FallingTS/工具"
+
+    def route(self, input_count: int, **kwargs):
+        for i in range(1, int(input_count) + 1):
+            enable = kwargs.get(f"enable_{i}")
+            latent = kwargs.get(f"latent_{i}")
+            if enable is True and latent is not None:
+                return (latent,)
+        raise ValueError(
+            "FallingTS Latent 路由: 没有任何一组输入满足 enable=true 且提供了 latent, "
+            "请检查下拉选择是否生效、比较节点是否连接正确。"
+        )
+
+
 NODE_CLASS_MAPPINGS = {
     "FallingTSSelector": FallingTSSelectorNode,
+    "FallingTSLatentRouter": FallingTSLatentRouterNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "FallingTSSelector": "FallingTS 下拉选择器",
+    "FallingTSLatentRouter": "FallingTS Latent 路由",
 }
