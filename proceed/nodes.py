@@ -1,4 +1,4 @@
-# continue/nodes.py
+# proceed/nodes.py
 """FallingTS 继续节点: 工作流分段执行控制。
 
 行为:
@@ -80,7 +80,7 @@ class FallingTSContinueNode:
         ev = threading.Event()
         self._waiters.setdefault(node_id, deque()).append(ev)
         self._wait_actions[ev] = "paused"
-        PromptServer.instance.send_sync("fallingts_continue_paused", {"node_id": node_id})
+        PromptServer.instance.send_sync("proceed_paused", {"node_id": node_id})
 
         try:
             # 等待继续/重跑/取消; 同时轮询全局中断标志, API 层中断也能唤醒
@@ -121,7 +121,7 @@ def _cancel_waiters(nid: str) -> None:
     dq.clear()
 
 
-@PromptServer.instance.routes.post("/fallingts_continue/continue/{node_id}")
+@PromptServer.instance.routes.post("/proceed/continue/{node_id}")
 async def _handle_continue(request: web.Request) -> web.Response:
     """继续: 放行最早一个暂停的运行。"""
     nid = _node_id(request)
@@ -133,14 +133,14 @@ async def _handle_continue(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-@PromptServer.instance.routes.post("/fallingts_continue/cancel/{node_id}")
+@PromptServer.instance.routes.post("/proceed/cancel/{node_id}")
 async def _handle_cancel(request: web.Request) -> web.Response:
     """取消: 中断该节点所有暂停的运行。"""
     _cancel_waiters(_node_id(request))
     return web.json_response({"status": "ok"})
 
 
-@PromptServer.instance.routes.post("/fallingts_continue/restart/{node_id}")
+@PromptServer.instance.routes.post("/proceed/restart/{node_id}")
 async def _handle_restart(request: web.Request) -> web.Response:
     """重跑: 取消该节点暂停中的运行, 并标记下次执行直接放行。"""
     nid = _node_id(request)
@@ -149,14 +149,14 @@ async def _handle_restart(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-@PromptServer.instance.routes.post("/fallingts_continue/cancel_all")
+@PromptServer.instance.routes.post("/proceed/cancel_all")
 async def _handle_cancel_all(_request: web.Request) -> web.Response:
     for nid in list(FallingTSContinueNode._waiters):
         _cancel_waiters(nid)
     return web.json_response({"status": "ok"})
 
 
-@PromptServer.instance.routes.post("/fallingts_continue/reset_interrupt")
+@PromptServer.instance.routes.post("/proceed/reset_interrupt")
 async def _handle_reset_interrupt(_request: web.Request) -> web.Response:
     """清除全局中断标志 (重启流程: 旧运行结束后、重新入队前调用, 防止残留标志误杀新运行)。"""
     interrupt_current_processing(False)

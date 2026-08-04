@@ -4,10 +4,10 @@ import { api } from "../../../scripts/api.js";
 const NODE_CLASS = "FallingTSContinue";
 const PAUSED_COLOR = "#8b6914";
 
-const postContinue = (id) => fetch(`/fallingts_continue/continue/${id}`, { method: "POST" });
-const postRestart = (id) => fetch(`/fallingts_continue/restart/${id}`, { method: "POST" });
-const postCancelAll = () => fetch("/fallingts_continue/cancel_all", { method: "POST" });
-const postResetInterrupt = () => fetch("/fallingts_continue/reset_interrupt", { method: "POST" });
+const postContinue = (id) => fetch(`/proceed/continue/${id}`, { method: "POST" });
+const postRestart = (id) => fetch(`/proceed/restart/${id}`, { method: "POST" });
+const postCancelAll = () => fetch("/proceed/cancel_all", { method: "POST" });
+const postResetInterrupt = () => fetch("/proceed/reset_interrupt", { method: "POST" });
 
 const pausedNodeIds = new Set();
 
@@ -34,7 +34,7 @@ app.registerExtension({
   name: "FallingTS.Continue",
 
   async setup() {
-    api.addEventListener("fallingts_continue_paused", ({ detail }) => {
+    api.addEventListener("proceed_paused", ({ detail }) => {
       const node = app.graph.getNodeById(String(detail.node_id));
       if (!node || node.comfyClass !== NODE_CLASS) return;
       pausedNodeIds.add(String(node.id));

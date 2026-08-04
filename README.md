@@ -20,7 +20,7 @@ ComfyUI 自定义节点插件:通过**火山引擎(Volcengine)ARK API** 接入 *
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放查看 |
 | `web/js/assets_tab_rename.js` | 资源标签页重命名 |
 | `web/js/workflow_reload_button.js` | 工作流刷新按钮 |
-| `web/js/fallingts_continue.js` | 继续节点的按钮与重跑逻辑 |
+| `web/js/proceed.js` | 继续节点的按钮与重跑逻辑 |
 
 ### 分段执行(FallingTS 继续节点)
 
