@@ -6,6 +6,7 @@ const PAUSED_COLOR = "#8b6914";
 
 const postContinue = (id) => fetch(`/fallingts_continue/continue/${id}`, { method: "POST" });
 const postRestart = (id) => fetch(`/fallingts_continue/restart/${id}`, { method: "POST" });
+const postCancelAll = () => fetch("/fallingts_continue/cancel_all", { method: "POST" });
 
 function setPaused(node, paused) {
   node.bgcolor = paused ? PAUSED_COLOR : undefined;
@@ -21,6 +22,13 @@ app.registerExtension({
       if (!node || node.comfyClass !== NODE_CLASS) return;
       setPaused(node, true);
     });
+
+    // 全局中断(⏹)时, 唤醒所有被我们暂停的节点, 避免卡死
+    const original_api_interrupt = api.interrupt;
+    api.interrupt = function (...args) {
+      postCancelAll();
+      return original_api_interrupt.apply(this, args);
+    };
   },
 
   nodeCreated(node) {

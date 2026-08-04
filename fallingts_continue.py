@@ -53,6 +53,11 @@ class FallingTSContinueNode:
     CATEGORY = "FallingTS/控制"
     OUTPUT_NODE = True
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        """返回变化值: 使本节点每次必执行, 并因祖先签名变化带动整条下游重跑。"""
+        return time.time()
+
     def execute(self, data: Any = None, run_token: int = 0, id: str | None = None):  # noqa: A002
         node_id = id or "?"
 
