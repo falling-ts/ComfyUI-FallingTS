@@ -140,35 +140,6 @@ function randomizeValueControlWidgets(graph) {
       if (next !== undefined) {
         linked.value = next;
         linked.callback?.(next);
-        // 随机/递增生成的新值, 同步给同一 switch 组的固定控件
-        // (工作流里即: 随机种子同步到"固定种子"PrimitiveInt, 切固定档时用最近随机值)
-        syncValueToSwitchGroup(graph, node, linked);
-      }
-    }
-  }
-}
-
-// 找 node 输出所连接的 ComfySwitchNode, 把 valueWidget 的新值同步到
-// 该 switch 另一个输入端来源节点的数值控件 (固定档使用最近随机值)。
-function syncValueToSwitchGroup(graph, node, valueWidget) {
-  for (const out of node.outputs ?? []) {
-    for (const linkId of out.links ?? []) {
-      const link = graph?.links?.[linkId];
-      if (!link) continue;
-      const target = graph?.getNodeById?.(link.target_id);
-      if (!target || target.type !== "ComfySwitchNode") continue;
-      for (const inp of target.inputs ?? []) {
-        if (inp.link == null || inp.link === linkId) continue;
-        const otherLink = graph?.links?.[inp.link];
-        if (!otherLink) continue;
-        const otherNode = graph?.getNodeById?.(otherLink.origin_id);
-        if (!otherNode) continue;
-        const otherValue =
-          otherNode.widgets?.find((w) => w.name === "value") ?? otherNode.widgets?.[0];
-        if (otherValue && otherValue !== valueWidget) {
-          otherValue.value = valueWidget.value;
-          otherValue.callback?.(otherValue.value);
-        }
       }
     }
   }
