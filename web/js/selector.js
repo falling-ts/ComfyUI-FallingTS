@@ -19,12 +19,18 @@ function syncSelection(node) {
   if (!itemsWidget || !selWidget) return;
 
   const options = splitItems(itemsWidget.value);
-  if (!options.length) return;
 
-  selWidget.options = { ...(selWidget.options || {}), values: [...new Set(options)] };
+  // 关键: 新前端 combo 渲染绑定的是 options.values 的数组引用,
+  // 必须原地 splice 更新, 替换整个 options 对象不会触发下拉刷新。
+  let values = selWidget.options?.values;
+  if (!Array.isArray(values)) {
+    values = [];
+    selWidget.options = { ...(selWidget.options || {}), values };
+  }
+  values.splice(0, values.length, ...[...new Set(options)]);
 
   if (!options.includes(selWidget.value)) {
-    selWidget.value = options[0];
+    selWidget.value = options[0] ?? "";
     selWidget.callback?.(selWidget.value);
   }
   node.setDirtyCanvas(true, true);
@@ -49,6 +55,16 @@ app.registerExtension({
           return out;
         };
       }
+
+      // 兜底: 新前端文本输入可能不走 widget.callback, 用节点级 onWidgetChanged 再同步一次
+      const onWidgetChanged = nodeType.prototype.onWidgetChanged;
+      nodeType.prototype.onWidgetChanged = function (widget, value, ...args) {
+        const out = onWidgetChanged?.apply(this, arguments);
+        if (widget?.name === "items") {
+          syncSelection(this);
+        }
+        return out;
+      };
 
       syncSelection(node);
       return result;

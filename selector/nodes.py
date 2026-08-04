@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-DEFAULT_ITEMS = "4步加速,20步标准,30步精修"
+DEFAULT_ITEMS = ""
 
 
 def _split_items(items: str) -> list[str]:
@@ -19,11 +19,13 @@ def _split_items(items: str) -> list[str]:
 
 
 class FallingTSSelectorNode:
-    """文本+下拉选择器: 逗号分隔选项写在文本框, 下拉选哪个就输出哪个。"""
+    """文本+下拉选择器: 逗号分隔选项写在文本框, 下拉选哪个就输出哪个。
+
+    items 默认空, selection 默认空下拉; 前端在 items 变化时实时同步下拉选项。
+    """
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
-        default_options = _split_items(DEFAULT_ITEMS)
         return {
             "required": {
                 "items": (
@@ -31,14 +33,14 @@ class FallingTSSelectorNode:
                     {
                         "default": DEFAULT_ITEMS,
                         "multiline": False,
-                        "tooltip": "用英文逗号分隔的选项列表, 下拉框会跟随此内容更新",
+                        "tooltip": "用英文逗号分隔的选项列表 (如: 9:16,16:9), 下拉框会跟随此内容更新",
                     },
                 ),
                 "selection": (
-                    default_options,
+                    [],
                     {
-                        "default": default_options[0] if default_options else "",
-                        "tooltip": "从上方选项列表中选一个, 选中项作为输出",
+                        "default": "",
+                        "tooltip": "下拉选择项 (选项由上方 items 文本框实时生成)",
                     },
                 ),
             },
@@ -57,7 +59,7 @@ class FallingTSSelectorNode:
         options = _split_items(items)
         if selection in options:
             return (selection,)
-        # 旧工作流或手动改动导致 selection 不在列表里: 回退第一项
+        # 旧工作流或手动改动导致 selection 不在列表里: 回退第一项; 空列表返回空串
         return (options[0] if options else selection,)
 
 
