@@ -89,6 +89,9 @@ class FallingTSContinueNode:
                 ev.wait(0.2)
             action = self._wait_actions.pop(ev, "cancelled")
             if action == "cancelled":
+                # 取消路径是直接抛异常(不经过 throw_exception), 需显式消费全局中断标志,
+                # 防止残留标志把下一次运行在第一个节点就中断掉。
+                interrupt_current_processing(False)
                 raise InterruptProcessingException("FallingTS Continue: 已取消")
             return (data,)
         finally:
