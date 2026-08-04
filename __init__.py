@@ -21,7 +21,7 @@ from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
-from fallingts_continue.nodes import FallingTSContinueNode
+from proceed.nodes import FallingTSContinueNode
 
 __all__ = [
     "WEB_DIRECTORY",
