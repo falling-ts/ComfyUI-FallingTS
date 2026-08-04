@@ -18,7 +18,7 @@ function updateInputs(node) {
 
   // 追加不足的输入对
   for (let i = existing + 1; i <= count; i++) {
-    node.addInput(`latent_${i}`, "LATENT");
+    node.addInput(`latent_${i}`, "*");
     node.addInput(`enable_${i}`, "BOOLEAN");
   }
 
