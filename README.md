@@ -1,72 +1,82 @@
-# comfy-desktop-plugins
+# ComfyUI-FallingTS
 
-ComfyUI Desktop 插件扩展项目。提供自定义视频生成节点, 通过 Volcengine API 接入 Seedance 2.0 模型。
+ComfyUI 自定义节点插件:通过**火山引擎(Volcengine)ARK API** 接入 **Seedance 2.0** 视频生成,并附带一组 ComfyUI 前端增强工具。
 
-## 节点列表
+## 功能
+
+### 视频生成节点(需 Volcengine API)
 
 | 节点 | Node ID | 功能 |
 |------|---------|------|
-| Seedance 2.0 Text to Video | `Seedance2TextToVideo` | 文生视频 |
-| Seedance 2.0 Image to Video | `Seedance2ImageToVideo` | 图生视频(首帧) |
-| Seedance 2.0 First-Last-Frame to Video | `Seedance2FirstLastFrame` | 首尾帧生视频 |
-| Seedance 2.0 Reference to Video | `Seedance2Reference` | 多模态参考生视频 |
+| Seedance 2.0 首尾帧生视频 | `Seedance2FirstLastFrame` | 首帧/尾帧图片 + 文本提示词,生成过渡视频 |
+| Seedance 2.0 多模态参考生视频 | `Seedance2Reference` | 多张参考图 + 文本提示词,生成视频 |
 
-## 安装方式
+### Web 前端增强(安装即用,无需配置)
 
-### 方式 A: custom_nodes/ 自动加载 (推荐, 0 行修改)
+| 文件 | 功能 |
+|------|------|
+| `web/js/node_image_middleclick.js` | 节点图片中键全屏预览(多图左右循环切换) |
+| `web/js/media_lightbox_zoom.js` | 图片灯箱缩放查看 |
+| `web/js/assets_tab_rename.js` | 资源标签页重命名 |
+| `web/js/workflow_reload_button.js` | 工作流刷新按钮 |
 
-```bash
-# 在 ComfyUI custom_nodes 目录下创建符号链接
-cd D:/Comfy-Desktop/ComfyUI-Installs/Default/ComfyUI/custom_nodes
-mklink /D comfy-desktop-plugins D:/Comfy-Desktop/ComfyUI-Installs/comfy-desktop-plugins
-```
+## 安装
 
-### 方式 B: 一行代码注入 main.py
-
-在 `Default/ComfyUI/main.py` 中, 在 `start_comfyui()` 调用前添加:
-
-```python
-# 推荐插入位置: main.py ~line 487, 在 def start_comfyui() 之前
-import comfy_desktop_plugins.plugin
-comfy_desktop_plugins.plugin.inject()
-```
-
-### 方式 C: 直接复制
+### 方式 A:git clone 到 custom_nodes(推荐)
 
 ```bash
-copy D:\Comfy-Desktop\ComfyUI-Installs\comfy-desktop-plugins D:\Comfy-Desktop\ComfyUI-Installs\Default\ComfyUI\custom_nodes\comfy_desktop_plugins
+git clone https://github.com/<你的GitHub用户名>/ComfyUI-FallingTS.git ComfyUI/custom_nodes/ComfyUI-FallingTS
 ```
+
+### 方式 B:仓库放项目根目录 + 相对软链接
+
+```powershell
+cd ComfyUI\custom_nodes
+mklink /D ComfyUI-FallingTS ..\..\ComfyUI-FallingTS
+```
+
+### 方式 C:ComfyUI-Manager
+
+在 Manager 的 Custom Nodes 中搜索 `ComfyUI-FallingTS` 安装。
+
+安装后**重启 ComfyUI**。
+
+## 初始化(下载后必做)
+
+1. **开通 Seedance 2.0 服务**:https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement
+2. **获取 API Key**:https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey
+3. **配置环境变量**:复制 `.env.example` 为 `.env`(放在插件根目录),填入你的 Key:
+
+   ```ini
+   SEEDANCE_API_KEY=你的APIKey
+   ```
+
+   - 支持 `.env` 文件或系统环境变量两种方式,环境变量优先级更高
+   - 可选配置:`SEEDANCE_MODEL_ID` / `SEEDANCE_MODEL_NAME` 覆盖默认模型
+4. **重启 ComfyUI**,在节点列表搜索 `Seedance` 即可使用
 
 ## 前置条件
 
-1. **开通 Seedance 2.0 服务**: https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement
-2. **获取 API Key**: https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey
-3. **账户余额 > 200 元** 或已购买资源包
-
-## 使用
-
-1. 在 ComfyUI 节点列表中搜索 "Seedance"
-2. 拖入节点, 填入 Volcengine API Key
-3. 选择模型、分辨率、时长等参数
-4. 连接输入/输出, 运行工作流
+- ComfyUI(dev 分支 / v0.29+,依赖 V3 扩展 API `comfy_api.latest`)
+- 火山引擎账号:账户余额 > 200 元或已购买资源包
+- **无额外 Python 依赖**(复用 ComfyUI 内置 `comfy_api_nodes.util`)
 
 ## 架构
 
 ```
-comfy-desktop-plugins/
-├── __init__.py          # 入口, 导出 NODE_CLASS_MAPPINGS
-├── plugin.py            # 节点注册逻辑
-├── config.py            # .env 配置管理 (根级别, 到处可用)
-├── seedance/            # 📹 Seedance 视频生成节点
-│   ├── seedance.py      #   4 个节点定义
-│   ├── api.py           #   Volcengine HTTP 客户端
-│   └── models.py        #   请求/响应数据模型 + 定价
-├── mcp/                 # MCP 服务器文档
-└── .env.example         # 环境配置模板
+ComfyUI-FallingTS/
+├── __init__.py       # 入口:WEB_DIRECTORY + NODE_CLASS_MAPPINGS
+├── plugin.py         # 节点注册(V1 映射 + V3 ComfyExtension)
+├── config.py         # .env 配置管理(纯 Python,无依赖)
+├── seedance/         # Seedance 2.0 视频生成
+│   ├── nodes.py      #   节点定义(2 个)
+│   ├── api.py        #   Volcengine HTTP 客户端
+│   └── models.py     #   数据模型 + 定价
+├── web/js/           # 前端扩展(ComfyUI 自动加载)
+├── .env.example      # 环境配置模板
+└── README.md
 ```
 
-## 依赖
+## License
 
-- 运行在 ComfyUI 环境中
-- 复用 `comfy_api_nodes.util` 中的工具 (client/upload/download/conversion/validation)
-- 无额外依赖
+发布前请在此填写开源许可证(如 MIT / Apache-2.0)。
