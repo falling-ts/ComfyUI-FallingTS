@@ -34,6 +34,39 @@ class AnyType(str):
 ANY = AnyType("*")
 
 
+# Qwen-Image-2512 官方支持的比例与分辨率 (与 note 中表格一致)
+RATIOS: dict[str, tuple[int, int]] = {
+    "9:16 (928×1664)": (928, 1664),
+    "16:9 (1664×928)": (1664, 928),
+    "1:1 (1328×1328)": (1328, 1328),
+    "4:3 (1472×1104)": (1472, 1104),
+    "3:4 (1104×1472)": (1104, 1472),
+    "3:2 (1584×1056)": (1584, 1056),
+    "2:3 (1056×1584)": (1056, 1584),
+}
+
+
+class FallingTSResolutionNode:
+    """分辨率/宽高比选择器: 下拉选择比例, 输出 width/height 供空 Latent 使用。"""
+
+    @classmethod
+    def INPUT_TYPES(cls) -> dict:
+        return {
+            "required": {
+                "ratio": (list(RATIOS.keys()), {"default": "9:16 (928×1664)", "tooltip": "Qwen-Image-2512 官方支持的比例"}),
+            },
+        }
+
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("width", "height")
+    FUNCTION = "execute"
+    CATEGORY = "FallingTS/工具"
+
+    def execute(self, ratio: str):
+        w, h = RATIOS[ratio]
+        return (w, h)
+
+
 class FallingTSContinueNode:
     """分段执行控制节点: 通用数据透传 + 暂停/继续/重跑。"""
 
@@ -163,5 +196,11 @@ async def _handle_reset_interrupt(_request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-NODE_CLASS_MAPPINGS = {"FallingTSContinue": FallingTSContinueNode}
-NODE_DISPLAY_NAME_MAPPINGS = {"FallingTSContinue": "FallingTS 继续节点"}
+NODE_CLASS_MAPPINGS = {
+    "FallingTSContinue": FallingTSContinueNode,
+    "FallingTSResolution": FallingTSResolutionNode,
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "FallingTSContinue": "FallingTS 继续节点",
+    "FallingTSResolution": "FallingTS 分辨率选择",
+}
