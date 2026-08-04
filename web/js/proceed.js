@@ -1,94 +1,188 @@
+// FallingTS 继续节点前端 (2026-08-04 重构):
+// 分段执行由前端 partial execution 控制, 后端继续节点纯透传。
+//
+// 行为:
+// - 默认 Run 被拦截: 图中含继续节点时, 只提交"第一个继续节点之前"的部分执行,
+//   执行到分段边界即正常完成 (任务显示 Completed);
+// - 节点上单个按钮: 状态「继续」→ 点击后提交"本节点往后到下一个继续节点之前"
+//   的部分执行 (前半段命中缓存不重跑), 按钮文字变为「重跑」;
+// - 「重跑」: 先中断当前运行, 后端内部 run_token+1 破除缓存, 重新提交本段;
+// - run_token 已移入后端内部, 前端不再显示。
+
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 
 const NODE_CLASS = "FallingTSContinue";
-const PAUSED_COLOR = "#8b6914";
 
-const postContinue = (id) => fetch(`/proceed/continue/${id}`, { method: "POST" });
-const postRestart = (id) => fetch(`/proceed/restart/${id}`, { method: "POST" });
-const postCancelAll = () => fetch("/proceed/cancel_all", { method: "POST" });
-const postResetInterrupt = () => fetch("/proceed/reset_interrupt", { method: "POST" });
+function isContinueNode(node) {
+  return node?.type === NODE_CLASS || node?.constructor?.comfyClass === NODE_CLASS;
+}
 
-const pausedNodeIds = new Set();
+function isOutputNode(node) {
+  return node?.constructor?.nodeData?.output_node === true;
+}
 
-async function waitForQueueIdle(timeoutMs = 15000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const q = await api.getQueue();
-      if (!q?.queue_running?.length) return true;
-    } catch {
-      // 忽略瞬时错误, 继续轮询
+function getLink(graph, linkId) {
+  return graph?.links?.[linkId] ?? null;
+}
+
+// 检查 node 是否依赖"执行序比 startNode 更靠后的继续节点"
+// (若是, 它属于更靠后的分段, 不应在本段收集)
+function dependsOnLaterContinue(node, startNode) {
+  const visited = new Set();
+  const queue = [];
+  for (const inp of node.inputs ?? []) {
+    const link = getLink(node.graph, inp.link);
+    if (link) queue.push(link.origin_id);
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    if (visited.has(nid)) continue;
+    visited.add(nid);
+    const n = node.graph?.getNodeById?.(nid);
+    if (!n) continue;
+    if (isContinueNode(n) && nid !== startNode.id && (n.order ?? 0) > (startNode.order ?? 0)) {
+      return true;
     }
-    await new Promise((r) => setTimeout(r, 300));
+    for (const inp of n.inputs ?? []) {
+      const link = getLink(n.graph, inp.link);
+      if (link) queue.push(link.origin_id);
+    }
   }
   return false;
 }
 
-function setPaused(node, paused) {
-  node.bgcolor = paused ? PAUSED_COLOR : undefined;
-  app.graph.setDirtyCanvas(true, false);
+// 从 startNode 的下游 BFS: 收集输出节点, 遇到下一个继续节点停止
+function collectOutputsAfter(startNode) {
+  const targets = new Set();
+  const visited = new Set();
+  const queue = [];
+  for (const out of startNode.outputs ?? []) {
+    for (const linkId of out.links ?? []) {
+      const link = getLink(startNode.graph, linkId);
+      if (link) queue.push(link.target_id);
+    }
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    if (visited.has(nid)) continue;
+    visited.add(nid);
+    const n = startNode.graph?.getNodeById?.(nid);
+    if (!n) continue;
+    if (isContinueNode(n)) continue; // 下一个继续节点: 该段到此为止
+    if (isOutputNode(n) && !dependsOnLaterContinue(n, startNode)) {
+      targets.add(String(n.id));
+    }
+    for (const out of n.outputs ?? []) {
+      for (const linkId of out.links ?? []) {
+        const link = getLink(n.graph, linkId);
+        if (link) queue.push(link.target_id);
+      }
+    }
+  }
+  return [...targets];
+}
+
+// 从 startNode 的上游 BFS: 收集输出节点 (不含 startNode 自身及下游)
+function collectOutputsBefore(startNode) {
+  const targets = new Set();
+  const visited = new Set();
+  const queue = [];
+  for (const inp of startNode.inputs ?? []) {
+    const link = getLink(startNode.graph, inp.link);
+    if (link) queue.push(link.origin_id);
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    if (visited.has(nid)) continue;
+    visited.add(nid);
+    const n = startNode.graph?.getNodeById?.(nid);
+    if (!n) continue;
+    if (isContinueNode(n)) continue; // 上游继续节点不再深入
+    if (isOutputNode(n) && !dependsOnLaterContinue(n, startNode)) {
+      targets.add(String(n.id));
+    }
+    for (const inp of n.inputs ?? []) {
+      const link = getLink(n.graph, inp.link);
+      if (link) queue.push(link.origin_id);
+    }
+  }
+  return [...targets];
+}
+
+// 第一个继续节点 (按执行序 order 最小)
+function firstContinueNode(graph) {
+  const list = (graph?._nodes ?? []).filter((n) => isContinueNode(n));
+  if (!list.length) return null;
+  return [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))[0];
+}
+
+async function queueSegment(targets, number = 0) {
+  if (!targets?.length) return false;
+  await app.queuePrompt(number, 1, { queueNodeIds: targets });
+  return true;
 }
 
 app.registerExtension({
   name: "FallingTS.Continue",
 
   async setup() {
-    api.addEventListener("proceed_paused", ({ detail }) => {
-      const node = app.graph.getNodeById(String(detail.node_id));
-      if (!node || node.comfyClass !== NODE_CLASS) return;
-      pausedNodeIds.add(String(node.id));
-      setPaused(node, true);
-    });
-
-    // 全局中断(⏹)时, 唤醒所有被我们暂停的节点, 避免卡死
-    const original_api_interrupt = api.interrupt;
-    api.interrupt = function (...args) {
-      postCancelAll();
-      return original_api_interrupt.apply(this, args);
-    };
+    // 拦截默认 Run: 图中含继续节点时, 默认只执行第一段 (到第一个继续节点之前)
+    const originalQueuePrompt = app.queuePrompt?.bind(app);
+    if (originalQueuePrompt) {
+      app.queuePrompt = async function (number, batch, opts = {}) {
+        const first = firstContinueNode(app.graph);
+        if (first) {
+          const targets = collectOutputsBefore(first);
+          if (targets.length) {
+            opts = { ...opts, queueNodeIds: targets };
+          }
+        }
+        return originalQueuePrompt(number, batch, opts);
+      };
+    }
   },
 
   nodeCreated(node) {
-    if (node.comfyClass !== NODE_CLASS) return;
+    if (!isContinueNode(node)) return;
 
-    node.addWidget("button", "▶ 继续", null, () => {
-      pausedNodeIds.delete(String(node.id));
-      setPaused(node, false);
-      postContinue(node.id);
-    });
+    const stateKey = "proceedState";
+    const getState = () => (node.properties?.[stateKey] === "rerun" ? "rerun" : "continue");
+    const setState = (s) => {
+      node.properties = node.properties || {};
+      node.properties[stateKey] = s;
+    };
 
-    node.addWidget("button", "↻ 重跑(从本节点)", null, async () => {
-      try {
-        const wasPaused = pausedNodeIds.has(String(node.id));
-        // 1) 标记重跑: 若本节点正暂停, 先取消当前运行
-        await postRestart(node.id);
-        // 2) 若未暂停且确有运行中的 prompt, 才中断下游 (避免残留中断标志)
-        if (!wasPaused) {
+    const btn = node.addWidget("button", "继续", null, async () => {
+      const targets = collectOutputsAfter(node);
+      if (!targets.length) {
+        console.warn("[FallingTS] 该继续节点之后没有可执行的输出节点");
+        return;
+      }
+      if (getState() === "continue") {
+        try {
+          await fetch(`/proceed/continue/${node.id}`, { method: "POST" });
+          await queueSegment(targets);
+          setState("rerun");
+          btn.name = "重跑";
+          app.graph.setDirtyCanvas(true, false);
+        } catch (err) {
+          console.error("[FallingTS] 继续失败:", err);
+        }
+      } else {
+        // 重跑: 中断当前运行 -> run_token+1 破缓存 -> 重新提交本段
+        try {
           try {
             const q = await api.getQueue();
             if (q?.queue_running?.length > 0) await api.interrupt();
           } catch {
             // 忽略
           }
+          await fetch(`/proceed/restart/${node.id}`, { method: "POST" });
+          await queueSegment(targets);
+        } catch (err) {
+          console.error("[FallingTS] 重跑失败:", err);
         }
-        // 3) 等待旧运行完全结束, 再清除可能残留的中断标志
-        await waitForQueueIdle();
-        await postResetInterrupt();
-        // 4) run_token +1 破除缓存, 重新入队 (上游已缓存, 从本节点开始重跑)
-        const tokenWidget = node.widgets.find((w) => w.name === "run_token");
-        if (tokenWidget) {
-          tokenWidget.value = (Number(tokenWidget.value) || 0) + 1;
-        }
-        const p = await app.graphToPrompt();
-        if (p?.output?.[String(node.id)]) {
-          p.output[String(node.id)].inputs.run_token = Number(tokenWidget?.value) || 0;
-        }
-        pausedNodeIds.delete(String(node.id));
-        setPaused(node, false);
-        await api.queuePrompt(0, { output: p.output, workflow: p.workflow });
-      } catch (err) {
-        console.error("[FallingTS Continue] 重跑失败:", err);
       }
     });
   },
