@@ -13,26 +13,44 @@ function splitItems(text) {
     .filter(Boolean);
 }
 
+// 新前端 combo 渲染优先读 widgetValue store 里的真实 widget (通过 widgetId),
+// node.widgets 只是兼容层; 两层都要同步。
+function getStoreWidget(node, name) {
+  try {
+    const el = document.getElementById("vue-app");
+    const pinia = el?.__vue_app__?.config?.globalProperties?.$pinia;
+    const store = pinia?._s?.get("widgetValue");
+    const w = node.widgets?.find((w) => w.name === name);
+    if (w?.widgetId && store?.getWidget) {
+      return store.getWidget(w.widgetId) ?? null;
+    }
+  } catch {
+    // store 不可用时退化为只更新 node.widgets
+  }
+  return null;
+}
+
 function syncSelection(node) {
   const itemsWidget = node.widgets?.find((w) => w.name === "items");
-  const selWidget = node.widgets?.find((w) => w.name === "selection");
-  if (!itemsWidget || !selWidget) return;
+  if (!itemsWidget) return;
 
-  const options = splitItems(itemsWidget.value);
+  // 新前端 WidgetSelect 支持 options.values 为函数: 每次渲染下拉时实时调用,
+  // 这样 items 变化后无需手动 splice, 打开下拉即是最新选项。
+  const getOptions = () => [...new Set(splitItems(itemsWidget.value))];
 
-  // 关键: 新前端 combo 渲染绑定的是 options.values 的数组引用,
-  // 必须原地 splice 更新, 替换整个 options 对象不会触发下拉刷新。
-  let values = selWidget.options?.values;
-  if (!Array.isArray(values)) {
-    values = [];
-    selWidget.options = { ...(selWidget.options || {}), values };
-  }
-  values.splice(0, values.length, ...[...new Set(options)]);
+  const applyTo = (widget) => {
+    if (!widget) return;
+    widget.options = { ...(widget.options || {}), values: getOptions };
+    const options = getOptions();
+    if (!options.includes(widget.value)) {
+      widget.value = options[0] ?? "";
+      widget.callback?.(widget.value);
+    }
+  };
 
-  if (!options.includes(selWidget.value)) {
-    selWidget.value = options[0] ?? "";
-    selWidget.callback?.(selWidget.value);
-  }
+  // 兼容层 + store 真实对象, 两层都更新
+  applyTo(node.widgets?.find((w) => w.name === "selection"));
+  applyTo(getStoreWidget(node, "selection"));
   node.setDirtyCanvas(true, true);
 }
 
@@ -67,6 +85,8 @@ app.registerExtension({
       };
 
       syncSelection(node);
+      // 节点刚创建时 widgetValue store 可能还没注册完成, 下一 tick 再同步一次
+      setTimeout(() => syncSelection(node), 0);
       return result;
     };
   },
