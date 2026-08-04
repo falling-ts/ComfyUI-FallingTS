@@ -18,7 +18,11 @@ from collections import deque
 from typing import Any
 
 from aiohttp import web
-from comfy.model_management import InterruptProcessingException
+from comfy.model_management import (
+    InterruptProcessingException,
+    interrupt_current_processing,
+    throw_exception_if_processing_interrupted,
+)
 from server import PromptServer
 
 
@@ -79,7 +83,10 @@ class FallingTSContinueNode:
         PromptServer.instance.send_sync("fallingts_continue_paused", {"node_id": node_id})
 
         try:
-            ev.wait()
+            # 等待继续/重跑/取消; 同时轮询全局中断标志, API 层中断也能唤醒
+            while not ev.is_set():
+                throw_exception_if_processing_interrupted()
+                ev.wait(0.2)
             action = self._wait_actions.pop(ev, "cancelled")
             if action == "cancelled":
                 raise InterruptProcessingException("FallingTS Continue: 已取消")
@@ -143,6 +150,13 @@ async def _handle_restart(request: web.Request) -> web.Response:
 async def _handle_cancel_all(_request: web.Request) -> web.Response:
     for nid in list(FallingTSContinueNode._waiters):
         _cancel_waiters(nid)
+    return web.json_response({"status": "ok"})
+
+
+@PromptServer.instance.routes.post("/fallingts_continue/reset_interrupt")
+async def _handle_reset_interrupt(_request: web.Request) -> web.Response:
+    """清除全局中断标志 (重启流程: 旧运行结束后、重新入队前调用, 防止残留标志误杀新运行)。"""
+    interrupt_current_processing(False)
     return web.json_response({"status": "ok"})
 
 
