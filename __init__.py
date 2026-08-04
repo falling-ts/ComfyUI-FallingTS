@@ -21,6 +21,7 @@ from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
+from fallingts_continue import FallingTSContinueNode
 
 __all__ = [
     "WEB_DIRECTORY",
@@ -30,4 +31,5 @@ __all__ = [
     "comfy_entrypoint",
     "Seedance2FirstLastFrameNode",
     "Seedance2ReferenceNode",
+    "FallingTSContinueNode",
 ]

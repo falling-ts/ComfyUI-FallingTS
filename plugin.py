@@ -14,6 +14,7 @@ from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
+from fallingts_continue import FallingTSContinueNode
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +23,25 @@ logger = logging.getLogger(__name__)
 NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "Seedance2FirstLastFrame": Seedance2FirstLastFrameNode,
     "Seedance2Reference": Seedance2ReferenceNode,
+    "FallingTSContinue": FallingTSContinueNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "Seedance2FirstLastFrame": "Seedance 2.0 首尾帧生视频",
     "Seedance2Reference": "Seedance 2.0 多模态参考生视频",
+    "FallingTSContinue": "FallingTS 继续节点",
 }
 
 # ─── V3 ComfyExtension (支持 comfy_entrypoint 注册) ─────
 
 class DesktopPluginsExtension(ComfyExtension):
     async def get_node_list(self) -> list[type[IO.ComfyNode]]:
-        return list(NODE_CLASS_MAPPINGS.values())
+        # 仅 V3 IO.ComfyNode 走扩展注册; legacy 节点由 NODE_CLASS_MAPPINGS 直接加载
+        return [
+            cls
+            for cls in NODE_CLASS_MAPPINGS.values()
+            if isinstance(cls, type) and issubclass(cls, IO.ComfyNode)
+        ]
 
 
 async def comfy_entrypoint() -> DesktopPluginsExtension:

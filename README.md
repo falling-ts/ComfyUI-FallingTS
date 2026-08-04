@@ -10,6 +10,7 @@ ComfyUI 自定义节点插件:通过**火山引擎(Volcengine)ARK API** 接入 *
 |------|---------|------|
 | Seedance 2.0 首尾帧生视频 | `Seedance2FirstLastFrame` | 首帧/尾帧图片 + 文本提示词,生成过渡视频 |
 | Seedance 2.0 多模态参考生视频 | `Seedance2Reference` | 多张参考图 + 文本提示词,生成视频 |
+| FallingTS 继续节点 | `FallingTSContinue` | 工作流分段执行控制:暂停 →「继续」放行 /「重跑」从中断点重跑下游(无需 API) |
 
 ### Web 前端增强(安装即用,无需配置)
 
@@ -19,6 +20,18 @@ ComfyUI 自定义节点插件:通过**火山引擎(Volcengine)ARK API** 接入 *
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放查看 |
 | `web/js/assets_tab_rename.js` | 资源标签页重命名 |
 | `web/js/workflow_reload_button.js` | 工作流刷新按钮 |
+| `web/js/fallingts_continue.js` | 继续节点的按钮与重跑逻辑 |
+
+### 分段执行(FallingTS 继续节点)
+
+在任意节点之后插入「FallingTS 继续节点」即可把工作流分成多段:
+
+1. 运行到该节点时自动暂停(节点变黄色,出现按钮);
+2. **▶ 继续**:放行当前运行,继续往后执行;
+3. **↻ 重跑(从本节点)**:先中断当前(下游)运行,再从本节点重新执行下游;
+4. 支持反复继续:每次执行到该节点都会再次暂停。
+
+数据透传(输入 `data` 原样输出),不依赖 Volcengine API。
 
 ## 安装
 
@@ -64,6 +77,7 @@ ComfyUI-FallingTS/
 ├── __init__.py       # 入口:WEB_DIRECTORY + NODE_CLASS_MAPPINGS
 ├── plugin.py         # 节点注册(V1 映射 + V3 ComfyExtension)
 ├── config.py         # .env 配置管理(纯 Python,无依赖)
+├── fallingts_continue.py # 分段执行控制节点(暂停/继续/重跑)
 ├── seedance/         # Seedance 2.0 视频生成
 │   ├── nodes.py      #   节点定义(2 个)
 │   ├── api.py        #   Volcengine HTTP 客户端
