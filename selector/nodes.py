@@ -42,6 +42,20 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+# 模块加载时校验档位结构, 避免手改 PRESETS 时字段缺失到运行时才炸
+for _name, _cfg in PRESETS.items():
+    for _field in ("steps", "cfg", "seed_mode"):
+        if _field not in _cfg:
+            raise ValueError(f"FallingTSSelector: 档位 '{_name}' 缺少字段 '{_field}'")
+
+
+def _resolve_preset(mode: str) -> tuple[str, dict[str, Any]]:
+    """按档位名取预设; 档位名无效(保存的旧工作流引用已删除/改名的档位)时回退到第一个档位。"""
+    if mode in PRESETS:
+        return mode, PRESETS[mode]
+    fallback = next(iter(PRESETS))
+    return fallback, PRESETS[fallback]
+
 
 class FallingTSSelectorNode:
     """下拉档位选择器: 一个下拉同时控制 steps / cfg / seed 模式与种子值。"""
@@ -77,14 +91,15 @@ class FallingTSSelectorNode:
 
     @classmethod
     def IS_CHANGED(cls, mode: str, fixed_seed: int, **kwargs) -> Any:
-        preset = PRESETS[mode]
+        _, preset = _resolve_preset(mode)
         if preset["seed_mode"] == "random":
             # 随机档位: 每次执行都变化, 带动下游 KSampler 重新采样
             return time.time()
-        return (mode, fixed_seed)
+        resolved, _ = _resolve_preset(mode)
+        return (resolved, fixed_seed)
 
     def execute(self, mode: str, fixed_seed: int):
-        preset = PRESETS[mode]
+        resolved, preset = _resolve_preset(mode)
         steps = int(preset["steps"])
         cfg = float(preset["cfg"])
         if preset["seed_mode"] == "random":
@@ -93,7 +108,7 @@ class FallingTSSelectorNode:
         else:
             seed = int(fixed_seed)
             random_seed = False
-        return (steps, cfg, seed, random_seed, mode)
+        return (steps, cfg, seed, random_seed, resolved)
 
 
 NODE_CLASS_MAPPINGS = {
