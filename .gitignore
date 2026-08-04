@@ -4,8 +4,7 @@
 .env.*.local
 !.env.example
 
-# 本地智能体/编辑器配置
-.claude/
+# 本地智能体/编辑器配置(注意: .claude/ 已纳入版本库, 提交前请确保无密钥)
 .idea/
 .vscode/
 *.swp
