@@ -77,7 +77,9 @@ ComfyUI-FallingTS/
 ├── __init__.py       # 入口:WEB_DIRECTORY + NODE_CLASS_MAPPINGS
 ├── plugin.py         # 节点注册(V1 映射 + V3 ComfyExtension)
 ├── config.py         # .env 配置管理(纯 Python,无依赖)
-├── fallingts_continue.py # 分段执行控制节点(暂停/继续/重跑)
+├── fallingts_continue/   # 分段执行控制节点(暂停/继续/重跑)
+│   ├── nodes.py          #   FallingTSContinue 节点 + HTTP 路由
+│   └── __init__.py
 ├── seedance/         # Seedance 2.0 视频生成
 │   ├── nodes.py      #   节点定义(2 个)
 │   ├── api.py        #   Volcengine HTTP 客户端

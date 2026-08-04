@@ -14,7 +14,7 @@ from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
-from fallingts_continue import FallingTSContinueNode
+from fallingts_continue.nodes import FallingTSContinueNode
 
 logger = logging.getLogger(__name__)
 

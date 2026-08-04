@@ -1,4 +1,4 @@
-# fallingts_continue.py
+# continue/nodes.py
 """FallingTS 继续节点: 工作流分段执行控制。
 
 行为:
@@ -31,7 +31,7 @@ ANY = AnyType("*")
 
 
 class FallingTSContinueNode:
-    """分段执行控制节点: 数据透传 + 暂停/继续/重跑。"""
+    """分段执行控制节点: 通用数据透传 + 暂停/继续/重跑。"""
 
     # 每个等待中的运行一个 Event: node_id -> deque[threading.Event]
     _waiters: dict[str, deque[threading.Event]] = {}
