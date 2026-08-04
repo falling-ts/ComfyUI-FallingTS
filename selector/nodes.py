@@ -1,114 +1,64 @@
 # selector/nodes.py
-"""FallingTS 档位选择器: 一个下拉档位统一控制生成参数 (steps / cfg / seed)。
-
-背景: ComfyUI 核心只有 Not/And/Or/If-Else Switch 等二选一逻辑节点,
-没有"一个下拉档位同时控制流程中多个参数"的组件。本节点用下拉预设
-替代工作流里 Primitive + Switch 组成的参数联动链。
+"""FallingTS 下拉选择器: 文本输入框(英文逗号分隔选项) + 下拉框选择, 输出选中的选项字符串。
 
 行为:
-- 下拉选择一个档位 (如 4步加速 / 20步标准), 一次输出 steps/cfg/seed;
-- seed_mode 为 "random" 时, 每次执行自动生成新随机种子, 且 IS_CHANGED
-  返回变化值, 强制带动下游 KSampler 重新采样 (等价于 KSampler 的
-  control_after_generate=randomize);
-- seed_mode 为 "fixed" 时输出固定种子, 结果可复现, 且可正常命中缓存。
+- items 文本框里用英文逗号写选项列表, 例如 "4步加速,20步标准,30步精修";
+- 下拉框 (selection) 会跟随 items 内容实时更新选项 (前端 web/js/selector.js 联动);
+- 下拉选择哪个 item, 节点就输出哪个 item 字符串, 进入下一个节点;
+- selection 值不在 items 列表时 (旧工作流/手动改动), 回退到第一项, 不报错。
 """
 
 from __future__ import annotations
 
-import random
-import time
-from typing import Any
-
-# 档位预设: 每档定义生成参数
-# seed_mode: "random" = 每次执行随机种子; "fixed" = 固定使用 fixed_seed 输入
-PRESETS: dict[str, dict[str, Any]] = {
-    "4步加速": {
-        "steps": 4,
-        "cfg": 1.0,
-        "seed_mode": "random",
-        "tooltip": "极速出图, 细节较少, 种子自动随机",
-    },
-    "20步标准": {
-        "steps": 20,
-        "cfg": 2.5,
-        "seed_mode": "fixed",
-        "tooltip": "标准质量, 种子固定可复现",
-    },
-    "30步精修": {
-        "steps": 30,
-        "cfg": 3.0,
-        "seed_mode": "fixed",
-        "tooltip": "更高质量, 耗时更长, 种子固定可复现",
-    },
-}
-
-# 模块加载时校验档位结构, 避免手改 PRESETS 时字段缺失到运行时才炸
-for _name, _cfg in PRESETS.items():
-    for _field in ("steps", "cfg", "seed_mode"):
-        if _field not in _cfg:
-            raise ValueError(f"FallingTSSelector: 档位 '{_name}' 缺少字段 '{_field}'")
+DEFAULT_ITEMS = "4步加速,20步标准,30步精修"
 
 
-def _resolve_preset(mode: str) -> tuple[str, dict[str, Any]]:
-    """按档位名取预设; 档位名无效(保存的旧工作流引用已删除/改名的档位)时回退到第一个档位。"""
-    if mode in PRESETS:
-        return mode, PRESETS[mode]
-    fallback = next(iter(PRESETS))
-    return fallback, PRESETS[fallback]
+def _split_items(items: str) -> list[str]:
+    """按英文逗号拆分并去空白, 忽略空项。"""
+    return [s.strip() for s in (items or "").split(",") if s.strip()]
 
 
 class FallingTSSelectorNode:
-    """下拉档位选择器: 一个下拉同时控制 steps / cfg / seed 模式与种子值。"""
+    """文本+下拉选择器: 逗号分隔选项写在文本框, 下拉选哪个就输出哪个。"""
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
+        default_options = _split_items(DEFAULT_ITEMS)
         return {
             "required": {
-                "mode": (
-                    list(PRESETS.keys()),
+                "items": (
+                    "STRING",
                     {
-                        "default": "20步标准",
-                        "tooltip": "选择生成档位, 一次性设置 steps/cfg/seed",
+                        "default": DEFAULT_ITEMS,
+                        "multiline": False,
+                        "tooltip": "用英文逗号分隔的选项列表, 下拉框会跟随此内容更新",
                     },
                 ),
-                "fixed_seed": (
-                    "INT",
+                "selection": (
+                    default_options,
                     {
-                        "default": 189167814536999,
-                        "min": 0,
-                        "max": 0xFFFFFFFFFFFFFFFF,
-                        "step": 1,
-                        "tooltip": "固定模式 (20步标准/30步精修) 使用的种子值",
+                        "default": default_options[0] if default_options else "",
+                        "tooltip": "从上方选项列表中选一个, 选中项作为输出",
                     },
                 ),
             },
         }
 
-    RETURN_TYPES = ("INT", "FLOAT", "INT", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("steps", "cfg", "seed", "random_seed", "mode")
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("selection",)
     FUNCTION = "execute"
     CATEGORY = "FallingTS/工具"
 
     @classmethod
-    def IS_CHANGED(cls, mode: str, fixed_seed: int, **kwargs) -> Any:
-        _, preset = _resolve_preset(mode)
-        if preset["seed_mode"] == "random":
-            # 随机档位: 每次执行都变化, 带动下游 KSampler 重新采样
-            return time.time()
-        resolved, _ = _resolve_preset(mode)
-        return (resolved, fixed_seed)
+    def IS_CHANGED(cls, items: str, selection: str):
+        return (items, selection)
 
-    def execute(self, mode: str, fixed_seed: int):
-        resolved, preset = _resolve_preset(mode)
-        steps = int(preset["steps"])
-        cfg = float(preset["cfg"])
-        if preset["seed_mode"] == "random":
-            seed = random.randrange(0, 0xFFFFFFFFFFFFFFFF)
-            random_seed = True
-        else:
-            seed = int(fixed_seed)
-            random_seed = False
-        return (steps, cfg, seed, random_seed, resolved)
+    def execute(self, items: str, selection: str):
+        options = _split_items(items)
+        if selection in options:
+            return (selection,)
+        # 旧工作流或手动改动导致 selection 不在列表里: 回退第一项
+        return (options[0] if options else selection,)
 
 
 NODE_CLASS_MAPPINGS = {
@@ -116,5 +66,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FallingTSSelector": "FallingTS 档位选择器",
+    "FallingTSSelector": "FallingTS 下拉选择器",
 }
