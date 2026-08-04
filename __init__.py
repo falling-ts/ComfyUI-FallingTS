@@ -22,7 +22,9 @@ from seedance.nodes import (
     Seedance2ReferenceNode,
 )
 from proceed.nodes import FallingTSContinueNode
-from selector.nodes import FallingTSSelectorNode, FallingTSLatentRouterNode
+from selector.nodes import FallingTSSelectorNode
+from combo.nodes import FallingTSTableNode
+from switch.nodes import FallingTSSwitchNode
 
 __all__ = [
     "WEB_DIRECTORY",
@@ -34,5 +36,6 @@ __all__ = [
     "Seedance2ReferenceNode",
     "FallingTSContinueNode",
     "FallingTSSelectorNode",
-    "FallingTSLatentRouterNode",
+    "FallingTSTableNode",
+    "FallingTSSwitchNode",
 ]

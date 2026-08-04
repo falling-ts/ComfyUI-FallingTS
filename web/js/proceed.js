@@ -150,6 +150,11 @@ function randomizeValueControlWidgets(graph) {
   }
 }
 
+// 状态图标: 直接放在按钮文字前面 (▶ 可继续 / ↻ 可重跑),
+// 两种渲染模式都显示在按钮控件上, 不再单独绘制 icon。
+const BTN_LABEL_CONTINUE = "\u25b6 \u7ee7\u7eed"; // ▶ 继续
+const BTN_LABEL_RERUN = "\u21bb \u91cd\u8dd1"; // ↻ 重跑
+
 app.registerExtension({
   name: "FallingTS.Continue",
 
@@ -185,9 +190,11 @@ app.registerExtension({
     const setState = (s) => {
       node.properties = node.properties || {};
       node.properties[stateKey] = s;
+      btn.name = s === "rerun" ? BTN_LABEL_RERUN : BTN_LABEL_CONTINUE;
+      btn.label = btn.name;
     };
 
-    const btn = node.addWidget("button", "继续", null, async () => {
+    const btn = node.addWidget("button", BTN_LABEL_CONTINUE, null, async () => {
       const targets = collectOutputsAfter(node);
       if (!targets.length) {
         console.warn("[FallingTS] 该继续节点之后没有可执行的输出节点");
@@ -198,7 +205,6 @@ app.registerExtension({
           await fetch(`/proceed/continue/${node.id}`, { method: "POST" });
           await queueSegment(targets);
           setState("rerun");
-          btn.name = "重跑";
           app.graph.setDirtyCanvas(true, false);
         } catch (err) {
           console.error("[FallingTS] 继续失败:", err);

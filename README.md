@@ -11,6 +11,9 @@ ComfyUI 自定义节点插件:通过**火山引擎(Volcengine)ARK API** 接入 *
 | Seedance 2.0 首尾帧生视频 | `Seedance2FirstLastFrame` | 首帧/尾帧图片 + 文本提示词,生成过渡视频 |
 | Seedance 2.0 多模态参考生视频 | `Seedance2Reference` | 多张参考图 + 文本提示词,生成视频 |
 | FallingTS 继续节点 | `FallingTSContinue` | 工作流分段执行控制:暂停 →「继续」放行 /「重跑」从中断点重跑下游(无需 API) |
+| FallingTS 下拉选择器 | `FallingTSSelector` | 文本+下拉:逗号分隔选项实时更新下拉,选中项输出索引(INT) + 选项文本(STRING) |
+| FallingTS 分组开关 | `FallingTSSwitch` | 参考官方切换:一个 switch 布尔同时控制 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
+| FallingTS 通用表格 | `FallingTSTable` | Excel 式通用表格(数据内嵌工作流):最左索引列 + A/B/C... 列,输入行索引输出该行各列字符串(STRING),行数/列数可调,输出端口随列数增减 |
 
 ### Web 前端增强(安装即用,无需配置)
 
@@ -80,11 +83,15 @@ ComfyUI-FallingTS/
 ├── proceed/              # 分段执行控制节点(暂停/继续/重跑)
 │   ├── nodes.py          #   FallingTSContinue 节点 + HTTP 路由
 │   └── __init__.py
+├── combo/                # 通用表格节点 (Excel 式)
+│   ├── nodes.py          #   FallingTSTable 节点 (A/B/C... 列, STRING 输出)
+│   └── __init__.py
 ├── seedance/         # Seedance 2.0 视频生成
 │   ├── nodes.py      #   节点定义(2 个)
 │   ├── api.py        #   Volcengine HTTP 客户端
 │   └── models.py     #   数据模型 + 定价
 ├── web/js/           # 前端扩展(ComfyUI 自动加载)
+├── locales/          # i18n 翻译(zh/nodeDefs.json, 节点与控件显示名)
 ├── .env.example      # 环境配置模板
 └── README.md
 ```

@@ -14,8 +14,10 @@ from seedance.nodes import (
     Seedance2FirstLastFrameNode,
     Seedance2ReferenceNode,
 )
-from proceed.nodes import FallingTSContinueNode, FallingTSResolutionNode
-from selector.nodes import FallingTSSelectorNode, FallingTSLatentRouterNode
+from proceed.nodes import FallingTSContinueNode
+from selector.nodes import FallingTSSelectorNode
+from combo.nodes import FallingTSTableNode
+from switch.nodes import FallingTSSwitchNode
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +27,15 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "Seedance2FirstLastFrame": Seedance2FirstLastFrameNode,
     "Seedance2Reference": Seedance2ReferenceNode,
     "FallingTSContinue": FallingTSContinueNode,
-    "FallingTSResolution": FallingTSResolutionNode,
     "FallingTSSelector": FallingTSSelectorNode,
-    "FallingTSLatentRouter": FallingTSLatentRouterNode,
+    "FallingTSTable": FallingTSTableNode,
+    "FallingTSSwitch": FallingTSSwitchNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSSelector": "FallingTS 下拉选择器",
-    "FallingTSLatentRouter": "下拉选择路由",
-    "FallingTSResolution": "FallingTS 分辨率选择",
+    "FallingTSTable": "FallingTS 通用表格 (Excel 式)",
+    "FallingTSSwitch": "FallingTS 分组开关 (total组)",
     "Seedance2FirstLastFrame": "Seedance 2.0 首尾帧生视频",
     "Seedance2Reference": "Seedance 2.0 多模态参考生视频",
     "FallingTSContinue": "FallingTS 继续节点",
