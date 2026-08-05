@@ -20,25 +20,41 @@ function getStore(id) {
   }
 }
 
-// 使用 ComfyUI 内置的高颜值确认弹窗(与"关闭未保存工作流"同一个弹窗)
-async function confirmUnsaved(workflowPath) {
-  try {
-    const base = window.comfyAPI?.api?.api?.api_base ?? '';
-    const { useDialogService } = await import(
-      base + '/assets/dialogService-N3xri-RQ.js'
-    );
-    const result = await useDialogService().confirm({
-      title: '工作流未保存',
-      message: '重载会丢失, 是否确认',
-      type: 'default',
-      ...(workflowPath ? { itemList: [workflowPath] } : {}),
-    });
-    // true=确认, false=取消, null=关闭弹窗
-    return result === true;
-  } catch (e) {
-    console.warn('[WorkflowReload] 内置弹窗加载失败,回退到 window.confirm:', e);
-    return window.confirm('工作流未保存, 重载会丢失, 是否确认');
-  }
+// 使用 ComfyUI 稳定暴露的旧版确认弹窗 (window.comfyAPI.ui.ComfyDialog),
+// 不依赖任何带 hash 的构建 chunk, 前端升级后依然可用。
+function confirmUnsaved(workflowPath) {
+  return new Promise((resolve) => {
+    const ComfyDialog =
+      window.comfyAPI?.ui?.ComfyDialog || window.comfyAPI?.dialog?.ComfyDialog;
+    if (!ComfyDialog) {
+      console.warn('[WorkflowReload] ComfyDialog 不可用,回退到 window.confirm');
+      resolve(window.confirm('工作流未保存, 重载会丢失, 是否确认'));
+      return;
+    }
+
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      dialog.close();
+      resolve(val);
+    };
+
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.textContent = '确认';
+    okBtn.onclick = () => finish(true);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = '取消';
+    cancelBtn.onclick = () => finish(false);
+
+    const dialog = new ComfyDialog('div', [okBtn, cancelBtn]);
+    const msg =
+      '工作流未保存, 重载会丢失, 是否确认' +
+      (workflowPath ? '\n' + workflowPath : '');
+    dialog.show(msg);
+  });
 }
 
 async function reloadFromDisk() {

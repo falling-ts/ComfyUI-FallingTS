@@ -566,5 +566,6 @@ from comfy.comfy_types import IO, ComfyNodeABC, InputTypeDict
 
 | 规则文件 | 说明 |
 |---------|------|
-| [rules/project.md](rules/project.md) | 项目开发规范: API 使用, 节点开发, 错误处理, 异步执行 |
-| [rules/seedance-video.md](rules/seedance-video.md) | Seedance 2.0 视频生成: 模型版本, 节点参数, 定价, 预处理约束 |
+| [rules/project.md](.claude/rules/project.md) | 项目开发规范: API 使用, 节点开发, 错误处理, 异步执行 |
+| [rules/seedance.md](.claude/rules/seedance.md) | Seedance 2.0 视频生成: 模型版本, 节点参数, 定价, 预处理约束 |
+| [rules/seedance-api.md](.claude/rules/seedance-api.md) | Seedance 2.0 API 参考 |

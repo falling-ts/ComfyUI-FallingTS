@@ -11,10 +11,18 @@
 // 输出端口动态增删: 后端声明最多 MAX_COLS 个 STRING 输出;
 // 前端根据列数 removeOutput/addOutput。加载工作流时 configure 的 cloneObject
 // 先按保存的 outputs 覆盖端口, 再在 widget.setValue / onConfigure 中按列数对齐。
+//
+// 格子高度自适应 (2026-08-05):
+// - 每个单元格是 textarea, 输入时按内容 (scrollHeight) 自动撑高, 整行随之变高,
+//   不再需要手动拖拽 resize 手柄;
+// - 表格整体高度会带动节点长高 (最多到滚动区上限), 内容清空后节点保持高度,
+//   不会反向收缩打扰手动调整过的尺寸;
+// - 鼠标滚轮在格子内滚动时优先滚动表格, 表格不能滚时才交给画布 (缩放/平移)。
 import { app } from "../../../scripts/app.js";
 
 const WIDGET_TYPE = "FALLINGTS_TABLE";
 const MAX_COLS = 52;
+const MIN_WIDGET_HEIGHT = 200; // 表格控件最小高度 (滚动区 420 + 底部行/列控件等)
 
 const DEFAULT_STATE = {
   row_count: 3,
@@ -129,7 +137,7 @@ function buildRoot() {
 
   root.appendChild(scroll);
   root.appendChild(footer);
-  return { root, table, footer };
+  return { root, scroll, table, footer };
 }
 
 function mkLabel(text) {
@@ -161,12 +169,55 @@ function mkNumInput(min, max, value, onChange) {
   return inp;
 }
 
+// 让 textarea 高度跟随内容 (scrollHeight), 内容为空/元素未显示时保持原样
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  const h = ta.scrollHeight;
+  if (h > 0) ta.style.height = h + "px";
+}
+
 function createTableWidget(node, inputName, inputData) {
   let state = normalize(inputData?.[1]?.default ?? DEFAULT_STATE);
-  const { root, table, footer } = buildRoot();
+  const { root, scroll, table, footer } = buildRoot();
+
+  // addDOMWidget 返回后赋值; 用于读取 widget.y / margin 推算节点高度
+  let widgetRef = null;
+  // 一帧内多次输入只同步一次节点高度
+  let rafPending = false;
 
   function emitDirty() {
     node.setDirtyCanvas?.(true, true);
+  }
+
+  // 表格控件当前应有的高度 = 表格实际渲染高度(受滚动区 max-height 限制)
+  // + 底部行/列控件 + 容器上下 padding
+  function currentWidgetTargetHeight() {
+    return Math.max(
+      MIN_WIDGET_HEIGHT,
+      (scroll?.offsetHeight ?? 0) + (footer?.offsetHeight ?? 0) + 12
+    );
+  }
+
+  // 内容变高时把节点撑到刚好容纳表格控件 (只增不减, 尊重用户手动调过的尺寸)
+  function syncNodeHeight() {
+    const w = widgetRef;
+    if (!w || !node.graph) return;
+    if (node.flags?.collapsed) return;
+    // w.y 在第一次布局前为 0, 无法推算节点高度, 跳过 (等布局完成后再同步)
+    if (typeof w.y !== "number" || w.y <= 0) return;
+    const desired = w.y + currentWidgetTargetHeight() + (w.margin ?? 10);
+    if (desired > node.size[1] + 4) {
+      node.setSize?.([node.size[0], Math.max(120, Math.round(desired))]);
+    }
+  }
+
+  function scheduleSync() {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      syncNodeHeight();
+    });
   }
 
   function render() {
@@ -209,14 +260,32 @@ function createTableWidget(node, inputName, inputData) {
         ta.value = state.data[r][c];
         ta.rows = 1;
         ta.style.cssText =
-          "width:100%;box-sizing:border-box;resize:vertical;background:#1f1f1f;" +
-          "color:#eee;border:1px solid #444;border-radius:3px;font-size:11px;padding:2px;";
+          "width:100%;box-sizing:border-box;resize:none;overflow:hidden;" +
+          "line-height:1.4;background:#1f1f1f;color:#eee;border:1px solid #444;" +
+          "border-radius:3px;font-size:11px;padding:2px;";
         ta.addEventListener("input", () => {
           state.data[r][c] = ta.value;
+          autoGrow(ta);
           emitDirty();
+          scheduleSync();
         });
+        // 滚轮: 表格可滚动时优先滚动表格; 否则(含 Ctrl 缩放/横向)交给画布
+        ta.addEventListener(
+          "wheel",
+          (e) => {
+            if (e.ctrlKey) return;
+            if (scroll.scrollHeight <= scroll.clientHeight) return;
+            if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            scroll.scrollTop += e.deltaY;
+          },
+          { passive: false }
+        );
         td.appendChild(ta);
         tr.appendChild(td);
+        // 已在 DOM 中, 立即按已有内容撑高 (初始为空时无影响)
+        autoGrow(ta);
       }
       tbody.appendChild(tr);
     }
@@ -244,6 +313,24 @@ function createTableWidget(node, inputName, inputData) {
     footer.appendChild(
       mkLabel(`(${state.row_count} 行 × ${state.col_count} 列)`)
     );
+
+    // 内容已重建: 等布局完成后统一撑高所有格子并同步节点高度;
+    // 若控件还没挂载/显示 (如加载工作流早期) 量到的高度为 0, 最多重试几帧再量
+    let measureAttempts = 0;
+    const measureAndSync = () => {
+      let measured = false;
+      for (const ta of table.querySelectorAll("textarea")) {
+        if (ta.scrollHeight > 0) measured = true;
+        autoGrow(ta);
+      }
+      if (!measured && measureAttempts++ < 10) {
+        requestAnimationFrame(measureAndSync);
+        return;
+      }
+      scheduleSync();
+      emitDirty();
+    };
+    requestAnimationFrame(measureAndSync);
   }
 
   function resizeData() {
@@ -267,9 +354,10 @@ function createTableWidget(node, inputName, inputData) {
       render();
       syncOutputs(node, state.col_count);
     },
-    getMinHeight: () => 200,
+    getMinHeight: () => currentWidgetTargetHeight(),
     serialize: true,
   });
+  widgetRef = widget;
 
   // 新节点: 按默认列数裁剪后端声明的最多 52 个输出
   render();

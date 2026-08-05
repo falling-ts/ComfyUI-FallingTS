@@ -119,7 +119,8 @@ function firstContinueNode(graph) {
 
 async function queueSegment(targets, number = 0) {
   if (!targets?.length) return false;
-  await app.queuePrompt(number, 1, { queueNodeIds: targets });
+  // 部署版前端 app.queuePrompt 第 3 参即 queueNodeIds 数组 (非 options 对象)
+  await app.queuePrompt(number, 1, targets);
   return true;
 }
 
@@ -162,22 +163,23 @@ app.registerExtension({
     // 拦截默认 Run: 图中含继续节点时, 默认只执行第一段 (到第一个继续节点之前)
     const originalQueuePrompt = app.queuePrompt?.bind(app);
     if (originalQueuePrompt) {
-      app.queuePrompt = async function (number, batch, opts = {}) {
+      app.queuePrompt = async function (number, batch, queueNodeIds) {
         // 仅当调用方没有显式指定 queueNodeIds 时 (默认 Run / 自动队列),
         // 才把本次执行限制到"第一个继续节点之前"的第一段;
         // 「继续/重跑」按钮会显式传 queueNodeIds, 这里绝不能覆盖。
-        if (!opts?.queueNodeIds?.length) {
+        if (!queueNodeIds?.length) {
           // 分段执行会跳过官方随机化, 手动先更新 randomize/increment/decrement
           randomizeValueControlWidgets(app.graph);
           const first = firstContinueNode(app.graph);
           if (first) {
             const targets = collectOutputsBefore(first);
             if (targets.length) {
-              opts = { ...opts, queueNodeIds: targets };
+              queueNodeIds = targets;
             }
           }
         }
-        return originalQueuePrompt(number, batch, opts);
+        // 部署版前端第 3 参即数组 (非 options 对象), 直接透传
+        return originalQueuePrompt(number, batch, queueNodeIds);
       };
     }
   },

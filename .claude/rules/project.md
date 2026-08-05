@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-本项目是 ComfyUI Desktop 的插件扩展项目, 毗邻 `Default/ComfyUI/` 核心项目运行。所有插件代码应通过 ComfyUI 的版本化 API (`comfy_api/`) 交互。
+本项目是 ComfyUI 的插件扩展项目, 毗邻 `ComfyUI\` 核心项目运行。所有插件代码应通过 ComfyUI 的版本化 API (`comfy_api/`) 交互。
 
 ## 核心原则
 
