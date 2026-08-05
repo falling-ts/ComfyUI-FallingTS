@@ -18,6 +18,7 @@ from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
 from combo.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
+from previewvideo.nodes import PreviewVideoNode
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSSelector": FallingTSSelectorNode,
     "FallingTSTable": FallingTSTableNode,
     "FallingTSSwitch": FallingTSSwitchNode,
+    "PreviewVideo": PreviewVideoNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
@@ -39,6 +41,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "Seedance2FirstLastFrame": "Seedance 2.0 首尾帧生视频",
     "Seedance2Reference": "Seedance 2.0 多模态参考生视频",
     "FallingTSContinue": "FallingTS 继续节点",
+    "PreviewVideo": "Preview Video (不保存)",
 }
 
 # ─── V3 ComfyExtension (支持 comfy_entrypoint 注册) ─────

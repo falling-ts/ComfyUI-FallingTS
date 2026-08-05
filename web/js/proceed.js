@@ -124,6 +124,133 @@ async function queueSegment(targets, number = 0) {
   return true;
 }
 
+// 取 nodeOutput store (与 node_image_middleclick.js 同一访问方式)
+function getNodeOutputStore() {
+  try {
+    const el = document.getElementById("vue-app");
+    const pinia = el?.__vue_app__?.config?.globalProperties?.$pinia;
+    return pinia?._s?.get("nodeOutput") ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// 沿继续节点输入链路上溯, 跳过其它继续节点, 找最近的"有资源数据"的节点
+// (输出节点在 store 里有 images/audio/video 记录; 数据存在 -> 可用 temp 路径回灌)
+function findPreviousDataNode(node) {
+  const visited = new Set();
+  const queue = [];
+  for (const inp of node.inputs ?? []) {
+    const link = getLink(node.graph, inp.link);
+    if (link) queue.push(link.origin_id);
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    if (visited.has(nid)) continue;
+    visited.add(nid);
+    const n = node.graph?.getNodeById?.(nid);
+    if (!n) continue;
+    if (isContinueNode(n)) continue; // 上游继续节点不再深入
+    const store = getNodeOutputStore();
+    const out = store?.getNodeOutputs?.(n);
+    if (
+      out &&
+      ((Array.isArray(out.images) && out.images.length) ||
+        (Array.isArray(out.audio) && out.audio.length) ||
+        (Array.isArray(out.video) && out.video.length))
+    ) {
+      return n;
+    }
+    for (const inp of n.inputs ?? []) {
+      const link = getLink(n.graph, inp.link);
+      if (link) queue.push(link.origin_id);
+    }
+  }
+  return null;
+}
+
+// 取上一节点的第一个资源文件, 并判断类型
+function getPreviousResult(prevNode) {
+  const store = getNodeOutputStore();
+  const out = store?.getNodeOutputs?.(prevNode);
+  if (!out) return null;
+  if (Array.isArray(out.images) && out.images.length) {
+    const f = out.images[0];
+    if (f && typeof f.filename === "string") return { kind: "IMAGE", file: f };
+  }
+  if (Array.isArray(out.audio) && out.audio.length) {
+    const f = out.audio[0];
+    if (f && typeof f.filename === "string") return { kind: "AUDIO", file: f };
+  }
+  if (Array.isArray(out.video) && out.video.length) {
+    const f = out.video[0];
+    if (f && typeof f.filename === "string") return { kind: "VIDEO", file: f };
+  }
+  return null;
+}
+
+// 拼 annotated 路径: 例如 "ComfyUI_temp_xxx.png [temp]" / "sub/f.png [output]"
+function annotatedFilePath(file) {
+  const name = file.subfolder
+    ? String(file.subfolder).replace(/\\/g, "/") + "/" + file.filename
+    : file.filename;
+  const tag =
+    file.type === "input"
+      ? "[input]"
+      : file.type === "output"
+        ? "[output]"
+        : "[temp]";
+  return name + " " + tag;
+}
+
+// 回灌模式: 上一段有资源数据时, 注入加载节点直接读 temp/output 文件,
+// 把继续节点输入指向它, 提交本段 partial_execution_targets -> 上游完全不执行。
+async function queueSegmentFromPrevious(node, targets) {
+  if (!targets?.length) return false;
+  const prev = findPreviousDataNode(node);
+  const res = prev ? getPreviousResult(prev) : null;
+  if (!res) return false;
+
+  let gtp = null;
+  try {
+    gtp = app.graphToPrompt ? await app.graphToPrompt(app.graph) : null;
+  } catch {
+    gtp = null;
+  }
+  const prompt = gtp?.output ?? gtp;
+  const nodeKey = String(node.id);
+  if (!prompt || !prompt[nodeKey]) return false;
+
+  const loaderId = "mlz_prev_" + node.id;
+  const path = annotatedFilePath(res.file);
+  if (res.kind === "IMAGE") {
+    prompt[loaderId] = { class_type: "LoadImage", inputs: { image: path } };
+  } else if (res.kind === "AUDIO") {
+    prompt[loaderId] = { class_type: "LoadAudio", inputs: { audio: path } };
+  } else if (res.kind === "VIDEO") {
+    prompt[loaderId] = { class_type: "LoadVideo", inputs: { file: path } };
+  } else {
+    return false;
+  }
+  prompt[nodeKey].inputs.any = [loaderId, 0];
+
+  try {
+    const resp = await api.fetchApi("/prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        client_id: api.client_id,
+        partial_execution_targets: targets,
+      }),
+    });
+    if (!resp.ok) return false; // 校验失败(如 temp 文件已被清理) -> 回退缓存模式
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // 默认 Run 被我们改成分段执行 (isPartialExecution=true) 后,
 // ComfyUI 官方 nextValueForLinkedTarget 会跳过 randomize/increment/decrement,
 // 导致种子不变、KSampler 一直命中缓存。这里在提交前手动执行一次值更新。
@@ -205,7 +332,8 @@ app.registerExtension({
       if (getState() === "continue") {
         try {
           await fetch(`/proceed/continue/${node.id}`, { method: "POST" });
-          await queueSegment(targets);
+          const usedPrev = await queueSegmentFromPrevious(node, targets);
+          if (!usedPrev) await queueSegment(targets); // 无上一段数据/失败时保持缓存模式
           setState("rerun");
           app.graph.setDirtyCanvas(true, false);
         } catch (err) {

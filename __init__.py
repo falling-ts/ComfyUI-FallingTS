@@ -25,6 +25,7 @@ from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
 from combo.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
+from previewvideo.nodes import PreviewVideoNode
 
 __all__ = [
     "WEB_DIRECTORY",
@@ -38,4 +39,5 @@ __all__ = [
     "FallingTSSelectorNode",
     "FallingTSTableNode",
     "FallingTSSwitchNode",
+    "PreviewVideoNode",
 ]

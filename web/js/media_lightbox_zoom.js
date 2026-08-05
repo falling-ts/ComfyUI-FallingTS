@@ -36,7 +36,13 @@ function findLightbox() {
   for (const d of dialogs) {
     if (!isLightbox(d)) continue;
     const img = d.querySelector('img');
-    if (img && img.classList.contains('max-h-[90vh]')) return d;
+    if (
+      img &&
+      (img.classList.contains('max-h-[90vh]') ||
+        img.classList.contains('mlz-img'))
+    ) {
+      return d;
+    }
   }
   return null;
 }
@@ -245,7 +251,9 @@ function ensureToolbar(dialog) {
 
 function initDialog(dialog) {
   state.dialog = dialog;
-  state.img = dialog.querySelector('img');
+  const imgs = [...dialog.querySelectorAll('.mlz-img')];
+  state.imgs = imgs.length ? imgs : null;
+  state.img = imgs.length ? imgs[0] : dialog.querySelector('img');
   resetZoom();
 
   // 禁用原生图片拖拽, 交给自定义平移
@@ -272,6 +280,7 @@ function cleanupDialog(dialog) {
   window.removeEventListener('mouseup', onMouseUp);
   state.dialog = null;
   state.img = null;
+  state.imgs = null;
   state.zoom = 1;
   state.pan = { x: 0, y: 0 };
   state.dragging = false;
@@ -295,11 +304,13 @@ app.registerExtension({
         currentDialog = null;
       } else if (dlg === currentDialog && currentDialog) {
         // 切换上一张/下一张: 图片元素被 Vue 重建(key 变化), 重置缩放并重新绑定
-        const img = currentDialog.querySelector('img');
-        if (img && img !== state.img) {
-          state.img = img;
-          img.draggable = false;
-          resetZoom();
+        if (!currentDialog.querySelector('.mlz-row')) {
+          const img = currentDialog.querySelector('img');
+          if (img && img !== state.img) {
+            state.img = img;
+            img.draggable = false;
+            resetZoom();
+          }
         }
       }
     };
@@ -307,5 +318,15 @@ app.registerExtension({
     tick();
     const observer = new MutationObserver(tick);
     observer.observe(document.body, { childList: true, subtree: true });
+    // 自研横向预览: 中键插件切换聚焦图时, 跟随当前图并重置缩放基准
+    window.addEventListener('mlz:focus', (e) => {
+      if (e.detail && currentDialog) {
+        state.img = e.detail;
+        if (state.img) {
+          state.img.draggable = false;
+          resetZoom();
+        }
+      }
+    });
   },
 });

@@ -84,8 +84,21 @@ function collectImageEntries(node) {
       /^(https?:|data:|blob:)/i.test(s));
 
   const push = (entry) => {
-    const key =
-      entry.url ?? `${entry.filename}|${entry.subfolder ?? ''}|${entry.type ?? ''}`;
+    let key;
+    if (entry.url) {
+      try {
+        const u = new URL(entry.url, location.href);
+        if (u.pathname.endsWith('/view') || u.pathname.endsWith('/view/')) {
+          key = `${u.searchParams.get('filename')}|${u.searchParams.get('subfolder') ?? ''}|${u.searchParams.get('type') ?? ''}`;
+        } else {
+          key = entry.url;
+        }
+      } catch {
+        key = entry.url;
+      }
+    } else {
+      key = `${entry.filename}|${entry.subfolder ?? ''}|${entry.type ?? ''}`;
+    }
     if (!key || seen.has(key)) return;
     seen.add(key);
     found.push(entry);
@@ -214,8 +227,18 @@ let current = 0;
 
 function renderOverlay() {
   if (!overlay) return;
-  const img = overlay.querySelector('.mlz-main-img');
-  if (img && urls.length) img.src = urls[current] ?? '';
+  const imgs = overlay.querySelectorAll('.mlz-img');
+  imgs.forEach((im, i) => {
+    im.style.borderColor = i === current ? 'rgba(255,255,255,.9)' : 'transparent';
+    im.style.boxShadow = i === current ? '0 0 0 1px rgba(255,255,255,.35)' : 'none';
+  });
+  const curImg = imgs[current];
+  if (curImg && curImg.scrollIntoView) {
+    try {
+      curImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    } catch {}
+  }
+  window.dispatchEvent(new CustomEvent('mlz:focus', { detail: curImg || null }));
   const counter = overlay.querySelector('.mlz-counter');
   if (counter) {
     if (urls.length > 1) {
@@ -312,16 +335,32 @@ function openOverlay(list, startIndex) {
     'position:fixed;top:50%;right:16px;z-index:10;transform:translateY(-50%);' +
     'border-radius:9999px;width:40px;height:40px;font-size:22px;';
 
-  const content = document.createElement('div');
-  content.className = 'flex max-h-full max-w-full items-center justify-center';
+  // 多图横向并排(单图也走同一布局, 兼容 1 张的情况)
+  const row = document.createElement('div');
+  row.className = 'mlz-row';
+  row.style.cssText =
+    'display:flex;align-items:center;gap:12px;max-width:92vw;max-height:88vh;' +
+    'overflow-x:auto;overflow-y:hidden;padding:10px;';
+  const maxW = Math.max(24, Math.floor(86 / urls.length));
+  urls.forEach((u, i) => {
+    const im = document.createElement('img');
+    im.className = 'mlz-img';
+    im.src = u;
+    im.alt = '';
+    im.draggable = false;
+    im.style.cssText =
+      'max-height:82vh;max-width:' + maxW + 'vw;object-fit:contain;' +
+      'border:2px solid transparent;border-radius:4px;cursor:pointer;' +
+      'flex-shrink:0;transition:border-color .15s, box-shadow .15s;';
+    im.addEventListener('click', (e) => {
+      e.stopPropagation();
+      current = i;
+      renderOverlay();
+    });
+    row.appendChild(im);
+  });
 
-  const img = document.createElement('img');
-  img.className =
-    'mlz-main-img size-auto max-h-[90vh] max-w-[90vw] object-contain';
-  img.draggable = false;
-  content.appendChild(img);
-
-  dlg.append(counter, closeBtn, prevBtn, content, nextBtn);
+  dlg.append(counter, closeBtn, prevBtn, row, nextBtn);
 
   // 点遮罩关闭(与内置弹层相同逻辑: 按下和松开都在遮罩上才关闭)
   let maskDown = null;
