@@ -1,5 +1,5 @@
 # comfy-desktop-plugins
-# 自定义视频生成节点插件 - 通过 Volcengine API 接入 Seedance 2.0
+# 自定义节点插件:通用工具节点 + 前端增强
 #
 # 加载方式:
 #   1. 目录链接到 custom_nodes/comfy_desktop_plugins/
@@ -17,10 +17,6 @@ if _plugin_dir not in sys.path:
     sys.path.insert(0, _plugin_dir)
 
 from plugin import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, inject, comfy_entrypoint
-from seedance.nodes import (
-    Seedance2FirstLastFrameNode,
-    Seedance2ReferenceNode,
-)
 from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
 from combo.nodes import FallingTSTableNode
@@ -33,8 +29,6 @@ __all__ = [
     "NODE_DISPLAY_NAME_MAPPINGS",
     "inject",
     "comfy_entrypoint",
-    "Seedance2FirstLastFrameNode",
-    "Seedance2ReferenceNode",
     "FallingTSContinueNode",
     "FallingTSSelectorNode",
     "FallingTSTableNode",

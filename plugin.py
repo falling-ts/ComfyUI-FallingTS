@@ -10,10 +10,6 @@ import logging
 from comfy_api.latest import IO
 from comfy_api.latest import ComfyExtension
 
-from seedance.nodes import (
-    Seedance2FirstLastFrameNode,
-    Seedance2ReferenceNode,
-)
 from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
 from combo.nodes import FallingTSTableNode
@@ -25,8 +21,6 @@ logger = logging.getLogger(__name__)
 # ─── V1 节点注册表 (支持 custom_nodes/ 自动加载) ──────
 
 NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
-    "Seedance2FirstLastFrame": Seedance2FirstLastFrameNode,
-    "Seedance2Reference": Seedance2ReferenceNode,
     "FallingTSContinue": FallingTSContinueNode,
     "FallingTSSelector": FallingTSSelectorNode,
     "FallingTSTable": FallingTSTableNode,
@@ -38,8 +32,6 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSSelector": "FallingTS 下拉选择器",
     "FallingTSTable": "FallingTS 通用表格 (Excel 式)",
     "FallingTSSwitch": "FallingTS 分组开关 (total组)",
-    "Seedance2FirstLastFrame": "Seedance 2.0 首尾帧生视频",
-    "Seedance2Reference": "Seedance 2.0 多模态参考生视频",
     "FallingTSContinue": "FallingTS 继续节点",
     "PreviewVideo": "Preview Video (不保存)",
 }
