@@ -12,7 +12,7 @@ from comfy_api.latest import ComfyExtension
 
 from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
-from combo.nodes import FallingTSTableNode
+from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from previewvideo.nodes import PreviewVideoNode
 

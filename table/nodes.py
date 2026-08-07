@@ -1,4 +1,4 @@
-# combo/nodes.py
+# table/nodes.py
 """FallingTS 通用表格节点 (Excel 式, 数据内嵌工作流, 不读外部文件)。
 
 设计:

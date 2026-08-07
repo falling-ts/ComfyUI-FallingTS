@@ -1,3 +1,3 @@
-from previewvideo.nodes import PreviewVideoNode
+from .nodes import PreviewVideoNode
 
 __all__ = ["PreviewVideoNode"]

@@ -19,7 +19,7 @@ if _plugin_dir not in sys.path:
 from plugin import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, inject, comfy_entrypoint
 from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
-from combo.nodes import FallingTSTableNode
+from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from previewvideo.nodes import PreviewVideoNode
 

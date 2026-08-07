@@ -66,7 +66,7 @@ ComfyUI-FallingTS/
 ├── proceed/          # 分段执行控制节点(暂停/继续/重跑)
 │   ├── nodes.py      #   FallingTSContinue 节点 + HTTP 路由
 │   └── __init__.py
-├── combo/            # 通用表格节点 (Excel 式)
+├── table/            # 通用表格节点 (Excel 式)
 │   ├── nodes.py      #   FallingTSTable 节点 (A/B/C... 列, STRING 输出)
 │   └── __init__.py
 ├── selector/         # 下拉选择器节点
