@@ -5,9 +5,9 @@
  * - 后端继续节点把收到的 any 缓存在节点上(新数据覆盖), 未放行时阻塞下游;
  * - Run(默认): 先调 /proceed/reset 重置所有继续为阻塞并清缓存, 再全量提交 -> 生成段, #43 缓存+阻塞;
  * - 点「继续」#N: 后端校验节点有缓存(否则报"没有上游数据")并放行;
- *   前端断开 #N 的 any 输入(节点用自身缓存), partial_execution_targets =
- *   "下一个继续节点之后"的输出节点 -> 执行子图穿过并到达下一个继续,
- *   它收到本段预览输出 -> 缓存 -> 阻塞。于是从 #N 开始往下跑, 绝不从开头跑。
+ *   #N 的 any 输入声明为 lazy, 后端 check_lazy_status 按放行状态决定不拉上游(节点用自身缓存),
+ *   连线无需断开; partial_execution_targets = "下一个继续节点之后"的输出节点 ->
+ *   执行子图穿过并到达下一个继续, 它收到本段预览输出 -> 缓存 -> 阻塞。于是从 #N 开始往下跑, 绝不从开头跑。
  *
  * 数据完全来自节点自身的缓存, 不依赖注入、不依赖全局缓存判断从哪跑。
  */
@@ -190,7 +190,7 @@ app.registerExtension({
         return;
       }
 
-      /* 3. 构建 prompt, 断开本继续节点的 any 输入 (节点用自身缓存, 上游不执行) */
+      /* 3. 构建 prompt(保留 any 连线; 上游是否执行由后端 check_lazy_status 按放行状态决定) */
       let prompt = null;
       try {
         const gtp = app.graphToPrompt ? await app.graphToPrompt(app.graph) : null;
@@ -202,8 +202,6 @@ app.registerExtension({
         console.error("[FallingTS] 无法构建 prompt");
         return;
       }
-      /* any 是 optional, 断开 -> 节点返回缓存 */
-      delete prompt[String(node.id)].inputs.any;
 
       /* 4. 提交 partial execution */
       try {
