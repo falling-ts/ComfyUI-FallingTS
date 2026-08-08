@@ -22,6 +22,7 @@ from selector.nodes import FallingTSSelectorNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from previewvideo.nodes import PreviewVideoNode
+from route.nodes import FallingTSRouteNode
 
 __all__ = [
     "WEB_DIRECTORY",
@@ -30,6 +31,7 @@ __all__ = [
     "inject",
     "comfy_entrypoint",
     "FallingTSContinueNode",
+    "FallingTSRouteNode",
     "FallingTSSelectorNode",
     "FallingTSTableNode",
     "FallingTSSwitchNode",

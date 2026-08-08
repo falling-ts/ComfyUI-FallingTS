@@ -25,15 +25,11 @@
   },
   "FallingTSTable": {
     "display_name": "FallingTS 通用表格 (Excel 式)",
-    "description": "通用 Excel 式表格 (数据内嵌工作流): 输入行索引, 输出该行 A/B/C... 各列字符串; 行数/列数可调 (最少 1), 输出端口随列数增减。",
+    "description": "通用 Excel 式表格 (数据内嵌工作流): 顶部「选择」下拉选行, 输出该行 A/B/C... 各列字符串; 行数/列数可调 (最少 1), 输出端口随列数增减。",
     "inputs": {
-      "index": {
-        "name": "索引(数值)",
-        "tooltip": "行索引 (从 0 开始), 输出该行 A/B/C... 各列字符串"
-      },
       "rows": {
         "name": "表格数据 (索引 + A/B/C... 列)",
-        "tooltip": "通用表格: 最左索引列固定, 其后 A/B/C... 列 (行数/列数可调, 最少 1)"
+        "tooltip": "通用表格: 顶部「选择」下拉选行, 最左索引列固定, 其后 A/B/C... 列 (行数/列数/首列ID可调, 最少 1)"
       }
     }
   },
@@ -66,5 +62,29 @@
       "tooltip": "与输入完全一致的数据"
     }
   }
+  },
+  "FallingTSRoute": {
+    "display_name": "FallingTS 路由节点",
+    "description": "1 进 2 出路由: 一个值按 switch 路由到两路输出之一, 未选输出为阻断(ExecutionBlocker), 下游不执行。",
+    "inputs": {
+      "switch": {
+        "name": "切换",
+        "tooltip": "true → 输入走 真输出; false → 输入走 假输出; 未选输出为阻断"
+      },
+      "value": {
+        "name": "输入",
+        "tooltip": "要路由的值 (通常是本段结果图像)"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "假输出",
+        "tooltip": "switch=false 时输出输入值, switch=true 时为阻断"
+      },
+      "1": {
+        "name": "真输出",
+        "tooltip": "switch=true 时输出输入值, switch=false 时为阻断"
+      }
+    }
   }
 }

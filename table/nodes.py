@@ -2,10 +2,9 @@
 """FallingTS 通用表格节点 (Excel 式, 数据内嵌工作流, 不读外部文件)。
 
 设计:
-- 最左侧固定「索引」列 (从 0 开始, 与 index 输入严格对应), 其后依次为
-  A、B、C ... (Excel 列名规则, 支持到 AZ, 共 MAX_COLS=52 列);
-- 输入只有 index (行索引); 输出按列数动态生成 A/B/C..., 全部为 STRING;
-- 行数/列数由前端表格控件底部输入 (最少 1), 修改列数时右侧输出端口随之增减;
+- 最左侧固定「索引」列 (从 0 开始), 其后依次为 A、B、C ... (Excel 列名规则, 支持到 AZ, 共 MAX_COLS=52 列);
+- 行选择由前端「选择」下拉驱动 (值存 selected_index), 输出按列数动态生成 A/B/C..., 全部为 STRING;
+- 行数/列数/首列ID 由前端控件顶部输入 (最少 1), 修改列数时右侧输出端口随之增减;
 - 需要数值/其他类型时, 由用户在其后自行添加类型转换节点。
 """
 
@@ -29,6 +28,8 @@ def excel_col_name(i: int) -> str:
 DEFAULT_TABLE = {
     "row_count": 3,
     "col_count": 3,
+    "first_col_is_id": False,
+    "selected_index": 0,
     "data": [["", "", ""], ["", "", ""], ["", "", ""]],
 }
 
@@ -54,6 +55,8 @@ def normalize_table(value) -> dict:
             return {
                 "row_count": max(1, len(rows)),
                 "col_count": max(1, min(MAX_COLS, cc)),
+                "first_col_is_id": False,
+                "selected_index": 0,
                 "data": rows,
             }
         return dict(DEFAULT_TABLE)
@@ -65,6 +68,10 @@ def normalize_table(value) -> dict:
         col_count = max(1, min(MAX_COLS, int(value.get("col_count", 1))))
     except (TypeError, ValueError):
         row_count, col_count = 1, 1
+    try:
+        selected_index = max(0, int(value.get("selected_index", 0)))
+    except (TypeError, ValueError):
+        selected_index = 0
     src = value.get("data")
     if not isinstance(src, list):
         src = []
@@ -77,36 +84,33 @@ def normalize_table(value) -> dict:
                 for c in range(col_count)
             ]
         )
-    return {"row_count": row_count, "col_count": col_count, "data": data}
+    return {
+        "row_count": row_count,
+        "col_count": col_count,
+        "first_col_is_id": value.get("first_col_is_id") is True,
+        "selected_index": min(selected_index, row_count - 1),
+        "data": data,
+    }
 
 
 class FallingTSTableNode:
-    """通用 Excel 式表格: 输入行索引, 输出该行 A/B/C... 各列字符串。
+    """通用 Excel 式表格: 顶部「选择」下拉选行, 输出该行 A/B/C... 各列字符串。
 
     前端用 DOM 表格控件 (web/js/table_lookup.js) 编辑: 最左索引列固定,
-    其后 A/B/C... 列; 底部「行数/列数」输入 (最少 1); 修改列数时右侧
-    输出端口随之增减。数据内嵌工作流 JSON, 不读外部文件; 类型转换由
-    下游节点自行完成。
+    其后 A/B/C... 列; 顶部「选择/行数/列数/首列ID」控件 (最少 1); 修改
+    列数时右侧输出端口随之增减。数据内嵌工作流 JSON, 不读外部文件; 类型
+    转换由下游节点自行完成。
     """
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "index": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": 0,
-                        "max": 0xFFFFFFFF,
-                        "tooltip": "行索引 (从 0 开始), 输出该行 A/B/C... 各列字符串",
-                    },
-                ),
                 "rows": (
                     "FALLINGTS_TABLE",
                     {
                         "default": DEFAULT_TABLE,
-                        "tooltip": "通用表格: 最左索引列固定, 其后 A/B/C... 列 (行数/列数可调, 最少 1)",
+                        "tooltip": "通用表格: 顶部「选择」下拉选行, 最左索引列固定, 其后 A/B/C... 列 (行数/列数/首列ID可调, 最少 1)",
                     },
                 ),
             },
@@ -121,21 +125,17 @@ class FallingTSTableNode:
     FUNCTION = "execute"
     CATEGORY = "FallingTS/表格"
     DESCRIPTION = (
-        "通用 Excel 式表格 (数据内嵌工作流): 输入行索引, 输出该行 A/B/C... "
-        "各列字符串; 行数/列数可调 (最少 1), 输出端口随列数增减。"
+        "通用 Excel 式表格 (数据内嵌工作流): 顶部「选择」下拉选行, 输出该行 "
+        "A/B/C... 各列字符串; 行数/列数可调 (最少 1), 输出端口随列数增减。"
     )
-    SEARCH_ALIASES = ["表格", "表", "table", "excel", "行", "列", "查表", "数据表", "sheet"]
+    SEARCH_ALIASES = ["表格", "表", "table", "excel", "行", "列", "查表", "数据表", "sheet", "选择", "下拉"]
 
-    def execute(self, index: int, rows):
+    def execute(self, rows):
         state = normalize_table(rows)
         row_count = state["row_count"]
         col_count = state["col_count"]
         data = state["data"]
-        if index < 0 or index >= row_count:
-            raise ValueError(
-                f"FallingTSTable: 索引 {index} 超出范围 "
-                f"(表格共 {row_count} 行, 索引从 0 开始)"
-            )
+        index = state["selected_index"]
         row = data[index]
         cells = [""] * MAX_COLS
         for i in range(min(col_count, MAX_COLS)):

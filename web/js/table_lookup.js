@@ -28,6 +28,7 @@ const DEFAULT_STATE = {
   row_count: 3,
   col_count: 3,
   first_col_is_id: false,
+  selected_index: 0,
   data: [
     ["", "", ""],
     ["", "", ""],
@@ -64,6 +65,7 @@ function normalize(v) {
       row_count: Math.max(1, data.length),
       col_count: Math.min(MAX_COLS, Math.max(1, cc)),
       first_col_is_id: false,
+      selected_index: 0,
       data,
     };
   }
@@ -81,7 +83,10 @@ function normalize(v) {
     for (let c = 0; c < col_count; c++) row.push(String(srcRow[c] ?? ""));
     data.push(row);
   }
-  return { row_count, col_count, first_col_is_id: s.first_col_is_id === true, data };
+  let selected_index = Math.floor(Number(s.selected_index));
+  if (!Number.isFinite(selected_index)) selected_index = 0;
+  selected_index = Math.max(0, Math.min(selected_index, row_count - 1));
+  return { row_count, col_count, first_col_is_id: s.first_col_is_id === true, selected_index, data };
 }
 
 // 让节点输出端口与列数对齐: 首列为 ID 时第 0 端口命名 ID, 其后 A/B/C..., 类型固定 STRING
@@ -133,13 +138,14 @@ function buildRoot() {
     "width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;";
   scroll.appendChild(table);
 
-  const footer = document.createElement("div");
-  footer.style.cssText =
+  const controls = document.createElement("div");
+  controls.style.cssText =
     "display:flex;align-items:center;gap:8px;font-size:12px;color:#ccc;flex-wrap:wrap;";
 
+  // 控件放顶部: 选择下拉 + 行数/列数 + 首列ID, 表格在其下
+  root.appendChild(controls);
   root.appendChild(scroll);
-  root.appendChild(footer);
-  return { root, scroll, table, footer };
+  return { root, scroll, table, controls };
 }
 
 function mkLabel(text) {
@@ -180,7 +186,7 @@ function autoGrow(ta) {
 
 function createTableWidget(node, inputName, inputData) {
   let state = normalize(inputData?.[1]?.default ?? DEFAULT_STATE);
-  const { root, scroll, table, footer } = buildRoot();
+  const { root, scroll, table, controls } = buildRoot();
 
   // addDOMWidget 返回后赋值; 用于读取 widget.y / margin 推算节点高度
   let widgetRef = null;
@@ -196,7 +202,7 @@ function createTableWidget(node, inputName, inputData) {
   function currentWidgetTargetHeight() {
     return Math.max(
       MIN_WIDGET_HEIGHT,
-      (scroll?.offsetHeight ?? 0) + (footer?.offsetHeight ?? 0) + 12
+      (scroll?.offsetHeight ?? 0) + (controls?.offsetHeight ?? 0) + 12
     );
   }
 
@@ -298,9 +304,9 @@ function createTableWidget(node, inputName, inputData) {
     }
     table.appendChild(tbody);
 
-    // 底部: 选择下拉 + 行数 / 列数 (最少 1) + 首列ID
-    footer.innerHTML = "";
-    footer.appendChild(mkLabel("选择:"));
+    // 顶部: 选择下拉 + 行数 / 列数 (最少 1) + 首列ID
+    controls.innerHTML = "";
+    controls.appendChild(mkLabel("选择:"));
     const sel = document.createElement("select");
     sel.style.cssText =
       "width:170px;box-sizing:border-box;background:#1f1f1f;color:#eee;" +
@@ -315,30 +321,27 @@ function createTableWidget(node, inputName, inputData) {
       opt.textContent = id || `第${r + 1}行`;
       sel.appendChild(opt);
     }
-    // 默认跟随当前 index widget 值
-    const curIdx = node.widgets?.find((w) => w.name === "index")?.value;
+    // 默认跟随当前选中行
+    const curIdx = state.selected_index;
     if (Number.isFinite(curIdx) && curIdx >= 0 && curIdx < state.row_count) {
       sel.value = String(curIdx);
     }
-    // 选择 -> 写 index widget, 下次 Run 输出该行
+    // 选择 -> 写 state.selected_index, 下次 Run 输出该行
     sel.addEventListener("change", () => {
-      const w = node.widgets?.find((w) => w.name === "index");
-      const idx = Number(sel.value);
-      if (!w) return;
-      w.value = idx;
-      w.callback?.(idx);
-      node.setDirtyCanvas?.(true, true);
+      state.selected_index = Number(sel.value);
+      emitDirty();
     });
-    footer.appendChild(sel);
-    footer.appendChild(mkLabel("行数:"));
+    controls.appendChild(sel);
+    controls.appendChild(mkLabel("行数:"));
     const rowInput = mkNumInput(1, 100000, state.row_count, (v) => {
       state.row_count = v;
+      state.selected_index = Math.min(state.selected_index, state.row_count - 1);
       resizeData();
       render();
       emitDirty();
     });
-    footer.appendChild(rowInput);
-    footer.appendChild(mkLabel("列数:"));
+    controls.appendChild(rowInput);
+    controls.appendChild(mkLabel("列数:"));
     const colInput = mkNumInput(1, MAX_COLS, state.col_count, (v) => {
       state.col_count = v;
       resizeData();
@@ -346,8 +349,8 @@ function createTableWidget(node, inputName, inputData) {
       syncOutputs(node, state.col_count, state.first_col_is_id);
       emitDirty();
     });
-    footer.appendChild(colInput);
-    footer.appendChild(
+    controls.appendChild(colInput);
+    controls.appendChild(
       mkLabel(`(${state.row_count} 行 × ${state.col_count} 列)`)
     );
     // 首列为 ID: 控制表头/端口命名与下拉标签来源
@@ -361,8 +364,8 @@ function createTableWidget(node, inputName, inputData) {
       syncOutputs(node, state.col_count, state.first_col_is_id);
       emitDirty();
     });
-    footer.appendChild(idCb);
-    footer.appendChild(mkLabel("首列ID"));
+    controls.appendChild(idCb);
+    controls.appendChild(mkLabel("首列ID"));
 
     // 内容已重建: 等布局完成后统一撑高所有格子并同步节点高度;
     // 若控件还没挂载/显示 (如加载工作流早期) 量到的高度为 0, 最多重试几帧再量

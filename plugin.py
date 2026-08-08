@@ -15,6 +15,7 @@ from selector.nodes import FallingTSSelectorNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from previewvideo.nodes import PreviewVideoNode
+from route.nodes import FallingTSRouteNode
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSContinue": FallingTSContinueNode,
+    "FallingTSRoute": FallingTSRouteNode,
     "FallingTSSelector": FallingTSSelectorNode,
     "FallingTSTable": FallingTSTableNode,
     "FallingTSSwitch": FallingTSSwitchNode,
@@ -33,6 +35,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSTable": "FallingTS 通用表格 (Excel 式)",
     "FallingTSSwitch": "FallingTS 分组开关 (total组)",
     "FallingTSContinue": "FallingTS 继续节点",
+    "FallingTSRoute": "FallingTS 路由节点 (1进2出)",
     "PreviewVideo": "Preview Video (不保存)",
 }
 
