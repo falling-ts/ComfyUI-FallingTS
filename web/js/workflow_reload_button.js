@@ -10,6 +10,12 @@
 
 const { app } = window.comfyAPI.app;
 
+/**
+ * 从 Vue pinia store 按 id 取 store 对象。
+ *
+ * @param {string} id store id(如 "workflow" / "userFile")
+ * @returns {object|null} pinia store 对象; 不可用时返回 null
+ */
 function getStore(id) {
   try {
     const el = document.getElementById('vue-app');
@@ -20,8 +26,13 @@ function getStore(id) {
   }
 }
 
-// 自包含确认弹窗: 不依赖 ComfyDialog / window.confirm(前端升级后这些 API 可能变化/失效),
-// 用纯 DOM 渲染, 保证"未保存→确认"弹窗一定出现。
+/**
+ * 自包含确认弹窗(不依赖 ComfyDialog / window.confirm): 未保存时弹"确认刷新"对话框。
+ * 纯 DOM 渲染, 保证"未保存 → 确认"弹窗一定出现。
+ *
+ * @param {string} workflowPath 当前工作流路径(用于提示)
+ * @returns {Promise<boolean>} 确定 resolve(true), 取消/点遮罩 resolve(false)
+ */
 function confirmUnsaved(workflowPath) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -67,6 +78,13 @@ function confirmUnsaved(workflowPath) {
   });
 }
 
+/**
+ * 从磁盘重新加载当前工作流: 未保存先确认; 优先内置机制
+ * (userFile.syncFiles + workflow.reloadCurrentWorkflow, 保留工作流关联与撤销历史),
+ * 不可用时回退为 fetch 磁盘 JSON + loadGraphData。
+ *
+ * @returns {Promise<void>} 加载完成或放弃
+ */
 async function reloadFromDisk() {
   try {
     // 安全检查: 当前标签有未保存改动 → 弹窗确认, 防止误覆盖
@@ -128,6 +146,11 @@ async function reloadFromDisk() {
   }
 }
 
+/**
+ * 在运行面板容器末尾注入"刷新工作流"图标按钮(复用队列按钮样式, 用 wf-reload-btn 类去重)。
+ *
+ * @returns {void}
+ */
 function injectRefreshButton() {
   // 定位运行面板里的队列切换按钮(唯一), 追加到其父容器(运行按钮那一簇)末尾
   const toggle = document.querySelector('[data-testid="queue-overlay-toggle"]');
@@ -147,6 +170,12 @@ function injectRefreshButton() {
 
 app.registerExtension({
   name: 'ComfyDesktop.WorkflowReloadButton',
+
+  /**
+   * 扩展初始化钩子: 注入刷新按钮并用 MutationObserver 保持按钮存在(面板重渲染时)。
+   *
+   * @returns {void}
+   */
   setup() {
     injectRefreshButton();
     // 运行面板可能重新渲染(停靠/浮动/队列变化), 用 MutationObserver 保持按钮存在

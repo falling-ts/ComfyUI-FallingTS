@@ -22,6 +22,14 @@ class FallingTSSwitchNode:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
+        """声明节点输入。
+
+        返回:
+            dict:
+            - "required".switch: 布尔开关, true 时各组输出 true_i, false 时输出 false_i;
+            - "required".total: 组数(1~MAX_GROUPS), 前端按此动态增删端口;
+            - "optional".false_i / true_i: 第 i 组的两个输入(ANY), 共 MAX_GROUPS 组。
+        """
         required = {
             "switch": (
                 "BOOLEAN",
@@ -55,6 +63,19 @@ class FallingTSSwitchNode:
     SEARCH_ALIASES = ["switch", "切换", "开关", "分组", "多路", "路由", "选择", "组"]
 
     def execute(self, switch: bool, total: int, **kwargs):
+        """节点执行入口: 按 switch 与 total 从各组取对应输入。
+
+        逻辑: total 裁到 [1, MAX_GROUPS]; 对每组 i, i<=total 时取 switch 对应的输入
+        (true → true_i, false → false_i), 超出 total 的组输出 None(端口未启用)。
+
+        参数:
+            switch (bool): true → 各输出取 true_i, false → 取 false_i;
+            total (int): 启用组数(1~MAX_GROUPS, 非法值回退 1);
+            **kwargs: 各组输入 false_i / true_i(引擎按名字传入)。
+
+        返回:
+            tuple[Any, ...]: 长度 MAX_GROUPS, 前 total 个为对应输入, 其余为 None。
+        """
         try:
             total = max(1, min(MAX_GROUPS, int(total)))
         except (TypeError, ValueError):

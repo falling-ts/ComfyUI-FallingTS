@@ -14,7 +14,14 @@ DEFAULT_ITEMS = ""
 
 
 def _split_items(items: str) -> list[str]:
-    """按英文逗号拆分并去空白, 忽略空项。"""
+    """按英文逗号拆分并去除首尾空白, 忽略空项。
+
+    参数:
+        items (str): 逗号分隔的选项文本, 可为空字符串或 None。
+
+    返回:
+        list[str]: 去空白后的非空选项列表。
+    """
     return [s.strip() for s in (items or "").split(",") if s.strip()]
 
 
@@ -29,6 +36,13 @@ class FallingTSSelectorNode:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
+        """声明节点输入。
+
+        返回:
+            dict:
+            - "required".items: 选项列表文本框(英文逗号分隔), 下拉选项由此实时生成;
+            - "required".selection: 下拉选择项, 类型为动态列表(前端 selector.js 联动), 默认空。
+        """
         return {
             "required": {
                 "items": (
@@ -60,15 +74,45 @@ class FallingTSSelectorNode:
 
     @classmethod
     def IS_CHANGED(cls, items: str, selection: str):
+        """缓存失效签名: 选项列表或选中项变化时该节点判定为已变化而重新执行。
+
+        参数:
+            items (str): 选项列表文本;
+            selection (str): 当前选中项。
+
+        返回:
+            tuple[str, str]: (items, selection) 作为 ComfyUI 缓存键的一部分。
+        """
         return (items, selection)
 
     @classmethod
     def VALIDATE_INPUTS(cls, items: str, selection: str, input_types) -> bool:
-        """动态下拉: 选项由 items 实时生成, 后端静态选项表为空,
-        跳过默认 value_not_in_list 校验 (execute 内已有回退逻辑)。"""
+        """输入校验: 动态下拉的选项由 items 实时生成, 后端静态选项表为空,
+        跳过默认 value_not_in_list 校验(execute 内已有失配回退逻辑)。
+
+        参数:
+            items (str): 选项列表文本;
+            selection (str): 当前选中项;
+            input_types (dict): 节点输入类型表(引擎传入)。
+
+        返回:
+            bool: 恒为 True(校验始终通过, 实际校验在 execute 内做)。
+        """
         return True
 
     def execute(self, items: str, selection: str):
+        """节点执行入口: 输出选中项在选项列表中的索引与文本。
+
+        逻辑: selection 在选项列表里 → 输出其索引与文本; 失配(旧工作流/手动改动/列表空)
+        则回退到第 0 项(索引 0, 文本为首项或空)。
+
+        参数:
+            items (str): 逗号分隔的选项列表文本;
+            selection (str): 下拉框选中的选项文本。
+
+        返回:
+            tuple[int, str]: (选中项索引, 选中项文本); 失配时回退 (0, 首项或 "")。
+        """
         options = _split_items(items)
         if selection in options:
             return (options.index(selection), selection)

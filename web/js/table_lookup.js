@@ -37,6 +37,12 @@ const DEFAULT_STATE = {
 };
 
 // 0->A, 25->Z, 26->AA ... 51->AZ (Excel 列名规则)
+/**
+ * Excel 风格列名: 0→A ... 25→Z, 26→AA ... 51→AZ。
+ *
+ * @param {number} i 列索引(从 0 开始)
+ * @returns {string} 对应列名
+ */
 function colName(i) {
   let s = "";
   let n = i + 1;
@@ -48,6 +54,13 @@ function colName(i) {
   return s;
 }
 
+/**
+ * 规范化表格值: 统一为 {row_count, col_count, first_col_is_id, selected_index, data}。
+ * 兼容旧版数组(行对象: 正/负/宽/高/批次) → 转成 A..E 五列网格。
+ *
+ * @param {*} v 原始表格值(对象/数组/未定义)
+ * @returns {object} 规范化后的表格状态对象
+ */
 function normalize(v) {
   // 旧版兼容: 数组形式的行对象 (正|负|宽|高|批次) -> 转成 A..E 五列网格
   if (Array.isArray(v)) {
@@ -90,6 +103,14 @@ function normalize(v) {
 }
 
 // 让节点输出端口与列数对齐: 首列为 ID 时第 0 端口命名 ID, 其后 A/B/C..., 类型固定 STRING
+/**
+ * 让节点输出端口与列数对齐: 首列为 ID 时第 0 端口命名 ID, 其后 A/B/C..., 类型固定 STRING。
+ *
+ * @param {LGraphNode} node 表格节点对象
+ * @param {number} colCount 目标列数
+ * @param {boolean} firstColIsId 首列是否为 ID
+ * @returns {void}
+ */
 function syncOutputs(node, colCount, firstColIsId = false) {
   const target = Math.min(
     MAX_COLS,
@@ -115,6 +136,12 @@ function syncOutputs(node, colCount, firstColIsId = false) {
 
 // 清理旧版本残留、当前节点定义里不存在的输入槽 (如旧版 clip 输入),
 // 避免加载旧工作流后构建 prompt 时报 "unknown input" 校验错误。
+/**
+ * 清理当前节点定义里不存在的输入槽(旧版残留), 避免加载旧工作流构建 prompt 时报 unknown input。
+ *
+ * @param {LGraphNode} node 表格节点对象
+ * @returns {void}
+ */
 function pruneStaleInputs(node) {
   const def = node.constructor?.nodeData;
   const valid = new Set();
@@ -126,6 +153,11 @@ function pruneStaleInputs(node) {
   }
 }
 
+/**
+ * 构建表格控件根 DOM: 顶部控件条(选择/行数/列数/首列ID) + 下方滚动表格区。
+ *
+ * @returns {{root: HTMLDivElement, scroll: HTMLDivElement, table: HTMLTableElement, controls: HTMLDivElement}} DOM 引用集合
+ */
 function buildRoot() {
   const root = document.createElement("div");
   root.style.cssText =
@@ -148,12 +180,27 @@ function buildRoot() {
   return { root, scroll, table, controls };
 }
 
+/**
+ * 创建纯文本 span 标签。
+ *
+ * @param {string} text 标签文本
+ * @returns {HTMLSpanElement} span 元素
+ */
 function mkLabel(text) {
   const s = document.createElement("span");
   s.textContent = text;
   return s;
 }
 
+/**
+ * 创建数字输入框(change/Enter 提交, 自动裁到 [min,max])。
+ *
+ * @param {number} min 最小值
+ * @param {number} max 最大值
+ * @param {number} value 初始值
+ * @param {Function} onChange 提交回调(参数为有效值)
+ * @returns {HTMLInputElement} 数字输入框
+ */
 function mkNumInput(min, max, value, onChange) {
   const inp = document.createElement("input");
   inp.type = "number";
@@ -178,12 +225,27 @@ function mkNumInput(min, max, value, onChange) {
 }
 
 // 让 textarea 高度跟随内容 (scrollHeight), 内容为空/元素未显示时保持原样
+/**
+ * 让 textarea 高度跟随内容(scrollHeight), 内容为空/未显示时保持原样。
+ *
+ * @param {HTMLTextAreaElement} ta 单元格 textarea
+ * @returns {void}
+ */
 function autoGrow(ta) {
   ta.style.height = "auto";
   const h = ta.scrollHeight;
   if (h > 0) ta.style.height = h + "px";
 }
 
+/**
+ * 创建表格 DOM widget: 渲染 Excel 网格、顶部控件(选择/行数/列数/首列ID)、
+ * 随内容撑高节点、输出端口随列数增减, 值序列化进工作流 widgets_values。
+ *
+ * @param {LGraphNode} node 表格节点对象
+ * @param {string} inputName 输入名("rows")
+ * @param {*} inputData 输入定义(含 default 表格状态)
+ * @returns {{widget: object}} addDOMWidget 创建的 widget 对象
+ */
 function createTableWidget(node, inputName, inputData) {
   let state = normalize(inputData?.[1]?.default ?? DEFAULT_STATE);
   const { root, scroll, table, controls } = buildRoot();
@@ -434,9 +496,22 @@ function createTableWidget(node, inputName, inputData) {
 
 app.registerExtension({
   name: "FallingTS.TableLookup",
+
+  /**
+   * 节点定义注册前钩子: 新节点创建后按默认列数裁剪输出端口。
+   *
+   * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
+   * @param {object} nodeData 节点定义数据(来自 /object_info)
+   * @returns {void}
+   */
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== "FallingTSTable") return;
     const onNodeCreated = nodeType.prototype.onNodeCreated;
+    /**
+     * 节点创建钩子: 节点构建完成后按当前列数裁剪输出端口; 加载工作流时由 configure 对齐。
+     *
+     * @returns {*} 原 onNodeCreated 的返回值
+     */
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       // 节点完全构建后 (输出端口已按后端声明填充为 MAX_COLS 个):
@@ -447,6 +522,12 @@ app.registerExtension({
       syncOutputs(this, st.col_count, st.first_col_is_id);
     };
   },
+
+  /**
+   * 注册自定义 widget 工厂: FALLINGTS_TABLE 类型 → createTableWidget。
+   *
+   * @returns {object} 自定义 widget 工厂映射表
+   */
   getCustomWidgets() {
     return {
       [WIDGET_TYPE](node, inputName, inputData) {

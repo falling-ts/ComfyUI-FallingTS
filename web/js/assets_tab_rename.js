@@ -7,6 +7,11 @@
 
 const { app } = window.comfyAPI.app;
 
+/**
+ * 合并 i18n 文案: 把侧栏「已导入」标签的翻译改为「已保存」(响应式, 重渲染也不变)。
+ *
+ * @returns {void}
+ */
 function mergeI18nLabel() {
   try {
     const el = document.getElementById('vue-app');
@@ -22,6 +27,11 @@ function mergeI18nLabel() {
   }
 }
 
+/**
+ * DOM 兜底: 找到 id=tab-input 且文本为「已导入」的标签直接改名「已保存」。
+ *
+ * @returns {void}
+ */
 function patchTabDom() {
   for (const btn of document.querySelectorAll('button[role="tab"]')) {
     if (btn.id !== 'tab-input') continue;
@@ -33,6 +43,12 @@ function patchTabDom() {
 
 app.registerExtension({
   name: 'ComfyDesktop.AssetsTabRename',
+
+  /**
+   * 扩展初始化钩子: 执行一次改名并挂 MutationObserver, 保证重渲染后仍保持「已保存」。
+   *
+   * @returns {void}
+   */
   setup() {
     mergeI18nLabel();
     patchTabDom();

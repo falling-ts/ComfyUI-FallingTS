@@ -8,6 +8,12 @@ const NODE_TYPE = "FallingTSSwitch";
 const MAX_GROUPS = 50;
 const DEFAULT_TOTAL = 2;
 
+/**
+ * 读取节点 total widget 的当前组数, 非法值回退默认, 再裁到 [1, MAX_GROUPS]。
+ *
+ * @param {LGraphNode} node 分组开关节点对象
+ * @returns {number} 有效组数(1 ~ MAX_GROUPS)
+ */
 function getTotal(node) {
   const w = node.widgets?.find((w) => w.name === "total");
   let v = w ? Math.floor(Number(w.value)) : DEFAULT_TOTAL;
@@ -15,6 +21,13 @@ function getTotal(node) {
   return Math.min(MAX_GROUPS, Math.max(1, v));
 }
 
+/**
+ * 按 total 对齐节点端口: 输入每 2 个一组(false_i, true_i), 输出 output_1..output_total。
+ * 未使用的输入/输出端口被删除, 不进入 prompt。
+ *
+ * @param {LGraphNode} node 分组开关节点对象
+ * @returns {void}
+ */
 function syncGroups(node) {
   const total = getTotal(node);
 
@@ -49,10 +62,23 @@ function syncGroups(node) {
 
 app.registerExtension({
   name: "FallingTS.Switch",
+
+  /**
+   * 节点定义注册前钩子: 给 FallingTSSwitch 绑定 total → 端口增删联动。
+   *
+   * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
+   * @param {object} nodeData 节点定义数据(来自 /object_info)
+   * @returns {void}
+   */
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_TYPE) return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
+    /**
+     * 节点创建钩子: total 变化时同步端口; 加载工作流时按保存的 widgets_values 对齐。
+     *
+     * @returns {*} 原 onNodeCreated 的返回值
+     */
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
@@ -60,6 +86,7 @@ app.registerExtension({
       const totalWidget = node.widgets?.find((w) => w.name === "total");
       if (totalWidget) {
         const cb = totalWidget.callback;
+        /** total widget 回调: 组数变化后重新对齐输入/输出端口。 */
         totalWidget.callback = function (v) {
           cb?.call(this, v);
           syncGroups(node);
@@ -68,6 +95,7 @@ app.registerExtension({
 
       // 加载/还原工作流: configure 末尾 (widgets_values 已应用) 再对齐一次
       const prevOnConfigure = node.onConfigure;
+      /** configure 钩子: 工作流加载完成后按保存的 total 对齐端口。 */
       node.onConfigure = function (info) {
         prevOnConfigure?.call(this, info);
         syncGroups(node);

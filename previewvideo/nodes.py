@@ -19,6 +19,12 @@ _NODE_NAME = "PreviewVideo"
 class PreviewVideoNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
+        """定义节点 schema(V3 规范)。
+
+        返回:
+            IO.Schema: 节点元数据, 含 node_id/display_name/category/description,
+            输入 video、输出 video, hidden 含 prompt+extra_pnginfo, 标记 is_output_node=True。
+        """
         return IO.Schema(
             node_id=_NODE_NAME,
             display_name="Preview Video (不保存)",
@@ -37,6 +43,20 @@ class PreviewVideoNode(IO.ComfyNode):
 
     @classmethod
     def execute(cls, video) -> IO.NodeOutput:
+        """节点执行入口: 把视频编码为 mp4 写入临时目录并在前端播放(不保存到 output)。
+
+        逻辑: 视频为空则报错; 取尺寸生成随机前缀文件名, 经 folder_paths 得到临时目录保存路径,
+        以 MP4 + AUTO 编码保存, 返回 UI.PreviewVideo 让前端播放临时文件。
+
+        参数:
+            video (Video): 要预览的视频对象(惰性内存对象)。
+
+        返回:
+            IO.NodeOutput: 视频输出 + UI.PreviewVideo 预览事件(指向 temp 目录文件)。
+
+        异常:
+            ValueError: video 为 None 时抛出。
+        """
         if video is None:
             raise ValueError("PreviewVideo: input video is None")
 

@@ -22,6 +22,12 @@ const { app } = window.comfyAPI.app;
 
 let lastOpenedAt = 0;
 
+/**
+ * 从 Vue pinia store 按 id 取 store 对象。
+ *
+ * @param {string} id store id(如 "nodeOutput")
+ * @returns {object|null} pinia store 对象; 不可用时返回 null
+ */
 function getStore(id) {
   try {
     const el = document.getElementById('vue-app');
@@ -32,6 +38,12 @@ function getStore(id) {
   }
 }
 
+/**
+ * 按节点 id 从 LGraph 画布找对应 LGraphNode 对象。
+ *
+ * @param {string|number} nodeId 节点 id
+ * @returns {LGraphNode|null} 画布节点对象; 找不到返回 null
+ */
 function getLGraphNode(nodeId) {
   const graph = app.graph;
   if (!graph?._nodes) return null;
@@ -48,21 +60,45 @@ const IMAGE_EXTS = new Set([
   'avif', 'ico', 'heic', 'heif', 'jfif', 'pjpeg', 'pjp', 'apng', 'jxl',
 ]);
 
+/**
+ * 取字符串的文件扩展名(小写)。
+ *
+ * @param {string} s 文件名或 URL
+ * @returns {string} 扩展名; 无扩展名返回空串
+ */
 function getExt(s) {
   const m = typeof s === 'string' ? /\.([a-z0-9]+)(?:[?#].*)?$/i.exec(s) : null;
   return m ? m[1].toLowerCase() : '';
 }
 
+/**
+ * 判断字符串是否为常见图片路径(按扩展名)。
+ *
+ * @param {string} s 文件名或 URL
+ * @returns {boolean} 是常见图片格式返回 true
+ */
 function isImagePath(s) {
   return IMAGE_EXTS.has(getExt(s));
 }
 
 // 单图 → 数组: 统一成数组格式, 兼容只有 1 张的情况
+/**
+ * 把单值规范成数组(单图 → 只有 1 张的数组)。
+ *
+ * @param {*} v 单值或数组
+ * @returns {Array} 数组形式
+ */
 function normalizeToArray(v) {
   return Array.isArray(v) ? v : [v];
 }
 
 // 把非 URL 的图片路径/文件名转成 ComfyUI 元数据(默认按 input 目录)
+/**
+ * 把非 URL 的图片路径/文件名转成 ComfyUI 图片元数据(默认按 input 目录)。
+ *
+ * @param {string} p 图片路径(可含子目录)
+ * @returns {{filename: string, subfolder: string, type: string}} 图片元数据
+ */
 function pathToImageEntry(p) {
   const parts = String(p).replace(/\\/g, '/').split('/').filter(Boolean);
   const filename = parts.pop() ?? '';
@@ -70,7 +106,14 @@ function pathToImageEntry(p) {
 }
 
 // 遍历节点输出对象的所有 key/value + 官方预览通道(node.images / node.imgs),
-// 递归收集“看起来像图片”的条目
+// 递归收集"看起来像图片"的条目
+/**
+ * 遍历节点输出对象的所有 key/value + 官方预览通道(node.images / node.imgs),
+ * 递归收集"看起来像图片"的条目(去重)。
+ *
+ * @param {LGraphNode} node 画布节点对象
+ * @returns {Array<{filename?: string, subfolder?: string, type?: string, url?: string}>} 图片条目数组
+ */
 function collectImageEntries(node) {
   const store = getStore('nodeOutput');
   if (!store) return [];
@@ -198,6 +241,12 @@ function collectImageEntries(node) {
 }
 
 // 把收集到的图片条目拼成可展示的 /view URL(全尺寸)
+/**
+ * 把收集到的图片条目拼成可展示的 /view URL(全尺寸, 带防缓存参数)。
+ *
+ * @param {LGraphNode} node 画布节点对象
+ * @returns {string[]} 图片 URL 数组; 没有图片返回空数组
+ */
 function buildImageUrls(node) {
   const entries = collectImageEntries(node);
   if (!entries.length) return [];
@@ -225,6 +274,11 @@ let overlay = null;
 let urls = [];
 let current = 0;
 
+/**
+ * 渲染当前选中图: 高亮边框、滚动到可见、派发 mlz:focus、更新 1/n 计数。
+ *
+ * @returns {void}
+ */
 function renderOverlay() {
   if (!overlay) return;
   const imgs = overlay.querySelectorAll('.mlz-img');
@@ -261,6 +315,11 @@ function renderOverlay() {
   }
 }
 
+/**
+ * 关闭预览遮罩并清空状态。
+ *
+ * @returns {void}
+ */
 function closeOverlay() {
   overlay?.remove();
   overlay = null;
@@ -268,6 +327,14 @@ function closeOverlay() {
   current = 0;
 }
 
+/**
+ * 创建带悬浮高亮的圆形图标按钮。
+ *
+ * @param {string} text 按钮文字(如 "×"/"‹"/"›")
+ * @param {string} title 悬浮提示
+ * @param {Function} onClick 点击回调
+ * @returns {HTMLButtonElement} 按钮元素
+ */
 function mkBtn(text, title, onClick) {
   const b = document.createElement('button');
   b.type = 'button';
@@ -290,6 +357,14 @@ function mkBtn(text, title, onClick) {
   return b;
 }
 
+/**
+ * 打开预览遮罩: 构建与内置 MediaLightbox 同类的弹层(供 media_lightbox_zoom 接管缩放),
+ * 多图横向并排, 左右按钮/方向键循环切换, 点遮罩关闭。
+ *
+ * @param {string[]} list 图片 URL 数组
+ * @param {number} startIndex 初始选中图下标
+ * @returns {void}
+ */
 function openOverlay(list, startIndex) {
   if (!list.length) return;
 
@@ -398,6 +473,14 @@ function openOverlay(list, startIndex) {
 }
 
 // 两路触发共用: 节点任意 key/value 里有图片则打开预览
+/**
+ * 两路触发共用: 节点任意 key/value 里有图片则打开预览, 并阻止默认事件。
+ *
+ * @param {LGraphNode} node 画布节点对象
+ * @param {number} startIndex 初始图下标(默认取 node.imageIndex)
+ * @param {Event} [e] 触发事件(可空)
+ * @returns {boolean} 是否打开了预览
+ */
 function tryOpenForNode(node, startIndex, e) {
   if (!node) return false;
   const list = buildImageUrls(node);
@@ -413,11 +496,23 @@ function tryOpenForNode(node, startIndex, e) {
   return true;
 }
 
+/**
+ * 判断是否刚打开过预览(300ms 内), 避免中键按下后拖动被误判为重复单击。
+ *
+ * @returns {boolean} 刚打开过返回 true
+ */
 function wasJustOpened() {
   return Date.now() - lastOpenedAt < 300;
 }
 
 // 与官方一致的槽位命中判定(官方矩形: 中心 ±15 x ±10)
+/**
+ * 与官方一致的槽位命中判定(官方矩形: 中心 ±15 x ±10)。
+ *
+ * @param {LGraphNode} node 画布节点对象
+ * @param {Event} e 事件(含 canvasX / canvasY)
+ * @returns {boolean} 鼠标落在输入/输出槽上返回 true
+ */
 function isOnSocket(node, e) {
   if (!node) return false;
   const x = e.canvasX;
@@ -446,6 +541,12 @@ function isOnSocket(node, e) {
 // 只在“节点主体单击”这一官方原本无操作的场景注册大屏预览回调,
 // 槽位点击(中键加默认节点)、折叠节点、无图节点、中键拖动画布
 // 全部原样交给官方方法处理, 不影响官方中键行为。
+/**
+ * 画布模式补丁: 包装 LGraphCanvas.prototype._processMiddleButton,
+ * 只在"节点主体单击中键"且节点有图时注册单击回调打开预览(槽位/折叠/拖动画布交给官方)。
+ *
+ * @returns {boolean} 是否安装成功
+ */
 function installMiddleButtonPatch() {
   const canvas = app.canvas;
   const proto = canvas?.constructor?.prototype;
@@ -482,6 +583,12 @@ function installMiddleButtonPatch() {
 }
 
 // Vue DOM 模式: 捕获阶段 mousedown, 按 [data-node-id] + .image-preview 定位
+/**
+ * Vue DOM 模式: 捕获阶段 mousedown, 按 [data-node-id] + .image-preview 定位节点, 中键打开预览。
+ *
+ * @param {MouseEvent} e 鼠标事件
+ * @returns {void}
+ */
 function onPreviewMouseDown(e) {
   if (e.button !== 1) return;
   const target = e.target;
@@ -512,6 +619,12 @@ function onPreviewMouseDown(e) {
 
 app.registerExtension({
   name: 'ComfyDesktop.NodeImageMiddleClick',
+
+  /**
+   * 扩展初始化钩子: 挂 Vue DOM mousedown 捕获 + 画布中键补丁(失败每秒重试直到画布就绪)。
+   *
+   * @returns {void}
+   */
   setup() {
     document.body.addEventListener('mousedown', onPreviewMouseDown, true);
     // 画布模式补丁: 立即尝试, 失败则每秒重试(等 app.canvas 就绪)

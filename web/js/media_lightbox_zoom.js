@@ -22,6 +22,12 @@ const state = {
 };
 
 // 定位 MediaLightbox 弹层: fixed 黑色遮罩 + 内含受限尺寸预览图
+/**
+ * 判断元素是否为内置 MediaLightbox 弹层(fixed 黑色遮罩 + 相关 class)。
+ *
+ * @param {Element|null} el DOM 元素
+ * @returns {boolean} 是弹层返回 true
+ */
 function isLightbox(el) {
   return (
     el &&
@@ -31,6 +37,11 @@ function isLightbox(el) {
   );
 }
 
+/**
+ * 在当前 DOM 中查找处于打开状态的 MediaLightbox 弹层。
+ *
+ * @returns {Element|null} 弹层元素; 未找到返回 null
+ */
 function findLightbox() {
   const dialogs = document.querySelectorAll('div[role="dialog"][data-mask]');
   for (const d of dialogs) {
@@ -48,6 +59,11 @@ function findLightbox() {
 }
 
 // 取图片"未变形"时的视口矩形(临时清掉 transform 同步读取, 保证布局中心准确)
+/**
+ * 取图片"未变形"时的视口矩形(临时清掉 transform 同步读取, 保证缩放锚点中心准确)。
+ *
+ * @returns {DOMRect|null} 布局矩形; 无图片返回 null
+ */
 function layoutRect() {
   const img = state.img;
   if (!img) return null;
@@ -62,6 +78,11 @@ function layoutRect() {
 }
 
 // 宽松限制平移范围: 允许大幅拖动, 但图片不会完全飞出可视区
+/**
+ * 宽松限制平移范围: 允许大幅拖动, 但图片不会完全飞出可视区。
+ *
+ * @returns {void}
+ */
 function clampPan() {
   const img = state.img;
   if (!img) return;
@@ -74,6 +95,11 @@ function clampPan() {
   state.pan.y = Math.max(-maxY, Math.min(maxY, state.pan.y));
 }
 
+/**
+ * 更新底部工具条的缩放百分比与显示状态。
+ *
+ * @returns {void}
+ */
 function updateToolbar() {
   if (state.label) {
     state.label.textContent = Math.round(state.zoom * 100) + '%';
@@ -83,6 +109,12 @@ function updateToolbar() {
   }
 }
 
+/**
+ * 应用缩放/平移 transform 到图片: 滚轮/拖拽即时生效, 双击/重置用短暂过渡动画。
+ *
+ * @param {boolean} [smooth] 是否启用过渡动画
+ * @returns {void}
+ */
 function applyTransform(smooth) {
   const img = state.img;
   if (!img) return;
@@ -110,6 +142,11 @@ function applyTransform(smooth) {
   updateToolbar();
 }
 
+/**
+ * 重置缩放为 1x 并居中。
+ *
+ * @returns {void}
+ */
 function resetZoom() {
   state.zoom = 1;
   state.pan = { x: 0, y: 0 };
@@ -117,6 +154,14 @@ function resetZoom() {
 }
 
 // 以鼠标位置为锚点缩放
+/**
+ * 以鼠标位置为锚点缩放: 锚点处内容在缩放前后保持不动。
+ *
+ * @param {number} clientX 鼠标 X
+ * @param {number} clientY 鼠标 Y
+ * @param {number} factor 缩放倍率(>1 放大, <1 缩小)
+ * @returns {void}
+ */
 function zoomAt(clientX, clientY, factor) {
   const img = state.img;
   if (!img) return;
@@ -135,6 +180,12 @@ function zoomAt(clientX, clientY, factor) {
   applyTransform();
 }
 
+/**
+ * 以图片中心为锚点缩放(供 +/-/0 快捷键与工具条用)。
+ *
+ * @param {number} factor 缩放倍率
+ * @returns {void}
+ */
 function zoomAtCenter(factor) {
   const img = state.img;
   if (!img) return;
@@ -142,6 +193,12 @@ function zoomAtCenter(factor) {
   zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
 }
 
+/**
+ * 滚轮/触控板缩放处理: deltaY 归一化后用指数映射, 以鼠标位置为锚点。
+ *
+ * @param {WheelEvent} e 滚轮事件
+ * @returns {void}
+ */
 function onWheel(e) {
   if (!state.img) return;
   e.preventDefault();
@@ -151,6 +208,12 @@ function onWheel(e) {
   zoomAt(e.clientX, e.clientY, Math.min(2, Math.max(0.5, factor)));
 }
 
+/**
+ * 鼠标按下开始拖拽平移(仅放大状态, 左键)。
+ *
+ * @param {MouseEvent} e 鼠标事件
+ * @returns {void}
+ */
 function onMouseDown(e) {
   if (e.button !== 0 || !state.img || state.zoom <= 1.0001) return;
   state.dragging = true;
@@ -160,6 +223,12 @@ function onMouseDown(e) {
   applyTransform();
 }
 
+/**
+ * 鼠标移动: 更新平移偏移并应用(带范围限制)。
+ *
+ * @param {MouseEvent} e 鼠标事件
+ * @returns {void}
+ */
 function onMouseMove(e) {
   if (!state.dragging || !state.img) return;
   const dx = e.clientX - state.dragLast.x;
@@ -172,12 +241,23 @@ function onMouseMove(e) {
   applyTransform();
 }
 
+/**
+ * 鼠标松开结束拖拽。
+ *
+ * @returns {void}
+ */
 function onMouseUp() {
   if (!state.dragging) return;
   state.dragging = false;
   applyTransform();
 }
 
+/**
+ * 双击: 放大状态 → 重置 1x; 未放大 → 以点击处为锚点放大 2.2x。
+ *
+ * @param {MouseEvent} e 鼠标事件
+ * @returns {void}
+ */
 function onDblClick(e) {
   if (!state.img) return;
   e.preventDefault();
@@ -188,6 +268,12 @@ function onDblClick(e) {
   }
 }
 
+/**
+ * 键盘快捷键: +/= 放大, -/_ 缩小, 0 重置。
+ *
+ * @param {KeyboardEvent} e 键盘事件
+ * @returns {void}
+ */
 function onKeyDown(e) {
   if (!state.img) return;
   if (e.key === '+' || e.key === '=') {
@@ -202,6 +288,14 @@ function onKeyDown(e) {
   }
 }
 
+/**
+ * 创建底部工具条按钮(圆形, 悬浮高亮)。
+ *
+ * @param {string} text 按钮文字(如 ＋/−/↺)
+ * @param {string} title 悬浮提示
+ * @param {Function} onClick 点击回调
+ * @returns {HTMLButtonElement} 按钮元素
+ */
 function makeToolbarBtn(text, title, onClick) {
   const b = document.createElement('button');
   b.type = 'button';
@@ -225,6 +319,12 @@ function makeToolbarBtn(text, title, onClick) {
   return b;
 }
 
+/**
+ * 在弹层底部创建/复用缩放工具条(＋/−/百分比/↺)。
+ *
+ * @param {Element} dialog 弹层元素
+ * @returns {void}
+ */
 function ensureToolbar(dialog) {
   if (dialog.querySelector('.mlz-toolbar')) return;
   const tb = document.createElement('div');
@@ -249,6 +349,12 @@ function ensureToolbar(dialog) {
   state.label = label;
 }
 
+/**
+ * 初始化一个弹层的缩放控制: 定位图片、重置缩放、建工具条、绑定滚轮/拖拽/双击/键盘事件。
+ *
+ * @param {Element} dialog 弹层元素
+ * @returns {void}
+ */
 function initDialog(dialog) {
   state.dialog = dialog;
   const imgs = [...dialog.querySelectorAll('.mlz-img')];
@@ -269,6 +375,12 @@ function initDialog(dialog) {
   window.addEventListener('mouseup', onMouseUp);
 }
 
+/**
+ * 清理弹层的缩放状态并解绑所有事件监听。
+ *
+ * @param {Element} dialog 弹层元素
+ * @returns {void}
+ */
 function cleanupDialog(dialog) {
   if (dialog) {
     dialog.removeEventListener('wheel', onWheel);
@@ -290,6 +402,12 @@ function cleanupDialog(dialog) {
 
 app.registerExtension({
   name: 'ComfyDesktop.MediaLightboxZoom',
+
+  /**
+   * 扩展初始化钩子: MutationObserver 监听弹层开合, 打开即接管缩放; 监听 mlz:focus 跟随当前图。
+   *
+   * @returns {void}
+   */
   setup() {
     let currentDialog = null;
 

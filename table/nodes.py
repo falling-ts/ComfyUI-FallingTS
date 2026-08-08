@@ -104,6 +104,13 @@ class FallingTSTableNode:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
+        """声明节点输入。
+
+        返回:
+            dict:
+            - "required".rows: FALLINGTS_TABLE 表格控件(前端 table_lookup.js 渲染),
+              值是 {row_count, col_count, first_col_is_id, selected_index, data} 表格状态对象。
+        """
         return {
             "required": {
                 "rows": (
@@ -131,6 +138,17 @@ class FallingTSTableNode:
     SEARCH_ALIASES = ["表格", "表", "table", "excel", "行", "列", "查表", "数据表", "sheet", "选择", "下拉"]
 
     def execute(self, rows):
+        """节点执行入口: 输出选中行的各列单元格字符串。
+
+        逻辑: 规范化 rows 为表格状态, 取 selected_index 选中行,
+        把该行各列填进 A/B/C... 输出槽(未用的槽输出空串)。
+
+        参数:
+            rows (dict|list): 表格控件值(前端序列化的表格状态对象, 或旧版行对象数组)。
+
+        返回:
+            tuple[str, ...]: 长度 MAX_COLS, 前 col_count 个为选中行各列字符串, 其余为空串。
+        """
         state = normalize_table(rows)
         row_count = state["row_count"]
         col_count = state["col_count"]
