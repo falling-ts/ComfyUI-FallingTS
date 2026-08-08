@@ -10,10 +10,10 @@
  *   执行子图穿过并到达下一个继续, 它收到本段预览输出 -> 缓存 -> 阻塞。于是从 #N 开始往下跑, 绝不从开头跑。
  *
  * 数据完全来自节点自身的缓存, 不依赖注入、不依赖全局缓存判断从哪跑。
+ * 提交走 app.queuePrompt 标准队列流程(官方「队列所选输出节点」同款), 队列面板有记录、节点有执行流动动画。
  */
 
 import { app } from "../../../scripts/app.js";
-import { api } from "../../../scripts/api.js";
 
 const NODE_CLASS = "FallingTSContinue";
 
@@ -190,37 +190,12 @@ app.registerExtension({
         return;
       }
 
-      /* 3. 构建 prompt(保留 any 连线; 上游是否执行由后端 check_lazy_status 按放行状态决定) */
-      let prompt = null;
+      /* 3. 提交 partial execution: 走标准队列流程 app.queuePrompt(number, batch, nodeIds)
+            (官方「队列所选输出节点」同款) —— 内部自动 graphToPrompt 当前画布, 并把 nodeIds
+            转成 partial_execution_targets 发给 /prompt; 队列面板有记录、节点有执行流动动画。
+            第二个参数 batch=1: 每次「继续」只跑本段一遍。 */
       try {
-        const gtp = app.graphToPrompt ? await app.graphToPrompt(app.graph) : null;
-        prompt = gtp?.output ?? gtp;
-      } catch {
-        prompt = null;
-      }
-      if (!prompt || !prompt[String(node.id)]?.inputs) {
-        console.error("[FallingTS] 无法构建 prompt");
-        return;
-      }
-
-      /* 4. 提交 partial execution */
-      try {
-        const resp = await api.fetchApi("/prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            client_id: api.client_id,
-            partial_execution_targets: targets,
-          }),
-        });
-        if (!resp.ok) {
-          const data = await resp.json().catch(() => null);
-          const msg = data?.error?.message || data?.error?.details || "继续提交失败";
-          alert(`继续提交失败: ${msg}`);
-          console.error("[FallingTS] /prompt 校验失败:", data);
-          return;
-        }
+        await app.queuePrompt(0, 1, targets);
       } catch (err) {
         console.error("[FallingTS] 继续提交失败:", err);
         return;
