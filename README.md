@@ -38,9 +38,10 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 **原理(2026-08 重构,缓存式)**:
 - 节点后端默认返回 **`ExecutionBlocker` 阻塞下游**;`any` 输入声明为 **lazy**,由 `check_lazy_status` 决定是否拉上游;
-- **Run**(默认):前端先 `POST /proceed/reset` 把所有继续节点重置为阻塞,再**全量提交**工作流 → 每个继续节点未放行、`check_lazy_status` 返回 `["any"]` 拉上游 → 生成段执行,在第一个继续节点缓存并停下;
+- **Run**(默认):前端 `POST /proceed/reset` 重置所有继续节点为阻塞,手动推进一次种子,再按 **partial** 只提交到"第一个继续之后"的输出节点 → 生成段执行,在第一个继续节点缓存并停下;
 - 点「**继续**」:前端 `POST /proceed/continue/{id}` 放行该节点,再提交 `partial_execution_targets`(下一个继续之后的输出节点)→ 该继续已放行、`check_lazy_status` 返回 `[]` 不拉上游(**连线保留,上游不重跑**),从本节点起只跑新放行段,到下一个继续节点再停;
-- 重复点「继续」逐段跑到底。
+- 重复点「继续」逐段跑到底;
+- 关键:Run 与「继续」都是 **partial 执行**(`isPartialExecution=true`),官方 `nextValueForLinkedTarget` 会跳过 `control_after_generate` 随机化,所以种子只被 Run 前的一次手动推进改变、之后保持稳定 —— 已跑过的段缓存一直有效,「继续」不会重跑开头(即使段间有直连边,上游也命中缓存)。
 
 **与旧版的关键差异**:不再依赖"每个分段必须有输出节点"(旧版用 `partial_execution_targets` 收集段内输出节点,段内无预览/保存节点就会卡住)。现在纯靠 **`ExecutionBlocker` 门控 + 执行缓存**,任何结构都能分段。
 

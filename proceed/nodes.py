@@ -4,7 +4,8 @@
 行为:
 - 继续节点把收到的 any 缓存到节点上(新数据覆盖), 未放行时返回 ExecutionBlocker 阻塞下游;
 - any 输入声明为 lazy, 由 check_lazy_status 决定是否拉取上游: 未放行 -> 拉上游产生数据; 已放行 -> 不拉、用节点缓存;
-- Run(默认): 前端先调 /proceed/reset 清空 released+缓存, 再全量提交 -> 生成段, 第一个继续缓存+阻塞;
+- Run(默认): 前端先调 /proceed/reset 清空 released+缓存, 手动推进一次种子, 再按 partial 提交到
+  "第一个继续之后"的输出节点 -> 生成段, 第一个继续缓存+阻塞 (partial 跳过官方随机化, 上游缓存保持有效);
 - 点「继续」: 前端校验节点有缓存(否则 400"没有上游数据")并放行; 无需断开连线 ——
   any 输入 lazy, check_lazy_status 按放行状态决定不拉上游(节点用自身缓存),
   partial_execution_targets 取"下一个继续之后"的输出节点 ->

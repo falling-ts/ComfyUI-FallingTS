@@ -3,7 +3,9 @@
  *
  * 行为:
  * - 后端继续节点把收到的 any 缓存在节点上(新数据覆盖), 未放行时阻塞下游;
- * - Run(默认): 先调 /proceed/reset 重置所有继续为阻塞并清缓存, 再全量提交 -> 生成段, #43 缓存+阻塞;
+ * - Run(默认): 先调 /proceed/reset 重置所有继续为阻塞并清缓存, 手动推进一次种子,
+ *   再按 partial 只提交到"第一个继续节点之后"的输出节点 -> 生成段, #43 缓存+阻塞;
+ *   (partial 时官方跳过种子随机化, 上游缓存保持有效, 之后点「继续」不会重跑开头);
  * - 点「继续」#N: 后端校验节点有缓存(否则报"没有上游数据")并放行;
  *   #N 的 any 输入声明为 lazy, 后端 check_lazy_status 按放行状态决定不拉上游(节点用自身缓存),
  *   连线无需断开; partial_execution_targets = "下一个继续节点之后"的输出节点 ->
@@ -117,13 +119,54 @@ function collectOutputsAfter(startNode) {
   return [...targets];
 }
 
+/**
+ * 手动推进一次 control_after_generate 种子 (randomize/increment/decrement)。
+ * 分段执行(partial)时 ComfyUI 官方 nextValueForLinkedTarget 会跳过随机化
+ * (settingStore: if(e.isPartialExecution) return), 导致种子不变、上游 KSampler 一直命中缓存 ——
+ * 默认 Run 改成 partial 后, 这里在提交前手动更新一次, 保证每次 Run 都能出新的生成结果。
+ *
+ * @param {LGraph} graph 画布图对象(与提交时 app.queuePrompt 读取的同一张图)
+ * @returns {void}
+ */
+function randomizeValueControlWidgets(graph) {
+  const vc = window.comfyAPI?.valueControl;
+  if (!vc?.computeNextControlledValue) return;
+  for (const node of graph?._nodes ?? []) {
+    for (const w of node.widgets ?? []) {
+      if (!w.name?.includes("control_after_generate")) continue;
+      const mode = w.value;
+      if (mode === "fixed") continue;
+      const linked = (w.linkedWidgets ?? []).find((x) => x !== w);
+      if (!linked || typeof linked.value !== "number") continue;
+      const next = vc.computeNextControlledValue(linked, mode, { nodeId: node.id });
+      if (next !== undefined) {
+        linked.value = next;
+        linked.callback?.(next);
+      }
+    }
+  }
+}
+
+/**
+ * 找到图中第一个继续节点(按画布执行序 order 最小)。
+ * 默认 Run 用它确定"只执行到第一个继续节点为止"的 partial targets。
+ *
+ * @param {LGraph} graph 画布图对象
+ * @returns {LGraphNode|null} 第一个继续节点; 图中没有继续节点时返回 null
+ */
+function firstContinueNode(graph) {
+  const list = (graph?._nodes ?? []).filter((n) => isContinueNode(n));
+  if (!list.length) return null;
+  return [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))[0];
+}
+
 app.registerExtension({
   name: "FallingTS.Continue",
 
   /**
    * 扩展初始化钩子: 包装全局提交入口 app.queuePrompt。
-   * 默认 Run(未显式指定目标节点)时, 先 POST /proceed/reset 把所有继续节点重置为阻塞并清空缓存,
-   * 再按原逻辑全量提交 —— 保证每次 Run 都从开头执行、在第一个继续节点停住。
+   * 默认 Run(未显式指定目标节点)时, 先 POST /proceed/reset 重置继续节点并清缓存, 手动推进种子,
+   * 再按 partial 提交到第一个继续之后 —— 保证每次 Run 重新分段、出新的生成结果、上游缓存保持有效。
    *
    * @returns {void}
    */
@@ -131,20 +174,39 @@ app.registerExtension({
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
     /**
-     * 包装 queuePrompt: 拦截"默认 Run"分支, 先重置全部继续节点再提交。
+     * 包装 queuePrompt: 拦截"默认 Run"(queueNodeIds 为空)分支。
+     * 分段执行的工作流里, Run 被改为"只执行到第一个继续节点为止"的 partial:
+     * 1. POST /proceed/reset 把所有继续节点重置为阻塞并清空缓存(重新从头分段);
+     * 2. randomizeValueControlWidgets 手动推进一次种子 —— partial 会跳过官方随机化,
+     *    不手动推进的话每次 Run 种子不变、出图相同;
+     * 3. collectOutputsAfter(第一个继续) 作为 partial targets 提交, 让第一个继续节点执行并
+     *    缓存本段输出、阻断后续段 —— partial(isPartialExecution=true)时上游缓存保持有效,
+     *    之后点「继续」不会重跑开头。
+     * 「继续」按钮会显式传 queueNodeIds(非空), 这里绝不覆盖。
      *
      * @param {number} number 提交次数
      * @param {number} batch 批次数
-     * @param {Array<string>|undefined} queueNodeIds 「继续」按钮显式指定的目标节点 ID 列表, 非空时跳过重置(保留已放行状态); 为空视为默认 Run
+     * @param {Array<string>|undefined} queueNodeIds 「继续」按钮显式指定的目标节点 ID 列表, 非空时跳过 Run 拦截
      * @returns {Promise} 原始 queuePrompt 的返回值(提交任务后的 Promise)
      */
     app.queuePrompt = async function (number, batch, queueNodeIds) {
-      /* 默认 Run (无显式目标): 重置所有继续为阻塞并清缓存, 再全量提交 */
+      /* 默认 Run (无显式目标): 重置继续节点 -> 手动推进种子 -> partial 提交到第一个继续之后 */
       if (!queueNodeIds?.length) {
         try {
           await fetch("/proceed/reset", { method: "POST" });
         } catch {
           /* 忽略 */
+        }
+        const graph = app.graph ?? app.rootGraph;
+        if (graph && graph._nodes?.some((n) => isContinueNode(n))) {
+          randomizeValueControlWidgets(graph);
+          const first = firstContinueNode(graph);
+          if (first) {
+            const targets = collectOutputsAfter(first);
+            if (targets.length) {
+              return orig(number, batch, targets);
+            }
+          }
         }
       }
       return orig(number, batch, queueNodeIds);
