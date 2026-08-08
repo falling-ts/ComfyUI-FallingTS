@@ -4,7 +4,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 ## 功能总览
 
-### 工具节点(5 个)
+### 工具节点
 
 | 节点 | Node ID | 分类 | 功能 |
 |------|---------|------|------|
@@ -14,13 +14,15 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 下拉选择器 | `FallingTSSelector` | `FallingTS/工具` | 文本+下拉:逗号分隔选项实时更新下拉,选中项输出索引(INT) + 选项文本(STRING) |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 视频预览,编码到 temp 目录,**不写入 output**,"不满意就不保存" |
+| 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
 
-### Web 前端增强(9 个,安装即用,无需配置)
+### Web 前端增强(10 个,安装即用,无需配置)
 
 | 文件 | 功能 |
 |------|------|
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
 | `web/js/route.js` | 路由节点假输出分支真正执行:partial 提交时把 switch=false 的假输出分支下游输出节点并入 targets,保存本段并停止 |
+| `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/selector.js` | 选择器 `items` → 下拉选项实时联动,失配自动重置 |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
@@ -171,6 +173,9 @@ ComfyUI-FallingTS/
 │   └── __init__.py
 ├── preview-video/    # 视频预览节点(不保存, V3; 目录名含连字符, 经 importlib 加载)
 │   ├── nodes.py
+│   └── __init__.py
+├── preview-image/    # 图片预览保存节点(始终预览 temp + 点「保存」写 output, 同名覆盖)
+│   ├── nodes.py      #   PreviewImageSave + HTTP 路由(/preview-image/save)
 │   └── __init__.py
 ├── web/js/           # 前端扩展(ComfyUI 经 /extensions 运行时加载,不参与前端打包)
 ├── locales/          # i18n 翻译(zh/nodeDefs.json, 节点与控件显示名)

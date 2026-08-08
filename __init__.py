@@ -26,6 +26,8 @@ from route.nodes import FallingTSRouteNode
 
 # preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
+# preview-image 目录名同样含连字符, 需经 importlib 按名加载
+PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
 
 __all__ = [
     "WEB_DIRECTORY",
@@ -39,4 +41,5 @@ __all__ = [
     "FallingTSTableNode",
     "FallingTSSwitchNode",
     "PreviewVideoNode",
+    "PreviewImageSaveNode",
 ]

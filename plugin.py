@@ -19,6 +19,8 @@ from route.nodes import FallingTSRouteNode
 
 # preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
+# preview-image 目录名同样含连字符, 需经 importlib 按名加载
+PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSTable": FallingTSTableNode,
     "FallingTSSwitch": FallingTSSwitchNode,
     "PreviewVideo": PreviewVideoNode,
+    "PreviewImageSave": PreviewImageSaveNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
@@ -40,6 +43,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSContinue": "FallingTS 继续节点",
     "FallingTSRoute": "FallingTS 路由节点 (1进2出)",
     "PreviewVideo": "Preview Video (不保存)",
+    "PreviewImageSave": "Preview Image (保存)",
 }
 
 # ─── V3 ComfyExtension (支持 comfy_entrypoint 注册) ─────
