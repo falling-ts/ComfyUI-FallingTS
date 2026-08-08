@@ -26,7 +26,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/selector.js` | 选择器 `items` → 下拉选项实时联动,失配自动重置 |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
-| `web/js/node_image_middleclick.js` | 节点图片**鼠标中键**全屏预览(多图左右循环切换) |
+| `web/js/node_image_middleclick.js` | 节点图片**鼠标中键**全屏预览(单图居中,多图左右循环切换,与已生成预览同款布局) |
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放:滚轮/拖拽/双击/`+/−/0` 快捷键 |
 | `web/js/assets_tab_rename.js` | 媒体资产面板「已导入」标签改为「已保存」 |
 | `web/js/workflow_reload_button.js` | 运行面板"刷新工作流"按钮,磁盘重载当前工作流 |

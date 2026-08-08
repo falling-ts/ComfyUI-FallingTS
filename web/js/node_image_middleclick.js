@@ -275,24 +275,18 @@ let urls = [];
 let current = 0;
 
 /**
- * 渲染当前选中图: 高亮边框、滚动到可见、派发 mlz:focus、更新 1/n 计数。
+ * 渲染当前选中图: 单图布局直接换 img.src, 派发 mlz:focus(重置缩放基准), 更新 1/n 计数。
  *
  * @returns {void}
  */
 function renderOverlay() {
   if (!overlay) return;
-  const imgs = overlay.querySelectorAll('.mlz-img');
-  imgs.forEach((im, i) => {
-    im.style.borderColor = i === current ? 'rgba(255,255,255,.9)' : 'transparent';
-    im.style.boxShadow = i === current ? '0 0 0 1px rgba(255,255,255,.35)' : 'none';
-  });
-  const curImg = imgs[current];
-  if (curImg && curImg.scrollIntoView) {
-    try {
-      curImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    } catch {}
+  // 单图布局: 切换当前图直接换 src(与内置 MediaLightbox 一致)
+  const img = overlay.querySelector('.mlz-img');
+  if (img && urls[current] && img.src !== urls[current]) {
+    img.src = urls[current];
   }
-  window.dispatchEvent(new CustomEvent('mlz:focus', { detail: curImg || null }));
+  window.dispatchEvent(new CustomEvent('mlz:focus', { detail: img || null }));
   const counter = overlay.querySelector('.mlz-counter');
   if (counter) {
     if (urls.length > 1) {
@@ -358,8 +352,8 @@ function mkBtn(text, title, onClick) {
 }
 
 /**
- * 打开预览遮罩: 构建与内置 MediaLightbox 同类的弹层(供 media_lightbox_zoom 接管缩放),
- * 多图横向并排, 左右按钮/方向键循环切换, 点遮罩关闭。
+ * 打开预览遮罩: 构建与内置 MediaLightbox 同款布局(单图居中, max 90vh/90vw),
+ * 供 media_lightbox_zoom 接管缩放(放大可撑满屏幕); 左右按钮/方向键循环切换, 点遮罩关闭。
  *
  * @param {string[]} list 图片 URL 数组
  * @param {number} startIndex 初始选中图下标
@@ -410,35 +404,22 @@ function openOverlay(list, startIndex) {
     'position:fixed;top:50%;right:16px;z-index:10;transform:translateY(-50%);' +
     'border-radius:9999px;width:40px;height:40px;font-size:22px;';
 
-  // 多图横向并排(单图也走同一布局, 兼容 1 张的情况)
-  const row = document.createElement('div');
-  row.className = 'mlz-row';
-  // overflow:hidden(而非 auto): 缩放(transform scale)时图片视觉溢出容器,
-  // 若用 auto 会出现横向滚动条; hidden 不显示滚动条、与内置 MediaLightbox 一致,
-  // 且多图时 scrollIntoView 仍可程序化滚动切换(scrollIntoView 对 overflow:hidden 生效)。
-  row.style.cssText =
-    'display:flex;align-items:center;gap:12px;max-width:92vw;max-height:88vh;' +
-    'overflow:hidden;padding:10px;';
-  const maxW = Math.max(24, Math.floor(86 / urls.length));
-  urls.forEach((u, i) => {
-    const im = document.createElement('img');
-    im.className = 'mlz-img';
-    im.src = u;
-    im.alt = '';
-    im.draggable = false;
-    im.style.cssText =
-      'max-height:82vh;max-width:' + maxW + 'vw;object-fit:contain;' +
-      'border:2px solid transparent;border-radius:4px;cursor:pointer;' +
-      'flex-shrink:0;transition:border-color .15s, box-shadow .15s;';
-    im.addEventListener('click', (e) => {
-      e.stopPropagation();
-      current = i;
-      renderOverlay();
-    });
-    row.appendChild(im);
-  });
+  // 单图居中(与内置 MediaLightbox 布局一致): 容器不裁剪(overflow visible),
+  // 图片 max 90vh/90vw object-contain —— 放大(transform scale)时图片自然撑满屏幕,
+  // 不出现滚动条、不被容器裁剪, 靠拖拽平移查看细节
+  const container = document.createElement('div');
+  container.className = 'mlz-container';
+  container.style.cssText =
+    'display:flex;max-height:100%;max-width:100%;align-items:center;justify-content:center;';
+  const img = document.createElement('img');
+  img.className = 'mlz-img';
+  img.src = urls[current];
+  img.alt = '';
+  img.draggable = false;
+  img.style.cssText = 'max-height:90vh;max-width:90vw;object-fit:contain;';
+  container.appendChild(img);
 
-  dlg.append(counter, closeBtn, prevBtn, row, nextBtn);
+  dlg.append(counter, closeBtn, prevBtn, container, nextBtn);
 
   // 点遮罩关闭(与内置弹层相同逻辑: 按下和松开都在遮罩上才关闭)
   let maskDown = null;
