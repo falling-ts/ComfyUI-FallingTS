@@ -7,9 +7,9 @@
  * 行为:
  * - format 变化时按格式联动 bit_depth / input_color_space 的合法选项(png→8/16bit+sRGB,
  *   exr→32bit float+sRGB/HDR/linear), 与 SaveImageAdvanced 的 DynamicCombo 一致;
- * - 点「保存」: 先 POST /preview-image/save/{id} 让后端标记该节点"已请求保存",
- *   再 app.queuePrompt(0,1,[节点id]) 对本节点做 partial 重跑 —— 节点 execute 检测到标记
- *   即按控件配置写 output(同名覆盖、无序号), 并始终重新生成 temp 预览。
+ * - 点「保存」: 把 文件名/格式/位深/色彩空间 POST 到 /preview-image/save/{id},
+ *   后端用 execute 时缓存的预览数据直接写 output(同名覆盖、无序号) ——
+ *   【不触发任何工作流重跑】, 保存的是当前画面上显示的这张图。
  */
 
 import { app } from "../../../scripts/app.js";
@@ -91,33 +91,35 @@ app.registerExtension({
       }
 
       /**
-       * 「保存」按钮点击处理: 标记后端 → partial 重跑本节点 → execute 写 output(覆盖, 无序号)。
+       * 「保存」按钮点击处理: 把控件配置 POST 到后端, 后端用缓存的预览数据直接写 output
+       * (同名覆盖, 无序号), 【不重跑工作流】。
        * 回调参数: 无(addWidget 内部触发)。
-       * @returns {Promise<void>} 整段"标记 + 重跑"异步流程
+       * @returns {Promise<void>} 保存请求异步流程
        */
       node.addWidget("button", "保存", null, async () => {
-        /* 1. 后端标记"已请求保存"(IS_CHANGED 变化 → 本节点将重新执行) */
+        const getWidget = (name) =>
+          node.widgets?.find((w) => w.name === name)?.value;
         try {
-          const resp = await fetch(`/preview-image/save/${node.id}`, { method: "POST" });
+          const resp = await fetch(`/preview-image/save/${node.id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename_prefix: getWidget("filename_prefix") ?? "preview",
+              format: getWidget("format") ?? "png",
+              bit_depth: getWidget("bit_depth") ?? "8-bit",
+              input_color_space: getWidget("input_color_space") ?? "sRGB",
+            }),
+          });
+          const data = await resp.json().catch(() => null);
           if (!resp.ok) {
-            const data = await resp.json().catch(() => null);
             alert(data?.message ?? "保存失败");
             return;
           }
+          alert(data?.message ?? "已保存");
         } catch (err) {
           console.error("[FallingTS] 保存失败:", err);
           alert("保存失败: 无法连接后端");
-          return;
         }
-
-        /* 2. partial 重跑本节点(标准队列流程, 有节点流动动画) */
-        try {
-          await app.queuePrompt(0, 1, [String(node.id)]);
-        } catch (err) {
-          console.error("[FallingTS] 保存重跑失败:", err);
-          return;
-        }
-        app.graph.setDirtyCanvas(true, false);
       });
 
       syncFormatDependentWidgets(node);

@@ -6,7 +6,9 @@
 - 保存部分照 SaveImageAdvanced(comfy_extras/nodes_images.py:1155): _encode_image 按 格式/位深/色彩空间
   编码 + 注入 prompt 元数据;
 - 差异: 保存用 {filename_prefix}.{format} 直接写 output, 同名覆盖, 不带 _序号 后缀
-  (不走 get_save_image_path 的 counter), 且仅当前端点「保存」按钮(POST /preview-image/save/{id})才写。
+  (不走 get_save_image_path 的 counter);
+- 关键: 点「保存」【不重跑工作流】—— execute 时把最近一次预览的图片数据缓存到后端,
+  点按钮时前端把 文件名/格式/位深/色彩空间 POST 到 /preview-image/save/{id}, 后端直接用缓存写 output。
 """
 
 from __future__ import annotations
@@ -25,8 +27,9 @@ from comfy.cli_args import args
 from comfy_extras.nodes_images import _encode_image, inject_png_metadata, inject_exr_metadata
 
 
-# 已请求保存的节点 id 集合: 点「保存」后前端 POST 标记, 下一次 execute 写 output 并清除
-_save_requested: set[str] = set()
+# 最近一次预览的图片数据缓存: node_id -> {"images": [张量...], "prompt": ..., "extra_pnginfo": ...}
+# 点「保存」时前端把控件配置 POST 过来, 后端直接用这里的缓存写 output(无需重跑工作流)
+_last_output: dict[str, dict] = {}
 
 
 class PreviewImageSaveNode:
@@ -96,19 +99,6 @@ class PreviewImageSaveNode:
     )
     SEARCH_ALIASES = ["preview", "预览", "保存", "save image", "输出图片"]
 
-    @classmethod
-    def IS_CHANGED(cls, id: str | None = None, **kwargs):
-        """缓存失效签名: 保存请求参与缓存键, 点「保存」后该节点判定已变化而重新执行(从而写 output)。
-
-        参数:
-            id (str | None): 节点唯一 ID, 与 hidden.id 对应;
-            **kwargs: 其余输入(images 等), 本方法不读取。
-
-        返回:
-            tuple[bool]: (id 是否已在 _save_requested 中,) 作为缓存键的一部分。
-        """
-        return (id in _save_requested,)
-
     def _make_temp_preview(self, image) -> tuple[str, str]:
         """把单张图片编码为 PNG 写 temp 目录(低压缩), 供前端 /view?type=temp 显示。
 
@@ -176,36 +166,37 @@ class PreviewImageSaveNode:
         extra_pnginfo=None,
         id: str | None = None,
     ):
-        """节点执行入口: 始终生成 temp 预览; 若已点「保存」则按控件配置写 output 并清除标记。
+        """节点执行入口: 生成 temp 预览, 并把最近一次图片数据缓存到后端供「保存」直接写 output。
 
-        逻辑: 先逐张生成 temp PNG 预览返回 UI; 若 id 在 _save_requested(点过「保存」),
-        则按 filename_prefix/format/bit_depth/input_color_space 编码写 output(覆盖、无序号),
-        然后清除保存标记。
+        逻辑: 逐张生成 temp PNG 预览返回 UI; 把 images/prompt/extra_pnginfo 存进 _last_output[id]
+        —— 之后点「保存」按钮, 前端把 文件名/格式/位深/色彩空间 POST 过来, 后端直接用这份缓存写 output,
+        【不重跑工作流】。filename_prefix/format/bit_depth/input_color_space 这些输入只作为控件显示
+        (按钮读取它们), 本方法不用于保存。
 
         参数:
             images (torch.Tensor): BxHxWxC 图片批;
-            filename_prefix (str, 默认 "preview"): 输出文件名前缀;
-            format (str, 默认 "png"): png/exr;
-            bit_depth (str, 默认 "8-bit"): 位深;
-            input_color_space (str, 默认 "sRGB"): 输入色彩空间;
-            prompt (dict|None): 工作流 prompt;
-            extra_pnginfo (dict|None): 额外元数据;
-            id (str | None, 默认 None): 节点唯一 ID, 用于查保存请求。
+            filename_prefix (str, 默认 "preview"): 输出文件名前缀(控件, 保存时以按钮 POST 的为准);
+            format (str, 默认 "png"): png/exr(控件);
+            bit_depth (str, 默认 "8-bit"): 位深(控件);
+            input_color_space (str, 默认 "sRGB"): 输入色彩空间(控件);
+            prompt (dict|None): 工作流 prompt(缓存, 供保存时注入元数据);
+            extra_pnginfo (dict|None): 额外元数据(同上);
+            id (str | None, 默认 None): 节点唯一 ID, 用作缓存键。
 
         返回:
             dict: {"ui": {"images": [temp 预览记录...]}, "result": (images,)}。
         """
+        # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
+        _last_output[id] = {
+            "images": list(images),
+            "prompt": prompt,
+            "extra_pnginfo": extra_pnginfo,
+        }
+
         results = []
         for image in images:
             file, subfolder = self._make_temp_preview(image)
             results.append({"filename": file, "subfolder": subfolder, "type": "temp"})
-
-        if id in _save_requested:
-            _save_requested.discard(id)
-            self._save_batch_to_output(
-                images, filename_prefix, format, bit_depth, input_color_space, prompt, extra_pnginfo
-            )
-
         return {"ui": {"images": results}, "result": (images,)}
 
 
@@ -223,20 +214,54 @@ def _node_id(request: web.Request) -> str:
 
 @PromptServer.instance.routes.post("/preview-image/save/{node_id}")
 async def _handle_save(request: web.Request) -> web.Response:
-    """HTTP 路由: 标记该节点"已请求保存"(点「保存」按钮时前端调用)。
+    """HTTP 路由: 用缓存数据把该节点最近预览的图片写入 output(同名覆盖, 无序号)。
 
-    流程: 把 node_id 加入 _save_requested, 前端随后触发本节点 partial 重跑,
-    该节点 execute 检测到标记即写 output 并清除标记。
+    流程: 前端点「保存」按钮时把 文件名/格式/位深/色彩空间 POST 过来;
+    后端查 _last_output[node_id](execute 时缓存的图片), 有则按配置编码写 output, 无则 400。
+    全程不触发任何工作流重跑。
 
     参数:
-        request (web.Request): POST /preview-image/save/{node_id} 请求, node_id 取自路径。
+        request (web.Request): POST /preview-image/save/{node_id}, body 为 JSON
+            {filename_prefix, format, bit_depth, input_color_space}。
 
     返回:
-        web.Response: {"status": "ok"}。
+        web.Response:
+        - 成功: 200, {"status": "ok", "message": "已保存 N 张: <文件名>.<格式>"};
+        - 失败: 400, {"status": "error", "message": "没有预览数据, 请先运行到该节点"}。
     """
     nid = _node_id(request)
-    _save_requested.add(nid)
-    return web.json_response({"status": "ok"})
+    cache = _last_output.get(nid)
+    if not cache or not cache.get("images"):
+        return web.json_response(
+            {"status": "error", "message": "没有预览数据, 请先运行到该节点"}, status=400
+        )
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    filename_prefix = str(data.get("filename_prefix", "preview"))
+    file_format = str(data.get("format", "png"))
+    bit_depth = str(data.get("bit_depth", "8-bit"))
+    colorspace = str(data.get("input_color_space", "sRGB"))
+
+    node = PreviewImageSaveNode()
+    node._save_batch_to_output(
+        cache["images"],
+        filename_prefix,
+        file_format,
+        bit_depth,
+        colorspace,
+        cache.get("prompt"),
+        cache.get("extra_pnginfo"),
+    )
+    return web.json_response(
+        {
+            "status": "ok",
+            "message": f"已保存 {len(cache['images'])} 张: {filename_prefix}.{file_format}",
+        }
+    )
 
 
 NODE_CLASS_MAPPINGS = {
