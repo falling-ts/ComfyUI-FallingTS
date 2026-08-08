@@ -338,9 +338,12 @@ function openOverlay(list, startIndex) {
   // 多图横向并排(单图也走同一布局, 兼容 1 张的情况)
   const row = document.createElement('div');
   row.className = 'mlz-row';
+  // overflow:hidden(而非 auto): 缩放(transform scale)时图片视觉溢出容器,
+  // 若用 auto 会出现横向滚动条; hidden 不显示滚动条、与内置 MediaLightbox 一致,
+  // 且多图时 scrollIntoView 仍可程序化滚动切换(scrollIntoView 对 overflow:hidden 生效)。
   row.style.cssText =
     'display:flex;align-items:center;gap:12px;max-width:92vw;max-height:88vh;' +
-    'overflow-x:auto;overflow-y:hidden;padding:10px;';
+    'overflow:hidden;padding:10px;';
   const maxW = Math.max(24, Math.floor(86 / urls.length));
   urls.forEach((u, i) => {
     const im = document.createElement('img');
