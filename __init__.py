@@ -16,13 +16,16 @@ _plugin_dir = os.path.dirname(os.path.abspath(__file__))
 if _plugin_dir not in sys.path:
     sys.path.insert(0, _plugin_dir)
 
+from importlib import import_module
 from plugin import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, inject, comfy_entrypoint
 from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
-from previewvideo.nodes import PreviewVideoNode
 from route.nodes import FallingTSRouteNode
+
+# preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
+PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
 
 __all__ = [
     "WEB_DIRECTORY",

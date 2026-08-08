@@ -9,13 +9,16 @@ import logging
 
 from comfy_api.latest import IO
 from comfy_api.latest import ComfyExtension
+from importlib import import_module
 
 from proceed.nodes import FallingTSContinueNode
 from selector.nodes import FallingTSSelectorNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
-from previewvideo.nodes import PreviewVideoNode
 from route.nodes import FallingTSRouteNode
+
+# preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
+PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
 
 logger = logging.getLogger(__name__)
 

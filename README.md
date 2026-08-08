@@ -169,7 +169,7 @@ ComfyUI-FallingTS/
 ├── switch/           # 分组开关节点
 │   ├── nodes.py
 │   └── __init__.py
-├── previewvideo/     # 视频预览节点(不保存)
+├── preview-video/    # 视频预览节点(不保存, V3; 目录名含连字符, 经 importlib 加载)
 │   ├── nodes.py
 │   └── __init__.py
 ├── web/js/           # 前端扩展(ComfyUI 经 /extensions 运行时加载,不参与前端打包)
