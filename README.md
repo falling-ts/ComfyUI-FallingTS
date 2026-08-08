@@ -15,11 +15,12 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 视频预览,编码到 temp 目录,**不写入 output**,"不满意就不保存" |
 
-### Web 前端增强(8 个,安装即用,无需配置)
+### Web 前端增强(9 个,安装即用,无需配置)
 
 | 文件 | 功能 |
 |------|------|
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
+| `web/js/route.js` | 路由节点假输出分支真正执行:partial 提交时把 switch=false 的假输出分支下游输出节点并入 targets,保存本段并停止 |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/selector.js` | 选择器 `items` → 下拉选项实时联动,失配自动重置 |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
@@ -76,6 +77,8 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 |---|---|---|
 | true | 阻断 | value |
 | false | value | 阻断 |
+
+**假输出分支真正执行(前端 route.js)**:分段执行(点「继续」)只跑 targets + targets 的上游祖先,而假输出分支的末端输出节点(保存等)不在其中,引擎不调度它。`web/js/route.js` 在 partial 提交时把 `switch=false` 的 route **假输出分支下游的输出节点并入 targets** —— 假输出后面接的保存/预览/对比节点都能真正执行并拿到数据;真输出分支本就是下一继续的上游、已被继续节点 targets 覆盖。
 
 **典型用法**:继续节点后接路由,实现"false=保存本段并停止、true=继续下一段":
 ```
