@@ -15,17 +15,41 @@ import { api } from "../../../scripts/api.js";
 
 const NODE_CLASS = "FallingTSContinue";
 
+// 判断节点是否为「继续节点」, 兼容新旧前端两种节点类型标记方式(type / constructor.comfyClass)。
+// 参数:
+//   node (LGraphNode): 画布节点对象。
+// 返回:
+//   boolean: 是继续节点返回 true。
 function isContinueNode(node) {
   return node?.type === NODE_CLASS || node?.constructor?.comfyClass === NODE_CLASS;
 }
+
+// 判断节点是否为「输出节点」(保存/预览等终端节点)。
+// 分段执行用它收集 partial execution 目标: 执行只需跑到这些节点为止。
+// 参数:
+//   node (LGraphNode): 画布节点对象。
+// 返回:
+//   boolean: 该节点的 nodeData.output_node 为 true 返回 true。
 function isOutputNode(node) {
   return node?.constructor?.nodeData?.output_node === true;
 }
+
+// 按 linkId 从图的链路表取链路对象(不存在/已断开时为 null)。
+// 参数:
+//   graph (LGraph): 画布图对象;
+//   linkId (number): 链路 ID(节点输出槽 links 数组里的元素)。
+// 返回:
+//   object | null: 链路对象(含 source_id / target_id / target_slot / type 等), 不存在时为 null。
 function getLink(graph, linkId) {
   return graph?.links?.[linkId] ?? null;
 }
 
-// BFS 下游: 返回第一个遇到的继续节点 (下一个分段边界)
+// BFS 沿输出链路向下游搜索, 返回第一个遇到的继续节点(下一个分段边界)。
+// 点「继续」时用来确定 partial execution 的锚点: 锚点之前的子图不执行。
+// 参数:
+//   startNode (LGraphNode): 起始节点(通常是当前继续节点)。
+// 返回:
+//   LGraphNode | null: 下游第一个继续节点; 下游没有继续节点时返回 null。
 function findNextContinue(startNode) {
   const visited = new Set();
   const queue = [];
@@ -52,7 +76,12 @@ function findNextContinue(startNode) {
   return null;
 }
 
-// 从 startNode 下游 BFS: 收集输出节点, 遇到下一个继续节点停止
+// 从 startNode 下游 BFS, 收集所有输出节点, 遇到下一个继续节点即停止。
+// 收集到的节点 ID 数组作为 partial_execution_targets 传给 /prompt: 只执行本段的子图。
+// 参数:
+//   startNode (LGraphNode): 锚点节点(通常是"下一个继续节点", 没有则取当前继续节点自身), 从其输出开始遍历。
+// 返回:
+//   string[]: 输出节点的 ID 字符串数组(已去重); 一个都没有时返回空数组。
 function collectOutputsAfter(startNode) {
   const targets = new Set();
   const visited = new Set();
@@ -84,9 +113,23 @@ function collectOutputsAfter(startNode) {
 app.registerExtension({
   name: "FallingTS.Continue",
 
+  // 扩展初始化钩子: 包装全局提交入口 app.queuePrompt。
+  // 默认 Run(未显式指定目标节点)时, 先 POST /proceed/reset 把所有继续节点重置为阻塞并清空缓存,
+  // 再按原逻辑全量提交 —— 保证每次 Run 都从开头执行、在第一个继续节点停住。
+  // 参数:
+  //   无(ComfyUI 在插件加载时自动调用)。
+  // 返回:
+  //   void。
   async setup() {
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
+    // 包装 queuePrompt: 拦截"默认 Run"分支, 先重置全部继续节点再提交。
+    // 参数:
+    //   number (number): 提交次数;
+    //   batch (number): 批次数;
+    //   queueNodeIds (Array|undefined): 「继续」按钮显式指定的目标节点 ID 列表, 非空时跳过重置(保留已放行状态); 为空视为默认 Run。
+    // 返回:
+    //   Promise: 原始 queuePrompt 的返回值(提交任务后的 Promise)。
     app.queuePrompt = async function (number, batch, queueNodeIds) {
       // 默认 Run (无显式目标): 重置所有继续为阻塞并清缓存, 再全量提交
       if (!queueNodeIds?.length) {
@@ -100,9 +143,19 @@ app.registerExtension({
     };
   },
 
+  // 节点创建钩子: 只对「继续节点」生效, 在节点上添加「▶ 继续」按钮。
+  // 参数:
+  //   node (LGraphNode): 新创建的节点对象。
+  // 返回:
+  //   void。
   nodeCreated(node) {
     if (!isContinueNode(node)) return;
 
+    // 添加「▶ 继续」按钮并绑定点击处理: 放行本节点 -> 只执行本段子图 -> 停在下个继续节点。
+    // 回调参数:
+    //   无(addWidget 内部触发, 回调不接收事件对象)。
+    // 返回:
+    //   Promise<void>: 整段"放行 + partial 提交"的异步流程。
     const btn = node.addWidget("button", "▶ 继续", null, async () => {
       // 1. 后端校验节点缓存并放行 (无缓存 -> 400 "没有上游数据")
       try {
