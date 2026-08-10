@@ -187,10 +187,13 @@ class PreviewImageSaveNode:
             dict: {"ui": {"images": [temp 预览记录...]}, "result": (images,)}。
         """
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
+        # filename_prefix 一并缓存: 该输入可能被上游连线(如 MDTable 的 ID 列),
+        # 此时 widget 里只是占位符, 实际值在 execute 收到的入参里 —— 保存用它而非占位符。
         _last_output[id] = {
             "images": list(images),
             "prompt": prompt,
             "extra_pnginfo": extra_pnginfo,
+            "filename_prefix": filename_prefix,
         }
 
         results = []
@@ -242,6 +245,10 @@ async def _handle_save(request: web.Request) -> web.Response:
         data = {}
 
     filename_prefix = str(data.get("filename_prefix", "preview"))
+    # 若 filename_prefix 输入被上游连线(如 MDTable 的 ID), widget 值是占位符:
+    # 用 execute 时实际接收到的值 (前端已标记 filename_prefix_linked)
+    if data.get("filename_prefix_linked") and cache.get("filename_prefix") is not None:
+        filename_prefix = str(cache["filename_prefix"])
     file_format = str(data.get("format", "png"))
     bit_depth = str(data.get("bit_depth", "8-bit"))
     colorspace = str(data.get("input_color_space", "sRGB"))

@@ -99,12 +99,17 @@ app.registerExtension({
       node.addWidget("button", "保存", null, async () => {
         const getWidget = (name) =>
           node.widgets?.find((w) => w.name === name)?.value;
+        // filename_prefix 是否被上游连线(如 MDTable 的 ID 列): 连线时 widget 只是占位符,
+        // 需后端用 execute 时实际接收到的值, 否则保存会落到占位符 "preview"
+        const prefixLinked =
+          node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
         try {
           const resp = await fetch(`/preview-image/save/${node.id}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               filename_prefix: getWidget("filename_prefix") ?? "preview",
+              filename_prefix_linked: prefixLinked,
               format: getWidget("format") ?? "png",
               bit_depth: getWidget("bit_depth") ?? "8-bit",
               input_color_space: getWidget("input_color_space") ?? "sRGB",

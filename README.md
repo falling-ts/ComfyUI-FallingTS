@@ -11,6 +11,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 继续节点 | `FallingTSContinue` | `FallingTS/控制` | 工作流**分段执行**:默认阻塞下游,「继续」放行一段,逐段运行到底(靠执行缓存,不重复算上游) |
 | 路由节点 | `FallingTSRoute` | `FallingTS/控制` | 1 进 2 出:一个值按 `switch` 路由到两路输出之一,未选那路输出阻断(ExecutionBlocker),下游不执行 |
 | 通用表格 | `FallingTSTable` | `FallingTS/表格` | Excel 式表格(数据内嵌工作流):顶部「选择」下拉选行,输出该行 A/B/C... 各列字符串;行/列数可调,输出端口随列数增减 |
+| MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
 | 下拉选择器 | `FallingTSSelector` | `FallingTS/工具` | 文本+下拉:逗号分隔选项实时更新下拉,选中项输出索引(INT) + 选项文本(STRING) |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 视频预览,编码到 temp 目录,**不写入 output**,"不满意就不保存" |
@@ -24,6 +25,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/route.js` | 路由节点假输出分支真正执行:partial 提交时把 switch=false 的假输出分支下游输出节点并入 targets,保存本段并停止 |
 | `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
+| `web/js/md_table.js` | MarkDown 数据表 DOM 控件:系统选择器选文件 + 数据弹窗(搜索/分页/单选) + 按类型渲染表单 + 刷新 |
 | `web/js/selector.js` | 选择器 `items` → 下拉选项实时联动,失配自动重置 |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
 | `web/js/node_image_middleclick.js` | 节点图片**鼠标中键**全屏预览(单图居中,多图左右循环切换,与已生成预览同款布局) |
@@ -107,6 +109,39 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 - 兼容旧版"行对象数组"数据(自动迁移为 A..E 五列网格);
 - 类型转换由下游节点自行完成(如 `ComfyNumberConvert` 字符串转数值)。
 
+### 2.1 MarkDown 数据表 `FallingTSMarkDownTable`
+
+**用途**:把 md 文件里的一张数据表当作「数据库」:弹窗选一行 → 节点内按字段类型渲染**可编辑表单**,输出选中行的各字段值(按类型)。
+
+**数据格式**(md 文件是唯一数据源,不随工作流保存):
+- 含一张 GFM 表格(表头 + `---` 分隔行),取第一张;**第一列永远是 ID 列**,值为 str 中文字符串,常用 `-` 连接多段信息(如 `龙傲天-主角`);
+- 表头格式 **`标题(类型)`**(括号内写类型;md 里 `[]` 是特殊语法,不用方括号),未标类型默认 `STRING`;支持类型:`IMAGE` / `VIDEO` / `AUDIO` / `STRING` / `INT` / `FLOAT` / `BOOLEAN` / `TEXT`(大小写不敏感,常见别名归一;`TEXT` 渲染为**多行文本框**且输出同为 STRING)。
+
+**操作流程**:
+1. **📁 选择md文件** — 后端 `tkinter` 弹**系统原生文件选择器**,节点记录绝对路径(路径框也可手动粘贴,headless 兜底);
+2. **🗂 打开数据** — 内嵌 HTML 弹窗:顶部**各字段模糊搜索**、底部**分页**(每页 10/20/30/50/100 + 首页/上一页/下一页/尾页)、表格**无序号列、首列单选 radio**;
+3. 选中一行后底部**确定**按钮由灰变**蓝**亮起,点击关闭弹窗,节点把该行数据载入表单;取消即关闭不生效;
+4. 表单**竖向排列**各字段,按类型渲染控件(INT/FLOAT 数字输入、BOOLEAN 复选、TEXT 多行文本框**随内容自动撑高**、STRING 单行输入、IMAGE/VIDEO/AUDIO 路径输入 + 内嵌预览),可修改;
+5. **🔄 刷新**(节点底部)— 按 ID 重新查询 md 文件,用磁盘最新值更新表单(md 文件被外部改动后同步)。
+
+**输出**(动态端口,沿表格节点模式,未用槽不显示):
+- `[0] ID`(STRING);
+- `[1..]` 各非 ID 字段 — 按类型:`INT`/`FLOAT`/`BOOLEAN` 输出原生数值/布尔,`STRING`/`TEXT`/`IMAGE`/`VIDEO`/`AUDIO` 输出字符串(TEXT 可含换行,媒体为文件路径);
+- 末位 `整行数据`(STRING)— 整行 `{id, values}` 的 JSON 字符串。
+
+**示例 md**:
+```markdown
+| ID | 名称(STRING) | 头像(IMAGE) | 身高(FLOAT) | 启用(BOOLEAN) | 描述(TEXT) |
+|----|-------------|-------------|-------------|--------------|-----------|
+| 龙傲天-主角 | 龙傲天 | assets/avatar/lt.png | 180.5 | 是 | 主角,三视图 |
+| 陈落-配角 | 陈落 | assets/avatar/cl.png | 165 | 否 | 配角,三视图 |
+```
+
+**HTTP 路由**(后端自动注册):
+- `POST /fallingts_mdtable/select_file` — 弹系统文件选择器,返回绝对路径
+- `GET /fallingts_mdtable/read?path=` — 解析 md,返回字段定义 + 全部数据行
+- `GET /fallingts_mdtable/preview?path=` — 按绝对路径提供本地 image/video/audio 预览(支持 Range)
+
 ### 3. 下拉选择器 `FallingTSSelector`
 
 - `items` 文本框(英文逗号分隔选项)实时联动下拉框;
@@ -168,6 +203,10 @@ ComfyUI-FallingTS/
 │   └── __init__.py
 ├── selector/         # 下拉选择器节点
 │   └── nodes.py
+├── mdtable/          # MarkDown 数据表超级节点
+│   ├── nodes.py      #   FallingTSMarkDownTable + HTTP 路由(select_file/read/preview)
+│   ├── parser.py     #   md 表格解析 + 值类型转换(纯函数, 可单测)
+│   └── __init__.py
 ├── switch/           # 分组开关节点
 │   ├── nodes.py
 │   └── __init__.py

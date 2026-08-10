@@ -23,6 +23,7 @@ from selector.nodes import FallingTSSelectorNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from route.nodes import FallingTSRouteNode
+from mdtable.nodes import FallingTSMarkDownTableNode
 
 # preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
@@ -40,6 +41,7 @@ __all__ = [
     "FallingTSSelectorNode",
     "FallingTSTableNode",
     "FallingTSSwitchNode",
+    "FallingTSMarkDownTableNode",
     "PreviewVideoNode",
     "PreviewImageSaveNode",
 ]
