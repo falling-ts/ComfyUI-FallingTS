@@ -15,27 +15,76 @@ import { app } from "../../../scripts/app.js";
 const NODE_CLASS = "PreviewVideo";
 
 /**
- * Nodes 2.0 渲染模式: 保存按钮由 WidgetButton 组件渲染为 DOM <button aria-label="保存">,
- * 不走 LiteGraph canvas widget(旧版 canvas 已由 styleSaveButton 处理)。
- * 这里注入全局 CSS 统一美化(更高、渐变、圆角、hover)。
+ * Nodes 2.0 渲染模式: 保存按钮由 WidgetButton 组件渲染为 DOM <button>。
+ * 不依赖 CSS 选择器/aria-label, 直接用 JS 遍历按钮, 按文本/aria 匹配"保存",
+ * 逐个设置 element.style(渐变、圆角、更高); MutationObserver 持续监控懒渲染。
+ * 全局只初始化一次(三个 preview js 共享)。
+ *
+ * @param {HTMLElement} el 按钮元素
+ * @returns {void}
+ */
+function applySaveBtnStyle(el) {
+  el.style.height = "40px";
+  el.style.minHeight = "40px";
+  el.style.padding = "8px 12px";
+  el.style.background = "linear-gradient(135deg,#6a5cff,#9d5cff)";
+  el.style.color = "#fff";
+  el.style.borderRadius = "8px";
+  el.style.fontSize = "15px";
+  el.style.fontWeight = "700";
+  el.style.letterSpacing = "1px";
+  el.style.boxShadow = "0 2px 8px rgba(106,92,255,.35)";
+  el.style.transition = "all .2s ease";
+  el.style.border = "none";
+  if (!el._fallingtsStyled) {
+    el._fallingtsStyled = true;
+    el.addEventListener("mouseenter", () => {
+      el.style.background = "linear-gradient(135deg,#7b6dff,#ad6dff)";
+      el.style.boxShadow = "0 4px 14px rgba(106,92,255,.5)";
+      el.style.transform = "translateY(-1px)";
+    });
+    el.addEventListener("mouseleave", () => {
+      el.style.background = "linear-gradient(135deg,#6a5cff,#9d5cff)";
+      el.style.boxShadow = "0 2px 8px rgba(106,92,255,.35)";
+      el.style.transform = "";
+    });
+  }
+}
+
+/**
+ * 判断是否为保存按钮(文本或 aria-label 为 保存/Save)。
+ *
+ * @param {HTMLElement} el 元素
+ * @returns {boolean} 是否保存按钮
+ */
+function isSaveBtn(el) {
+  if (!el || el.tagName !== "BUTTON") return false;
+  const txt = (el.innerText || "").trim();
+  const aria = (el.getAttribute("aria-label") || "").trim();
+  return txt === "保存" || txt === "Save" || aria === "保存" || aria === "Save";
+}
+
+/**
+ * 遍历页面按钮, 对保存按钮套样式。
  *
  * @returns {void}
  */
-function injectSaveButtonStyle() {
-  if (document.getElementById("fallingts-save-btn-style")) return;
-  const style = document.createElement("style");
-  style.id = "fallingts-save-btn-style";
-  style.textContent =
-    'button[aria-label="保存"]{height:40px!important;min-height:40px!important;' +
-    'padding:8px 12px!important;background:linear-gradient(135deg,#6a5cff 0%,#9d5cff 100%)!important;' +
-    'color:#fff!important;border-radius:8px!important;font-size:15px!important;' +
-    'font-weight:700!important;letter-spacing:1px!important;' +
-    'box-shadow:0 2px 8px rgba(106,92,255,.35)!important;transition:all .2s ease!important}' +
-    'button[aria-label="保存"]:hover{background:linear-gradient(135deg,#7b6dff 0%,#ad6dff 100%)!important;' +
-    'box-shadow:0 4px 14px rgba(106,92,255,.5)!important;transform:translateY(-1px)!important}';
-  document.head.appendChild(style);
+function styleSaveButtons() {
+  document.querySelectorAll("button").forEach((el) => {
+    if (isSaveBtn(el)) applySaveBtnStyle(el);
+  });
 }
-injectSaveButtonStyle();
+
+// 初始扫描 + MutationObserver 持续监控(Nodes 2.0 懒渲染按钮), 全局只跑一次
+if (!window.__fallingtsSaveBtnInited) {
+  window.__fallingtsSaveBtnInited = true;
+  const init = () => {
+    styleSaveButtons();
+    new MutationObserver(styleSaveButtons).observe(document.body, { childList: true, subtree: true });
+  };
+  if (document.body) init();
+  else document.addEventListener("DOMContentLoaded", init);
+}
 
 /**
  * 兼容 canvas roundRect(老浏览器无 ctx.roundRect 时用 arcTo 手绘圆角路径)。
