@@ -1,11 +1,13 @@
 /**
- * PreviewVideo 前端: 底部追加「保存」按钮(大气样式)。
+ * PreviewVideo 前端: 底部追加「保存」按钮(大气样式, canvas 渐变绘制)。
  *
  * 行为:
  * - 预览部分由节点原生 UI.PreviewVideo 负责(播放 temp 目录文件);
  * - 点「保存」: 把 文件名前缀 POST 到 /preview-video/save/{id},
  *   后端用 execute 时缓存的视频数据直接写 output({filename_prefix}.mp4, 同名覆盖、无序号) ——
  *   【不触发任何工作流重跑】, 保存的是当前画面上播放的这段视频。
+ * - 按钮为 ComfyUI canvas widget(canvasOnly), 无 DOM element, 故覆写 widget.draw
+ *   用 canvas 绘制: 渐变圆角、阴影、白字; 点击时下压反馈。
  */
 
 import { app } from "../../../scripts/app.js";
@@ -13,7 +15,33 @@ import { app } from "../../../scripts/app.js";
 const NODE_CLASS = "PreviewVideo";
 
 /**
- * 给「保存」按钮 widget 应用大气样式: 更高、渐变底色、圆角、阴影、hover 高亮。
+ * 兼容 canvas roundRect(老浏览器无 ctx.roundRect 时用 arcTo 手绘圆角路径)。
+ *
+ * @param {CanvasRenderingContext2D} ctx canvas 上下文
+ * @param {number} x 左上角 x
+ * @param {number} y 左上角 y
+ * @param {number} w 宽
+ * @param {number} h 高
+ * @param {number} r 圆角半径
+ * @returns {void}
+ */
+function drawRoundRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/**
+ * 给「保存」按钮 widget 应用大气样式: 覆写 draw 用 canvas 绘制渐变圆角按钮,
+ * 行高提高到 42; 点击时下压反馈(hover 由 ComfyUI/LiteGraph 的 widget.mouse 事件更新)。
  *
  * @param {LGraphNode} node 节点对象(其 widgets 里含 type === "button" 的保存按钮)
  * @returns {void}
@@ -22,49 +50,68 @@ function styleSaveButton(node) {
   const btn = node.widgets?.find((w) => w.type === "button");
   if (!btn) return;
 
-  // 布局行更高
+  // 按钮行更高
   btn.computedHeight = 42;
-  node.setDirtyCanvas(true, true);
 
-  const apply = () => {
-    const el = btn.element;
-    if (!el) return;
-    el.style.height = "40px";
-    el.style.width = "100%";
-    el.style.boxSizing = "border-box";
-    el.style.margin = "6px 8px";
-    el.style.background = "linear-gradient(135deg,#6a5cff 0%,#9d5cff 100%)";
-    el.style.color = "#ffffff";
-    el.style.fontSize = "16px";
-    el.style.fontWeight = "700";
-    el.style.letterSpacing = "2px";
-    el.style.borderRadius = "10px";
-    el.style.border = "1px solid rgba(255,255,255,.18)";
-    el.style.cursor = "pointer";
-    el.style.boxShadow = "0 3px 12px rgba(106,92,255,.4)";
-    el.style.transition = "all .25s ease";
-    if (!el._styled) {
-      el._styled = true;
-      el.addEventListener("mouseenter", () => {
-        el.style.background = "linear-gradient(135deg,#7b6dff 0%,#ad6dff 100%)";
-        el.style.boxShadow = "0 6px 20px rgba(106,92,255,.55)";
-        el.style.transform = "translateY(-1px)";
-      });
-      el.addEventListener("mouseleave", () => {
-        el.style.background = "linear-gradient(135deg,#6a5cff 0%,#9d5cff 100%)";
-        el.style.boxShadow = "0 3px 12px rgba(106,92,255,.4)";
-        el.style.transform = "";
-      });
+  const origDraw = btn.draw;
+  const origMouse = btn.mouse;
+
+  /**
+   * 自定义绘制: 阴影层 + 渐变圆角主体 + 白字「保存」; _pressed 时下压。
+   *
+   * @param {CanvasRenderingContext2D} ctx canvas 上下文(已变换到节点局部)
+   * @param {LGraphNode} _node 节点
+   * @param {number} widget_width 控件宽
+   * @param {number} y 控件在节点内纵坐标
+   * @param {number} H 行高
+   * @returns {void}
+   */
+  btn.draw = function (ctx, _node, widget_width, y, H) {
+    const W = widget_width;
+    const dy = this._pressed ? 1 : 0; // 点击时按钮下压 1px
+    // 阴影层
+    drawRoundRect(ctx, 6, y + 6, W - 12, H - 8, 10);
+    ctx.fillStyle = "rgba(0,0,0,.22)";
+    ctx.fill();
+    // 渐变主体
+    drawRoundRect(ctx, 6, y + 3 + dy, W - 12, H - 8, 10);
+    const g = ctx.createLinearGradient(0, y, 0, y + H);
+    if (this._pressed) {
+      g.addColorStop(0, "#5a4cf0");
+      g.addColorStop(1, "#8a4cf0");
+    } else {
+      g.addColorStop(0, "#6a5cff");
+      g.addColorStop(1, "#9d5cff");
     }
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.2)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 白字
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 16px 'Segoe UI','Microsoft YaHei',sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("保存", W / 2, y + H / 2 + 1 + dy);
   };
 
-  // 节点每次绘制后应用(按钮 element 可能重建)
-  const onDraw = node.onDrawForeground;
-  node.onDrawForeground = function (...args) {
-    onDraw?.apply(this, args);
-    apply();
+  /**
+   * 鼠标事件: 记录按下状态(下压反馈), 其余交给原 mouse(触发点击回调)。
+   *
+   * @param {Event} event 鼠标事件
+   * @param {Array} pos 节点局部坐标
+   * @param {LGraphNode} node 节点
+   * @returns {*} 原 mouse 的返回值
+   */
+  btn.mouse = function (event, pos, node) {
+    const inBtn = this.last_y != null && pos[1] >= this.last_y && pos[1] <= this.last_y + (this.computedHeight || 20);
+    if (event.type === "mousedown") this._pressed = true;
+    if (event.type === "mouseup" || (event.type === "mousedown" && !inBtn)) this._pressed = false;
+    return origMouse ? origMouse.call(this, event, pos, node) : false;
   };
-  apply();
+
+  node.setDirtyCanvas(true, true);
 }
 
 app.registerExtension({
