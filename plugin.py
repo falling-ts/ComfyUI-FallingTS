@@ -45,7 +45,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSContinue": "FallingTS 继续节点",
     "FallingTSRoute": "FallingTS 路由节点 (1进2出)",
     "FallingTSMarkDownTable": "FallingTS MarkDown 数据表",
-    "PreviewVideo": "Preview Video (不保存)",
+    "PreviewVideo": "Preview Video (保存)",
     "PreviewImageSave": "Preview Image (保存)",
 }
 

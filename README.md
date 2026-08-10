@@ -14,7 +14,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
 | 下拉选择器 | `FallingTSSelector` | `FallingTS/工具` | 文本+下拉:逗号分隔选项实时更新下拉,选中项输出索引(INT) + 选项文本(STRING) |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
-| 视频预览 | `PreviewVideo` | `video` | 视频预览,编码到 temp 目录,**不写入 output**,"不满意就不保存" |
+| 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
 
 ### Web 前端增强(10 个,安装即用,无需配置)
@@ -156,11 +156,13 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 - `switch` 为真 → 各组输出 `true_i`,为假 → 输出 `false_i`;
 - 前端按 `total` 动态增删端口,未使用的端口不进入 prompt。
 
-### 5. 视频预览 `PreviewVideo`(V3)
+### 5. 视频预览 `PreviewVideo`(V3,带保存)
 
-- 唯一走 `IO.ComfyNode` V3 规范的节点;
+- 走 `IO.ComfyNode` V3 规范;
 - 输入 `video` → 编码为 mp4 写入 **temp 临时目录**(非 output)→ 前端播放;
-- 适合"先看效果,满意再保存",避免污染 output 目录。
+- 输入 `filename_prefix`(默认 `video`)→ 点「保存」按钮,后端用 execute 缓存的视频直接写 output(`{filename_prefix}.mp4`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
+- HTTP 路由:`POST /preview-video/save/{node_id}`(body: `filename_prefix` + `filename_prefix_linked`);
+- 前端 `web/js/preview-video.js` 追加「保存」按钮;`filename_prefix` 可被上游连线(如 MDTable 的 ID 列),保存时用 execute 实际接收到的值。
 
 ---
 
@@ -210,7 +212,7 @@ ComfyUI-FallingTS/
 ├── switch/           # 分组开关节点
 │   ├── nodes.py
 │   └── __init__.py
-├── preview-video/    # 视频预览节点(不保存, V3; 目录名含连字符, 经 importlib 加载)
+├── preview-video/    # 视频预览节点(预览+保存, V3; 目录名含连字符, 经 importlib 加载)
 │   ├── nodes.py
 │   └── __init__.py
 ├── preview-image/    # 图片预览保存节点(始终预览 temp + 点「保存」写 output, 同名覆盖)
