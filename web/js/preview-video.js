@@ -1,5 +1,5 @@
 /**
- * PreviewVideo 前端: 底部追加「保存」按钮。
+ * PreviewVideo 前端: 底部追加「保存」按钮(大气样式)。
  *
  * 行为:
  * - 预览部分由节点原生 UI.PreviewVideo 负责(播放 temp 目录文件);
@@ -11,6 +11,61 @@
 import { app } from "../../../scripts/app.js";
 
 const NODE_CLASS = "PreviewVideo";
+
+/**
+ * 给「保存」按钮 widget 应用大气样式: 更高、渐变底色、圆角、阴影、hover 高亮。
+ *
+ * @param {LGraphNode} node 节点对象(其 widgets 里含 type === "button" 的保存按钮)
+ * @returns {void}
+ */
+function styleSaveButton(node) {
+  const btn = node.widgets?.find((w) => w.type === "button");
+  if (!btn) return;
+
+  // 布局行更高
+  btn.computedHeight = 42;
+  node.setDirtyCanvas(true, true);
+
+  const apply = () => {
+    const el = btn.element;
+    if (!el) return;
+    el.style.height = "40px";
+    el.style.width = "100%";
+    el.style.boxSizing = "border-box";
+    el.style.margin = "6px 8px";
+    el.style.background = "linear-gradient(135deg,#6a5cff 0%,#9d5cff 100%)";
+    el.style.color = "#ffffff";
+    el.style.fontSize = "16px";
+    el.style.fontWeight = "700";
+    el.style.letterSpacing = "2px";
+    el.style.borderRadius = "10px";
+    el.style.border = "1px solid rgba(255,255,255,.18)";
+    el.style.cursor = "pointer";
+    el.style.boxShadow = "0 3px 12px rgba(106,92,255,.4)";
+    el.style.transition = "all .25s ease";
+    if (!el._styled) {
+      el._styled = true;
+      el.addEventListener("mouseenter", () => {
+        el.style.background = "linear-gradient(135deg,#7b6dff 0%,#ad6dff 100%)";
+        el.style.boxShadow = "0 6px 20px rgba(106,92,255,.55)";
+        el.style.transform = "translateY(-1px)";
+      });
+      el.addEventListener("mouseleave", () => {
+        el.style.background = "linear-gradient(135deg,#6a5cff 0%,#9d5cff 100%)";
+        el.style.boxShadow = "0 3px 12px rgba(106,92,255,.4)";
+        el.style.transform = "";
+      });
+    }
+  };
+
+  // 节点每次绘制后应用(按钮 element 可能重建)
+  const onDraw = node.onDrawForeground;
+  node.onDrawForeground = function (...args) {
+    onDraw?.apply(this, args);
+    apply();
+  };
+  apply();
+}
 
 app.registerExtension({
   name: "FallingTS.PreviewVideo",
@@ -27,7 +82,7 @@ app.registerExtension({
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     /**
-     * 节点创建钩子: 追加「保存」按钮。
+     * 节点创建钩子: 追加「保存」按钮并套用大气样式。
      *
      * @returns {*} 原 onNodeCreated 的返回值
      */
@@ -67,6 +122,8 @@ app.registerExtension({
           alert("保存失败: 无法连接后端");
         }
       });
+
+      styleSaveButton(node);
     };
   },
 });
