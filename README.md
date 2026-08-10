@@ -16,6 +16,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
+| 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
 
 ### Web 前端增强(10 个,安装即用,无需配置)
 
@@ -24,6 +25,8 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
 | `web/js/route.js` | 路由节点假输出分支真正执行:partial 提交时把 switch=false 的假输出分支下游输出节点并入 targets,保存本段并停止 |
 | `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
+| `web/js/preview-video.js` | 视频预览节点「保存」按钮 |
+| `web/js/preview-audio.js` | 音频预览节点「保存」按钮 |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/md_table.js` | MarkDown 数据表 DOM 控件:系统选择器选文件 + 数据弹窗(搜索/分页/单选) + 按类型渲染表单 + 刷新 |
 | `web/js/selector.js` | 选择器 `items` → 下拉选项实时联动,失配自动重置 |
@@ -164,6 +167,15 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 - HTTP 路由:`POST /preview-video/save/{node_id}`(body: `filename_prefix` + `filename_prefix_linked`);
 - 前端 `web/js/preview-video.js` 追加「保存」按钮;`filename_prefix` 可被上游连线(如 MDTable 的 ID 列),保存时用 execute 实际接收到的值。
 
+### 6. 音频预览 `PreviewAudioSave`(V3,带保存)
+
+- 走 `IO.ComfyNode` V3 规范;
+- 输入 `audio` → 原生 `UI.PreviewAudio` 写 **temp 目录 flac** 供前端播放;
+- 输入 `filename_prefix`(默认 `audio`) + `format`(flac/mp3/opus,含质量)→ 点「保存」按钮,后端用 execute 缓存的音频直接写 output(`{filename_prefix}.{format}`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
+- 多段波形时 `{prefix}_{i}`(仍无 5 位补零序号),`%batch_num%` 可替换;
+- HTTP 路由:`POST /preview-audio/save/{node_id}`(body: `filename_prefix`/`filename_prefix_linked`/`format`/`quality`);
+- 前端 `web/js/preview-audio.js` 追加「保存」按钮。
+
 ---
 
 ## 安装
@@ -213,6 +225,7 @@ ComfyUI-FallingTS/
 │   ├── nodes.py
 │   └── __init__.py
 ├── preview-video/    # 视频预览节点(预览+保存, V3; 目录名含连字符, 经 importlib 加载)
+├── preview-audio/    # 音频预览节点(预览+保存, V3; 目录名含连字符, 经 importlib 加载)
 │   ├── nodes.py
 │   └── __init__.py
 ├── preview-image/    # 图片预览保存节点(始终预览 temp + 点「保存」写 output, 同名覆盖)

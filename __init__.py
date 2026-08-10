@@ -29,6 +29,8 @@ from mdtable.nodes import FallingTSMarkDownTableNode
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
 # preview-image 目录名同样含连字符, 需经 importlib 按名加载
 PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
+# preview-audio 目录名同样含连字符, 需经 importlib 按名加载
+PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
 
 __all__ = [
     "WEB_DIRECTORY",
@@ -44,4 +46,5 @@ __all__ = [
     "FallingTSMarkDownTableNode",
     "PreviewVideoNode",
     "PreviewImageSaveNode",
+    "PreviewAudioSaveNode",
 ]
