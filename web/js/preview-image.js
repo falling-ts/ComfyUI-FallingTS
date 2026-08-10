@@ -125,7 +125,7 @@ function styleSaveButton(node) {
   if (!btn) return;
 
   // 按钮行更高
-  btn.computedHeight = 42;
+  btn.computedHeight = 56;
 
   const origDraw = btn.draw;
   const origMouse = btn.mouse;
@@ -143,13 +143,14 @@ function styleSaveButton(node) {
   btn.draw = function (ctx, _node, widget_width, y, H) {
     const W = widget_width;
     const dy = this._pressed ? 1 : 0; // 点击时按钮下压 1px
+    const BH = 52; // 按钮目标高度(固定, 不依赖外部 H)
     // 阴影层
-    drawRoundRect(ctx, 6, y + 6, W - 12, H - 8, 10);
+    drawRoundRect(ctx, 6, y + 6, W - 12, BH - 8, 10);
     ctx.fillStyle = "rgba(0,0,0,.22)";
     ctx.fill();
     // 渐变主体
-    drawRoundRect(ctx, 6, y + 3 + dy, W - 12, H - 8, 10);
-    const g = ctx.createLinearGradient(0, y, 0, y + H);
+    drawRoundRect(ctx, 6, y + 3 + dy, W - 12, BH - 8, 10);
+    const g = ctx.createLinearGradient(0, y, 0, y + BH);
     if (this._pressed) {
       g.addColorStop(0, "#5a4cf0");
       g.addColorStop(1, "#8a4cf0");
@@ -167,7 +168,7 @@ function styleSaveButton(node) {
     ctx.font = "700 16px 'Segoe UI','Microsoft YaHei',sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("保存", W / 2, y + H / 2 + 1 + dy);
+    ctx.fillText("保存", W / 2, y + BH / 2 + 1 + dy);
   };
 
   /**
