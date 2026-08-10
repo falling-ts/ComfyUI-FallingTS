@@ -15,6 +15,29 @@ import { app } from "../../../scripts/app.js";
 const NODE_CLASS = "PreviewAudioSave";
 
 /**
+ * Nodes 2.0 渲染模式: 保存按钮由 WidgetButton 组件渲染为 DOM <button aria-label="保存">,
+ * 不走 LiteGraph canvas widget(旧版 canvas 已由 styleSaveButton 处理)。
+ * 这里注入全局 CSS 统一美化(更高、渐变、圆角、hover)。
+ *
+ * @returns {void}
+ */
+function injectSaveButtonStyle() {
+  if (document.getElementById("fallingts-save-btn-style")) return;
+  const style = document.createElement("style");
+  style.id = "fallingts-save-btn-style";
+  style.textContent =
+    'button[aria-label="保存"]{height:40px!important;min-height:40px!important;' +
+    'padding:8px 12px!important;background:linear-gradient(135deg,#6a5cff 0%,#9d5cff 100%)!important;' +
+    'color:#fff!important;border-radius:8px!important;font-size:15px!important;' +
+    'font-weight:700!important;letter-spacing:1px!important;' +
+    'box-shadow:0 2px 8px rgba(106,92,255,.35)!important;transition:all .2s ease!important}' +
+    'button[aria-label="保存"]:hover{background:linear-gradient(135deg,#7b6dff 0%,#ad6dff 100%)!important;' +
+    'box-shadow:0 4px 14px rgba(106,92,255,.5)!important;transform:translateY(-1px)!important}';
+  document.head.appendChild(style);
+}
+injectSaveButtonStyle();
+
+/**
  * 兼容 canvas roundRect(老浏览器无 ctx.roundRect 时用 arcTo 手绘圆角路径)。
  *
  * @param {CanvasRenderingContext2D} ctx canvas 上下文
