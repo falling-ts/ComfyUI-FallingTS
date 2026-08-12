@@ -55,6 +55,24 @@ _LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 _TRUE_VALUES = {"true", "1", "yes", "y", "on", "是", "真", "开", "对", "t"}
 
+# IMAGE/VIDEO/AUDIO 字段值可为 @{ID} 资源引用: 后端按 ID 在输出/输入目录定位实际文件
+_MEDIA_REF_RE = re.compile(r"^@\{(.+)\}\s*$")
+
+
+def media_ref_id(raw) -> str | None:
+    """若值是 `@{ID}` 引用, 返回其中的 ID; 否则返回 None。
+
+    参数:
+        raw: 单元格原始值。
+
+    返回:
+        str | None: 引用 ID, 非引用形式返回 None。
+    """
+    if not isinstance(raw, str):
+        return None
+    m = _MEDIA_REF_RE.match(raw.strip())
+    return m.group(1).strip() if m else None
+
 # ─── 类型处理 ────────────────────────────────────────────────────────
 
 
@@ -338,6 +356,9 @@ def normalize_state(value) -> dict:
 def build_outputs(state: dict) -> tuple:
     """由规范化状态构建 execute 返回值 (长度恒为 MAX_OUTPUTS, 未用槽为 None)。
 
+    空字符串字段统一输出 None —— 等同"未连线" (ComfyUI 可选输入惯例), 避免下游收到空串报错;
+    非空字段按类型转换 (INT/FLOAT/BOOLEAN 原生值, IMAGE/VIDEO/AUDIO/STRING/TEXT 字符串)。
+
     参数:
         state (dict): normalize_state 的输出。
 
@@ -350,7 +371,8 @@ def build_outputs(state: dict) -> tuple:
     out: list = [None] * MAX_OUTPUTS
     out[0] = sid
     for i, f in enumerate(fields[1:MAX_FIELDS], start=1):
-        out[i] = coerce_value(values.get(f["name"], ""), f["type"])
+        raw = values.get(f["name"], "")
+        out[i] = None if (isinstance(raw, str) and not raw.strip()) else coerce_value(raw, f["type"])
     out[MAX_OUTPUTS - 1] = json.dumps({"id": sid, "values": values}, ensure_ascii=False)
     return tuple(out)
 

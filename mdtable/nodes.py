@@ -23,11 +23,129 @@ from server import PromptServer
 
 from mdtable.parser import (
     DEFAULT_STATE,
+    MAX_FIELDS,
     MAX_OUTPUTS,
     build_outputs,
+    media_ref_id,
     normalize_state,
     parse_md_file,
 )
+
+# ─── IMAGE/VIDEO/AUDIO 字段资源解析 ──────────────────────────────────
+
+# 各类型在 output/input 目录匹配的扩展名; _KIND_EXTS 供 execute 按字段类型过滤
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+_VIDEO_EXTS = (".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v")
+_AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac")
+_MEDIA_EXTS = _IMAGE_EXTS + _VIDEO_EXTS + _AUDIO_EXTS
+_KIND_EXTS = {"IMAGE": _IMAGE_EXTS, "VIDEO": _VIDEO_EXTS, "AUDIO": _AUDIO_EXTS}
+
+
+def _media_dirs() -> tuple[str, ...]:
+    """返回资源搜索目录 (output 优先, 其次 input)。
+
+    目录全部由 folder_paths 按**当前安装位置**动态解析 (跟随 --output/--input-directory
+    启动参数与 base_path), 项目整体搬走/换机器后自动跟随, 绝不写死绝对路径。
+    """
+    try:
+        from folder_paths import get_input_directory, get_output_directory, base_path
+    except Exception:
+        return ()
+    dirs = [get_output_directory(), get_input_directory()]
+    try:
+        if base_path and base_path not in dirs:
+            dirs.append(base_path)  # 相对路径兜底 (如 output/foo.png)
+    except Exception:
+        pass
+    # 去重 (output/input 可能软链同一目录), 保留顺序
+    seen = set()
+    out = []
+    for d in dirs:
+        if d and d not in seen:
+            seen.add(d)
+            out.append(d)
+    return tuple(out)
+
+
+def resolve_media_path(raw, exts=None) -> str | None:
+    """把 IMAGE/VIDEO/AUDIO 字段值解析为真实文件路径 (全部动态解析, 不写死)。
+
+    规则:
+    - `@{ID}` 引用: 在 output/input 目录找 basename(去扩展) == ID 的媒体文件
+      (兼容 `ID_00001_` 计数器命名); 按 exts 过滤类型;
+    - 绝对路径: 存在则原样返回;
+    - 相对路径: 依次相对 output/input/base 解析 (不依赖进程 CWD);
+    - 其余: 返回 None (调用方按原字符串回退)。
+
+    参数:
+        raw: 字段原始值。
+        exts: 允许匹配的扩展名元组; None 表示全部媒体类型 (预览用)。
+
+    返回:
+        str | None: 解析到的绝对路径, 未找到为 None。
+    """
+    exts = exts or _MEDIA_EXTS
+    ref = media_ref_id(raw)
+    if ref:
+        for base in _media_dirs():
+            if not base or not os.path.isdir(base):
+                continue
+            try:
+                for fn in os.listdir(base):
+                    if not os.path.isfile(os.path.join(base, fn)):
+                        continue
+                    stem, ext = os.path.splitext(fn)
+                    if ext.lower() in exts and (stem == ref or stem.startswith(ref + "_")):
+                        return os.path.join(base, fn)
+            except OSError:
+                continue
+        return None
+    p = os.path.normpath(str(raw or "").strip())
+    if os.path.isabs(p):
+        return p if os.path.isfile(p) else None
+    # 相对路径: 相对各搜索根解析, 避免依赖进程 CWD
+    for base in _media_dirs():
+        cand = os.path.normpath(os.path.join(base, p))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def load_image_tensor(path):
+    """读图片为 ComfyUI IMAGE 张量 [B,H,W,3] float32 0~1。"""
+    import numpy as np
+    import torch
+    from PIL import Image, ImageOps
+
+    img = Image.open(path)
+    img = ImageOps.exif_transpose(img)
+    img = img.convert("RGB")
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    return torch.from_numpy(arr).unsqueeze(0)
+
+
+def load_video_obj(path):
+    """读视频为 ComfyUI VIDEO 对象 (惰性流式, 不预读帧)。"""
+    from comfy_api.latest._input_impl import VideoFromFile
+
+    return VideoFromFile(path)
+
+
+def load_audio_obj(path):
+    """读音频为 ComfyUI AUDIO 字典 {waveform, sample_rate}。"""
+    from comfy_extras.nodes_audio import load as _load_audio
+
+    waveform, sample_rate = _load_audio(path)
+    return {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
+
+
+# 字段类型 -> 加载函数
+_KIND_LOADERS = {
+    "IMAGE": load_image_tensor,
+    "VIDEO": load_video_obj,
+    "AUDIO": load_audio_obj,
+}
+
 
 # ─── 系统文件选择器 ──────────────────────────────────────────────────
 
@@ -140,20 +258,43 @@ _PREVIEW_MIME = {
 
 @PromptServer.instance.routes.get("/fallingts_mdtable/preview")
 async def _preview(request: web.Request) -> web.Response:
-    """HTTP 路由: 按绝对路径提供本地 image/video/audio 文件 (供表单内嵌预览)。
+    """HTTP 路由: 提供本地 image/video/audio 文件 (供表单内嵌预览)。
+
+    支持 `@{ID}` 引用: 先解析为实际文件路径再提供。
 
     返回:
         web.Response:
         - 200: 文件内容 (FileResponse, 支持 Range);
         - 404: 路径不存在或非可预览扩展名。
     """
-    path = request.query.get("path", "").strip()
+    raw = request.query.get("path", "").strip()
+    path = resolve_media_path(raw) if raw else None
     if not path or not os.path.isfile(path):
         return web.Response(status=404)
     ext = os.path.splitext(path)[1].lower()
     if ext not in _PREVIEW_MIME:
         return web.Response(status=404)
-    return web.FileResponse(path, content_type=_PREVIEW_MIME[ext])
+    return web.FileResponse(path, headers={"Content-Type": _PREVIEW_MIME[ext]})
+
+
+@PromptServer.instance.routes.get("/fallingts_mdtable/resolve")
+async def _resolve(request: web.Request) -> web.Response:
+    """HTTP 路由: 把 IMAGE/VIDEO/AUDIO 字段值解析为实际文件绝对路径 (供节点展示)。
+
+    支持 `@{ID}` 引用 (按 output/input 目录去扩展名匹配) 与直接路径; 按 kind 过滤类型。
+
+    返回:
+        web.Response:
+        - 成功: 200, {"ok": true, "path": "绝对路径", "ref": "ID 或 null"};
+        - 未找到: 200, {"ok": false, "path": null}。
+    """
+    raw = request.query.get("path", "").strip()
+    kind = request.query.get("kind", "").upper()
+    exts = _KIND_EXTS.get(kind) if kind in _KIND_EXTS else None
+    path = resolve_media_path(raw, exts) if raw else None
+    if path and os.path.isfile(path):
+        return web.json_response({"ok": True, "path": os.path.normpath(path), "ref": media_ref_id(raw)})
+    return web.json_response({"ok": False, "path": None})
 
 
 # ─── 节点 ────────────────────────────────────────────────────────────
@@ -207,13 +348,26 @@ class FallingTSMarkDownTableNode:
 
     @classmethod
     def IS_CHANGED(cls, data) -> str:
-        """缓存失效签名: 状态 (路径/字段/选中行/表单值) 变化即重新执行。"""
+        """缓存失效签名: 状态 (路径/字段/选中行/表单值) + IMAGE 字段源文件 mtime。"""
         import json
 
-        return json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
+        sig = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
+        # IMAGE/VIDEO/AUDIO 字段解析到的源文件变化 -> 本节点重跑 (避免缓存旧资源)
+        try:
+            state = normalize_state(data)
+            for f in state["fields"][1:MAX_FIELDS]:
+                if f["type"] in _KIND_LOADERS:
+                    path = resolve_media_path(
+                        state["selected"]["values"].get(f["name"], ""), _KIND_EXTS[f["type"]]
+                    )
+                    if path:
+                        sig += "|" + str(os.path.getmtime(path))
+        except Exception:
+            pass
+        return sig
 
     def execute(self, data):
-        """节点执行入口: 由控件状态构建各字段输出值。
+        """节点执行入口: 由控件状态构建各字段输出值; IMAGE 字段解析为真实图片张量。
 
         参数:
             data (dict|None): FALLINGTS_MD_TABLE 控件值 ({md_path, fields, selected}),
@@ -221,9 +375,20 @@ class FallingTSMarkDownTableNode:
 
         返回:
             tuple: 长度 MAX_OUTPUTS; [0]=选中行 ID, [1..]=各非 ID 字段值 (按类型转换),
+                IMAGE/VIDEO/AUDIO 字段解析成功为对应类型, 解析失败输出 None (可选输入惯例),
                 未用槽 None, [MAX_OUTPUTS-1]=整行 {id, values} 的 JSON 字符串。
         """
-        return build_outputs(normalize_state(data))
+        state = normalize_state(data)
+        out = list(build_outputs(state))
+        # IMAGE/VIDEO/AUDIO 字段 -> 解析 @{ID}/路径 并加载为对应类型; 解析失败输出 None
+        for i, f in enumerate(state["fields"][1:MAX_FIELDS], start=1):
+            loader = _KIND_LOADERS.get(f["type"])
+            if loader:
+                path = resolve_media_path(
+                    state["selected"]["values"].get(f["name"], ""), _KIND_EXTS[f["type"]]
+                )
+                out[i] = loader(path) if path else None
+        return tuple(out)
 
 
 NODE_CLASS_MAPPINGS = {

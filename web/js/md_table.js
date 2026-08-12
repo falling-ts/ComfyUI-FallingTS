@@ -31,16 +31,17 @@ const TYPE_COLORS = {
 };
 
 // 字段类型 -> 输出端口显示类型 (后端槽恒为 * ; 端口类型只影响显示/连线校验)
-// TEXT 与 STRING 一样输出 STRING, 仅前端渲染差异 (多行文本框)
+// IMAGE/VIDEO/AUDIO 字段后端已解析并加载为对应类型 -> 端口类型与之匹配;
+// TEXT 与 STRING 一样输出 STRING
 const PORT_TYPES = {
   INT: "INT",
   FLOAT: "FLOAT",
   BOOLEAN: "BOOLEAN",
   STRING: "STRING",
   TEXT: "STRING",
-  IMAGE: "STRING",
-  VIDEO: "STRING",
-  AUDIO: "STRING",
+  IMAGE: "IMAGE",
+  VIDEO: "VIDEO",
+  AUDIO: "AUDIO",
 };
 
 // 类型归一: 别名/旧小写 -> 大写 ComfyUI 类型 (未知回退 STRING)
@@ -231,9 +232,10 @@ function injectModalStyle() {
  * @param {Array} fields 字段定义 [{name, type}]
  * @param {Array} rows 全部数据行 [{id, values}]
  * @param {Function} onConfirm 确认回调 (row) -> void
+ * @param {string|null} preselectedId 已选 ID (节点当前选中行), 打开时自动定位到该行所在页并勾选
  * @returns {void}
  */
-function openModal(fields, rows, onConfirm) {
+function openModal(fields, rows, onConfirm, preselectedId = null) {
   injectModalStyle();
 
   // 弹窗状态
@@ -247,6 +249,14 @@ function openModal(fields, rows, onConfirm) {
     searchInputs: [],
     uid: "fts-md-" + Math.random().toString(36).slice(2, 8),
   };
+
+  // 已选记录预定位: 打开时自动跳到所属页并预勾选单选框
+  const presel = rows.find((x) => String(x.id).trim() === String(preselectedId ?? "").trim());
+  if (presel) {
+    m.selectedId = presel.id;
+    const idx = m.filtered.findIndex((x) => x.id === presel.id);
+    if (idx >= 0) m.page = Math.floor(idx / m.pageSize);
+  }
 
   const overlay = document.createElement("div");
   overlay.className = "fts-md-overlay";
@@ -714,21 +724,37 @@ function createMdTableWidget(node, inputName, inputData) {
       const mediaInput = document.createElement("input");
       mediaInput.type = "text";
       mediaInput.value = String(getVal(name));
-      mediaInput.placeholder = "本地文件路径 (绝对或相对)";
+      mediaInput.placeholder = "本地文件路径 或 @{ID} 引用";
       mediaInput.style.cssText = inputCss;
       mediaInput.addEventListener("change", () => {
         setVal(name, mediaInput.value);
-        renderMediaPreview();
+        renderMedia();
       });
       row.appendChild(mediaInput);
+      // 解析行: 显示 @{ID} 解析出的实际文件绝对路径
+      const resolveLine = document.createElement("div");
+      resolveLine.style.cssText = "font-size:10px;color:#8a8a8a;word-break:break-all;line-height:1.3;";
       // 预览容器 (随路径变化刷新)
       const previewBox = document.createElement("div");
-      const renderMediaPreview = () => {
+      const renderMedia = () => {
         previewBox.innerHTML = "";
-        const path = String(getVal(name)).trim();
-        if (!path) return;
+        const raw = String(getVal(name)).trim();
+        if (!raw) {
+          resolveLine.textContent = "";
+          return;
+        }
+        resolveLine.textContent = "解析中…";
+        // 后端解析实际文件地址 (@{ID} -> output/input 目录匹配)
+        fetch(`/fallingts_mdtable/resolve?path=${encodeURIComponent(raw)}&kind=${type}`)
+          .then((r) => r.json())
+          .then((d) => {
+            resolveLine.textContent = d.ok ? "文件: " + d.path : "未找到文件 (可手填路径)";
+          })
+          .catch(() => {
+            resolveLine.textContent = "";
+          });
         const el = document.createElement(type === "IMAGE" ? "img" : type.toLowerCase());
-        el.src = previewUrl(path);
+        el.src = previewUrl(raw);
         if (type !== "IMAGE") el.controls = true;
         el.style.cssText =
           "max-width:320px;max-height:180px;display:block;margin-top:4px;border-radius:4px;";
@@ -741,7 +767,8 @@ function createMdTableWidget(node, inputName, inputData) {
         });
         previewBox.appendChild(el);
       };
-      renderMediaPreview();
+      renderMedia();
+      row.appendChild(resolveLine);
       row.appendChild(previewBox);
     } else if (type === "TEXT") {
       // 多行文本框: 右下角可拖动高度, 内容超出现有高度时自动增高
@@ -781,13 +808,13 @@ function createMdTableWidget(node, inputName, inputData) {
       const resp = await fetch("/fallingts_mdtable/select_file", { method: "POST" });
       const data = await resp.json();
       if (!data.ok) {
-        alert(data.error || "选择文件失败");
+        app.extensionManager.toast.add({ severity: "error", summary: data.error || "选择文件失败" });
         return;
       }
       await loadFromFile(data.path);
     } catch (err) {
       console.error("[FallingTS.MdTable] 选择文件失败:", err);
-      alert("选择文件失败: 无法连接后端");
+      app.extensionManager.toast.add({ severity: "error", summary: "选择文件失败: 无法连接后端" });
     } finally {
       busy = false;
       btnPick.textContent = "📁 选择md文件";
@@ -804,7 +831,7 @@ function createMdTableWidget(node, inputName, inputData) {
   btnOpen.addEventListener("click", async () => {
     if (busy) return;
     if (!state.md_path) {
-      alert("请先选择 md 文件");
+      app.extensionManager.toast.add({ severity: "warning", summary: "请先选择 md 文件" });
       return;
     }
     busy = true;
@@ -812,7 +839,7 @@ function createMdTableWidget(node, inputName, inputData) {
     try {
       const r = await readMd(state.md_path);
       if (!r.ok) {
-        alert(r.error || "读取失败");
+        app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败" });
         return;
       }
       openModal(r.fields, r.rows, (row) => {
@@ -824,10 +851,10 @@ function createMdTableWidget(node, inputName, inputData) {
         renderForm();
         syncOutputs(node, state.fields);
         emitDirty();
-      });
+      }, state.selected.id);
     } catch (err) {
       console.error("[FallingTS.MdTable] 读取失败:", err);
-      alert("读取 md 文件失败");
+      app.extensionManager.toast.add({ severity: "error", summary: "读取 md 文件失败" });
     } finally {
       busy = false;
       btnOpen.textContent = "🗂 打开数据";
@@ -838,11 +865,11 @@ function createMdTableWidget(node, inputName, inputData) {
   btnRefresh.addEventListener("click", async () => {
     if (busy) return;
     if (!state.md_path) {
-      alert("请先选择 md 文件");
+      app.extensionManager.toast.add({ severity: "warning", summary: "请先选择 md 文件" });
       return;
     }
     if (!state.selected.id) {
-      alert("还没有选择数据, 请先「打开数据」选一行");
+      app.extensionManager.toast.add({ severity: "warning", summary: "还没有选择数据, 请先「打开数据」选一行" });
       return;
     }
     busy = true;
@@ -850,14 +877,14 @@ function createMdTableWidget(node, inputName, inputData) {
     try {
       const r = await readMd(state.md_path);
       if (!r.ok) {
-        alert(r.error || "读取失败");
+        app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败" });
         return;
       }
       // 匹配按 trim 后的 ID 找 (md 手改可能留空格)
       const targetId = String(state.selected.id).trim();
       const row = r.rows.find((x) => String(x.id).trim() === targetId);
       if (!row) {
-        alert(`md 文件中找不到 ID「${state.selected.id}」(可能已被删除)`);
+        app.extensionManager.toast.add({ severity: "error", summary: `md 文件中找不到 ID「${state.selected.id}」(可能已被删除)` });
         return;
       }
       state.fields = r.fields;
@@ -867,7 +894,7 @@ function createMdTableWidget(node, inputName, inputData) {
       emitDirty();
     } catch (err) {
       console.error("[FallingTS.MdTable] 刷新失败:", err);
-      alert("刷新失败: 无法连接后端");
+      app.extensionManager.toast.add({ severity: "error", summary: "刷新失败: 无法连接后端" });
     } finally {
       busy = false;
       btnRefresh.textContent = "🔄 刷新";
@@ -884,7 +911,7 @@ function createMdTableWidget(node, inputName, inputData) {
   async function loadFromFile(path) {
     const r = await readMd(path);
     if (!r.ok) {
-      alert(r.error || "读取失败");
+      app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败" });
       return;
     }
     state.md_path = path;

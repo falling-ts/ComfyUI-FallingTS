@@ -290,13 +290,13 @@ app.registerExtension({
           });
           const data = await resp.json().catch(() => null);
           if (!resp.ok) {
-            alert(data?.message ?? "保存失败");
+            app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "保存失败" });
             return;
           }
-          alert(data?.message ?? "已保存");
+          app.extensionManager.toast.add({ severity: "success", summary: data?.message ?? "已保存" });
         } catch (err) {
           console.error("[FallingTS] 保存失败:", err);
-          alert("保存失败: 无法连接后端");
+          app.extensionManager.toast.add({ severity: "error", summary: "保存失败: 无法连接后端" });
         }
       });
 

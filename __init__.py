@@ -32,6 +32,9 @@ PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
 # preview-audio 目录名同样含连字符, 需经 importlib 按名加载
 PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
 
+# mask-rename 目录名含连字符: 注册 /fallingts_mask/rename 路由 + 包装 /upload/image(遮罩整理), 无节点
+import_module("mask-rename.nodes")
+
 __all__ = [
     "WEB_DIRECTORY",
     "NODE_CLASS_MAPPINGS",
