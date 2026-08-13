@@ -451,6 +451,7 @@ function openOverlay(list, startIndex) {
   overlay = dlg;
   dlg.focus();
   renderOverlay();
+  return dlg;
 }
 
 // 两路触发共用: 节点任意 key/value 里有图片则打开预览
@@ -607,7 +608,7 @@ app.registerExtension({
    * @returns {void}
    */
   setup() {
-    document.body.addEventListener('mousedown', onPreviewMouseDown, true);
+    document.body.addEventListener('pointerdown', onPreviewMouseDown, true);
     // 画布模式补丁: 立即尝试, 失败则每秒重试(等 app.canvas 就绪)
     const tryInstall = () => {
       if (!installMiddleButtonPatch()) setTimeout(tryInstall, 1000);
@@ -615,3 +616,9 @@ app.registerExtension({
     tryInstall();
   },
 });
+
+// 暴露给其它扩展复用(如 md 表格预览中键放大): 打开/关闭同一套可缩放大图弹层。
+// media_lightbox_zoom.js 靠弹层类名自动接管滚轮缩放/拖拽平移。
+window.FallingTS = window.FallingTS || {};
+window.FallingTS.openImageOverlay = openOverlay;
+window.FallingTS.closeImageOverlay = closeOverlay;

@@ -5,9 +5,9 @@ md 数据表约定:
 - 文件含一张 GFM 表格(表头 + --- 分隔行 + 数据行), 取第一张;
 - **第一列永远是 ID 列**: str 中文字符串, 可能用 `-` 连接多段信息; 解析时强制该列 type=STRING;
 - 表头格式 `标题(类型)`, 未标类型默认 `STRING`; 支持类型(大小写不敏感, 别名归一):
-  IMAGE / VIDEO / AUDIO / STRING / INT / FLOAT / BOOLEAN / TEXT;
+  IMAGE / VIDEO / AUDIO / MASK / STRING / INT / FLOAT / BOOLEAN / TEXT;
 - 单元格值按列类型在 execute 时转换 (coerce_value): INT/FLOAT/BOOLEAN -> 原生数值/布尔,
-  STRING/TEXT/IMAGE/VIDEO/AUDIO -> 原字符串 (TEXT 输出同为 STRING, 仅前端渲染为多行文本框)。
+  STRING/TEXT/IMAGE/VIDEO/AUDIO/MASK -> 原字符串 (TEXT 输出同为 STRING, 仅前端渲染为多行文本框)。
 """
 
 from __future__ import annotations
@@ -29,9 +29,10 @@ DEFAULT_STATE = {
 }
 
 # 类型别名归一表: 统一到大写 ComfyUI 风格类型; 显式写了类型但不在表里 -> 回退 STRING
-# 核心类型: IMAGE / VIDEO / AUDIO / STRING / INT / FLOAT / BOOLEAN / TEXT
+# 核心类型: IMAGE / VIDEO / AUDIO / MASK / STRING / INT / FLOAT / BOOLEAN / TEXT
 #   - STRING: 单行文本; TEXT: 多行文本 (输出同为 STRING, 前端渲染差异);
-#   - IMAGE/VIDEO/AUDIO: 文件路径 (带预览); INT/FLOAT/BOOLEAN: 数值/布尔。
+#   - IMAGE/VIDEO/AUDIO: 文件路径 (带预览); MASK: 遮罩图片路径 (读 alpha 通道, 无则回退灰度, 带预览);
+#   - INT/FLOAT/BOOLEAN: 数值/布尔。
 _TYPE_ALIASES = {
     "str": "STRING", "string": "STRING",
     "text": "TEXT", "txt": "TEXT",
@@ -41,6 +42,7 @@ _TYPE_ALIASES = {
     "image": "IMAGE", "img": "IMAGE", "png": "IMAGE", "jpg": "IMAGE", "jpeg": "IMAGE", "photo": "IMAGE",
     "video": "VIDEO", "mp4": "VIDEO", "webm": "VIDEO", "movie": "VIDEO",
     "audio": "AUDIO", "sound": "AUDIO", "mp3": "AUDIO", "wav": "AUDIO", "voice": "AUDIO",
+    "mask": "MASK", "gray": "MASK", "grayscale": "MASK", "luminance": "MASK", "alpha": "MASK",
     # 旧版 list/set/dict 类型已并入 STRING (不再特殊解析集合)
     "list": "STRING", "array": "STRING", "set": "STRING", "dict": "STRING", "json": "STRING",
 }
@@ -83,7 +85,7 @@ def normalize_type(raw: str) -> str:
         raw (str): 表头类型原文。
 
     返回:
-        str: 归一化类型 (IMAGE/VIDEO/AUDIO/STRING/INT/FLOAT/BOOLEAN/TEXT)。
+        str: 归一化类型 (IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT)。
     """
     key = (raw or "").strip().lower()
     return _TYPE_ALIASES.get(key, "STRING")
@@ -283,7 +285,7 @@ def coerce_value(raw, ftype: str):
 
     参数:
         raw (str|bool|None): 表单里存的原始值。
-        ftype (str): 归一化类型 (IMAGE/VIDEO/AUDIO/STRING/INT/FLOAT/BOOLEAN/TEXT)。
+        ftype (str): 归一化类型 (IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT)。
 
     返回:
         int|float|bool|str: 转换后的值; 解析失败回退默认 (0/0.0/False/原字符串)。
@@ -300,7 +302,7 @@ def coerce_value(raw, ftype: str):
             return 0.0
     if ftype == "BOOLEAN":
         return _to_bool(raw)
-    # STRING / TEXT / IMAGE / VIDEO / AUDIO / 未知 -> 原字符串 (TEXT 输出同为 STRING), 前后 trim
+    # STRING / TEXT / IMAGE / VIDEO / AUDIO / MASK / 未知 -> 原字符串 (TEXT 输出同为 STRING), 前后 trim
     raw = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
     return raw.strip()
 
@@ -357,7 +359,7 @@ def build_outputs(state: dict) -> tuple:
     """由规范化状态构建 execute 返回值 (长度恒为 MAX_OUTPUTS, 未用槽为 None)。
 
     空字符串字段统一输出 None —— 等同"未连线" (ComfyUI 可选输入惯例), 避免下游收到空串报错;
-    非空字段按类型转换 (INT/FLOAT/BOOLEAN 原生值, IMAGE/VIDEO/AUDIO/STRING/TEXT 字符串)。
+    非空字段按类型转换 (INT/FLOAT/BOOLEAN 原生值, IMAGE/VIDEO/AUDIO/MASK/STRING/TEXT 字符串)。
 
     参数:
         state (dict): normalize_state 的输出。

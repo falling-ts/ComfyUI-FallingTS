@@ -5,7 +5,7 @@
 // - 弹窗: 无序号列, 首列单选 radio, 底部 每页 10/20/30/50/100 + 首页/上一页/下一页/尾页,
 //   确定按钮仅在选中行后亮起 (蓝色), 取消关闭;
 // - 表单类型 (来自表头 `标题(类型)`, 未标默认 STRING): INT/FLOAT -> 数字输入, BOOLEAN -> 复选,
-//   TEXT -> 多行文本框(自动撑高), STRING -> 单行文本输入, IMAGE/VIDEO/AUDIO -> 路径输入 + 内嵌预览;
+//   TEXT -> 多行文本框(自动撑高), STRING -> 单行文本输入, IMAGE/VIDEO/AUDIO/MASK -> 路径输入 + 内嵌预览;
 // - 输出端口动态: [0] ID, [1..] 各非 ID 字段 (按类型), 末位 整行数据 (整行 JSON), 沿用表格节点动态端口模式。
 //
 // 值 (对象 {md_path, fields, selected}) 作为 widget 值序列化进工作流 widgets_values,
@@ -28,10 +28,11 @@ const TYPE_COLORS = {
   IMAGE: "#c586c0",
   VIDEO: "#ce9178",
   AUDIO: "#ce9178",
+  MASK: "#d19a66",
 };
 
 // 字段类型 -> 输出端口显示类型 (后端槽恒为 * ; 端口类型只影响显示/连线校验)
-// IMAGE/VIDEO/AUDIO 字段后端已解析并加载为对应类型 -> 端口类型与之匹配;
+// IMAGE/VIDEO/AUDIO/MASK 字段后端已解析并加载为对应类型 -> 端口类型与之匹配;
 // TEXT 与 STRING 一样输出 STRING
 const PORT_TYPES = {
   INT: "INT",
@@ -42,6 +43,7 @@ const PORT_TYPES = {
   IMAGE: "IMAGE",
   VIDEO: "VIDEO",
   AUDIO: "AUDIO",
+  MASK: "MASK",
 };
 
 // 类型归一: 别名/旧小写 -> 大写 ComfyUI 类型 (未知回退 STRING)
@@ -54,6 +56,7 @@ const TYPE_ALIASES = {
   "image": "IMAGE", "img": "IMAGE",
   "video": "VIDEO",
   "audio": "AUDIO",
+  "mask": "MASK", "gray": "MASK", "grayscale": "MASK", "luminance": "MASK", "alpha": "MASK",
   "list": "STRING", "set": "STRING", "dict": "STRING", "json": "STRING",
 };
 
@@ -171,6 +174,30 @@ function previewUrl(path) {
 }
 
 /**
+ * 中键点击 md 表格图片预览 → 打开可缩放大图弹层。
+ *
+ * 必须在 **document 捕获阶段**拦截: ComfyUI 节点/画布的中键拖动处理用 pointerdown
+ * 且在捕获阶段接管(表现为手形光标拖动节点), 事件到不了图片自身(target 阶段)的监听。
+ * 捕获顺序 document→html→body→...→target, 在 document 捕获阶段 stopPropagation 最可靠。
+ *
+ * 弹层复用 node_image_middleclick 的 openImageOverlay + media_lightbox_zoom 的缩放;
+ * z-index 提到最高以盖住「打开数据」弹窗。
+ *
+ * @param {PointerEvent} e 指针事件
+ * @returns {void}
+ */
+function openImageZoomOnMiddleClick(e) {
+  if (e.button !== 1) return;
+  const target = e.target instanceof Element ? e.target : null;
+  const img = target?.closest?.("img[data-fts-zoom]");
+  if (!img) return;
+  e.preventDefault?.();
+  e.stopPropagation?.();
+  const dlg = window.FallingTS?.openImageOverlay?.([img.src], 0);
+  if (dlg) dlg.style.zIndex = "2147483000";
+}
+
+/**
  * 解析 md 文件 (后端路由), 返回 {ok, fields, rows, total, error}。
  *
  * @param {string} path md 绝对路径
@@ -181,6 +208,41 @@ async function readMd(path) {
     `/fallingts_mdtable/read?path=${encodeURIComponent(path)}`
   );
   return resp.json();
+}
+
+/**
+ * 构建弹窗单元格: IMAGE/MASK 列显示缩略图 + 值文本 (失败隐藏缩略图), 其余列纯文本。
+ *
+ * @param {object} field 字段定义 {name, type}
+ * @param {string} value 单元格值
+ * @param {boolean} isId 是否 ID 列
+ * @returns {HTMLTableCellElement} 单元格
+ */
+function buildModalCell(field, value, isId) {
+  const td = document.createElement("td");
+  const v = String(value ?? "").trim();
+  if (isId || (field.type !== "IMAGE" && field.type !== "MASK") || !v) {
+    td.textContent = v;
+    return td;
+  }
+  // 缩略图: 用后端 /preview 提供本地文件 (IMAGE/MASK 同格式)
+  const thumb = document.createElement("img");
+  thumb.src = previewUrl(v);
+  thumb.alt = v;
+  thumb.title = v + " (中键放大)";
+  thumb.style.cssText =
+    "max-width:48px;max-height:36px;display:block;margin:2px 0;" +
+    "border-radius:3px;object-fit:cover;background:#2a2a2a;";
+  thumb.dataset.ftsZoom = "1"; // document 捕获阶段中键拦截用
+  thumb.addEventListener("error", () => {
+    thumb.remove();
+  });
+  td.appendChild(thumb);
+  const txt = document.createElement("div");
+  txt.style.cssText = "font-size:10px;color:#9a9a9a;word-break:break-all;line-height:1.2;";
+  txt.textContent = v;
+  td.appendChild(txt);
+  return td;
 }
 
 // ─── 数据弹窗 (打开数据) ────────────────────────────────────────────
@@ -428,9 +490,8 @@ function openModal(fields, rows, onConfirm, preselectedId = null) {
       tr.appendChild(td0);
       // 数据列
       for (let i = 0; i < m.fields.length; i++) {
-        const td = document.createElement("td");
-        td.textContent = i === 0 ? row.id : String(row.values?.[m.fields[i].name] ?? "");
-        tr.appendChild(td);
+        const val = i === 0 ? row.id : String(row.values?.[m.fields[i].name] ?? "");
+        tr.appendChild(buildModalCell(m.fields[i], val, i === 0));
       }
       tbody.appendChild(tr);
     }
@@ -501,8 +562,8 @@ function syncOutputs(node, fields) {
   node.outputs[0].type = "STRING";
   for (let i = 1; i <= nonId; i++) {
     const f = fields[i];
-    // 字符串类 (STRING/TEXT/IMAGE/VIDEO/AUDIO) 端口不加大写类型后缀; INT/FLOAT/BOOLEAN 加
-    const suffix = ["STRING", "TEXT", "IMAGE", "VIDEO", "AUDIO"].includes(f.type)
+    // 字符串类 (STRING/TEXT/IMAGE/VIDEO/AUDIO/MASK) 端口不加大写类型后缀; INT/FLOAT/BOOLEAN 加
+    const suffix = ["STRING", "TEXT", "IMAGE", "VIDEO", "AUDIO", "MASK"].includes(f.type)
       ? ""
       : ` [${f.type}]`;
     node.outputs[i].name = f.name + suffix;
@@ -679,7 +740,7 @@ function createMdTableWidget(node, inputName, inputData) {
 
   /**
    * 按类型构建一个字段行 (label + 控件)。
-   * 类型: BOOLEAN→复选, INT/FLOAT→数字输入, IMAGE/VIDEO/AUDIO→路径+预览,
+   * 类型: BOOLEAN→复选, INT/FLOAT→数字输入, IMAGE/VIDEO/AUDIO/MASK→路径+预览,
    *       TEXT→多行文本框(随内容自动撑高), STRING/其他→单行文本输入。
    *
    * @param {object} f 字段定义 {name, type}
@@ -720,7 +781,7 @@ function createMdTableWidget(node, inputName, inputData) {
       num.style.cssText = inputCss;
       num.addEventListener("change", () => setVal(name, num.value));
       row.appendChild(num);
-    } else if (type === "IMAGE" || type === "VIDEO" || type === "AUDIO") {
+    } else if (type === "IMAGE" || type === "VIDEO" || type === "AUDIO" || type === "MASK") {
       const mediaInput = document.createElement("input");
       mediaInput.type = "text";
       mediaInput.value = String(getVal(name));
@@ -753,9 +814,14 @@ function createMdTableWidget(node, inputName, inputData) {
           .catch(() => {
             resolveLine.textContent = "";
           });
-        const el = document.createElement(type === "IMAGE" ? "img" : type.toLowerCase());
+        const isImage = type === "IMAGE" || type === "MASK";
+        const el = document.createElement(isImage ? "img" : type.toLowerCase());
         el.src = previewUrl(raw);
-        if (type !== "IMAGE") el.controls = true;
+        if (!isImage) el.controls = true;
+        if (isImage) {
+          el.title = "中键放大预览";
+          el.dataset.ftsZoom = "1"; // document 捕获阶段中键拦截用
+        }
         el.style.cssText =
           "max-width:320px;max-height:180px;display:block;margin-top:4px;border-radius:4px;";
         el.addEventListener("error", () => {
@@ -995,5 +1061,17 @@ app.registerExtension({
         return createMdTableWidget(node, inputName, inputData);
       },
     };
+  },
+
+  /**
+   * 扩展初始化: document 捕获阶段拦截 md 表格预览图的中键点击。
+   *
+   * 必须在捕获阶段做 —— ComfyUI 节点拖动/画布平移会在 pointerdown 捕获阶段接管中键,
+   * 事件到不了图片自身(target 阶段)的监听。
+   *
+   * @returns {void}
+   */
+  setup() {
+    document.addEventListener("pointerdown", openImageZoomOnMiddleClick, true);
   },
 });

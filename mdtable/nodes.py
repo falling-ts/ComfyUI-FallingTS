@@ -31,14 +31,20 @@ from mdtable.parser import (
     parse_md_file,
 )
 
-# ─── IMAGE/VIDEO/AUDIO 字段资源解析 ──────────────────────────────────
+# ─── IMAGE/VIDEO/AUDIO/MASK 字段资源解析 ─────────────────────────────
 
 # 各类型在 output/input 目录匹配的扩展名; _KIND_EXTS 供 execute 按字段类型过滤
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
 _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v")
 _AUDIO_EXTS = (".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac")
 _MEDIA_EXTS = _IMAGE_EXTS + _VIDEO_EXTS + _AUDIO_EXTS
-_KIND_EXTS = {"IMAGE": _IMAGE_EXTS, "VIDEO": _VIDEO_EXTS, "AUDIO": _AUDIO_EXTS}
+# MASK 遮罩文件也是图片 (PNG 灰度/带 alpha), 复用图片扩展名
+_KIND_EXTS = {
+    "IMAGE": _IMAGE_EXTS,
+    "VIDEO": _VIDEO_EXTS,
+    "AUDIO": _AUDIO_EXTS,
+    "MASK": _IMAGE_EXTS,
+}
 
 
 def _media_dirs() -> tuple[str, ...]:
@@ -68,7 +74,7 @@ def _media_dirs() -> tuple[str, ...]:
 
 
 def resolve_media_path(raw, exts=None) -> str | None:
-    """把 IMAGE/VIDEO/AUDIO 字段值解析为真实文件路径 (全部动态解析, 不写死)。
+    """把 IMAGE/VIDEO/AUDIO/MASK 字段值解析为真实文件路径 (全部动态解析, 不写死)。
 
     规则:
     - `@{ID}` 引用: 在 output/input 目录找 basename(去扩展) == ID 的媒体文件
@@ -124,6 +130,30 @@ def load_image_tensor(path):
     return torch.from_numpy(arr).unsqueeze(0)
 
 
+def load_mask_tensor(path):
+    """读遮罩图片为 ComfyUI MASK 张量 [B,H,W] float32 0~1 (同官方 LoadImageMask alpha 通道)。
+
+    官方 LoadImageMask 的 alpha 通道: mask = 1 - alpha (透明=1 参与重绘, 不透明=0 保持原样);
+    图片无 alpha 通道时回退为亮度 (灰度遮罩惯例, 白=1 黑=0), 兼容纯灰度 PNG。
+    """
+    import numpy as np
+    import torch
+    from PIL import Image, ImageOps
+
+    img = Image.open(path)
+    img = ImageOps.exif_transpose(img)
+    if "A" in img.getbands():
+        # 官方 LoadImageMask alpha 通道: 1 - alpha
+        a = img.getchannel("A")
+        arr = np.asarray(a, dtype=np.float32) / 255.0
+        arr = 1.0 - arr
+    else:
+        # 无透明通道: 回退亮度 (灰度遮罩)
+        img = img.convert("L")
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+    return torch.from_numpy(arr).unsqueeze(0)
+
+
 def load_video_obj(path):
     """读视频为 ComfyUI VIDEO 对象 (惰性流式, 不预读帧)。"""
     from comfy_api.latest._input_impl import VideoFromFile
@@ -144,6 +174,7 @@ _KIND_LOADERS = {
     "IMAGE": load_image_tensor,
     "VIDEO": load_video_obj,
     "AUDIO": load_audio_obj,
+    "MASK": load_mask_tensor,
 }
 
 
@@ -279,7 +310,7 @@ async def _preview(request: web.Request) -> web.Response:
 
 @PromptServer.instance.routes.get("/fallingts_mdtable/resolve")
 async def _resolve(request: web.Request) -> web.Response:
-    """HTTP 路由: 把 IMAGE/VIDEO/AUDIO 字段值解析为实际文件绝对路径 (供节点展示)。
+    """HTTP 路由: 把 IMAGE/VIDEO/AUDIO/MASK 字段值解析为实际文件绝对路径 (供节点展示)。
 
     支持 `@{ID}` 引用 (按 output/input 目录去扩展名匹配) 与直接路径; 按 kind 过滤类型。
 
@@ -337,8 +368,8 @@ class FallingTSMarkDownTableNode:
     CATEGORY = "FallingTS/表格"
     DESCRIPTION = (
         "从 md 文件解析数据表: 系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → "
-        "节点内按「标题(类型)」渲染可编辑表单 (IMAGE/VIDEO/AUDIO/STRING/INT/FLOAT/BOOLEAN/TEXT, "
-        "TEXT 为多行文本框且输出同为 STRING), "
+        "节点内按「标题(类型)」渲染可编辑表单 (IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT, "
+        "MASK 读 PNG 透明通道(同官方 LoadImageMask, 无 alpha 回退灰度), TEXT 为多行文本框且输出同为 STRING), "
         "刷新按 ID 重查 md 文件; 输出选中行各字段 (按类型) + data JSON。"
     )
     SEARCH_ALIASES = [
@@ -352,7 +383,7 @@ class FallingTSMarkDownTableNode:
         import json
 
         sig = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
-        # IMAGE/VIDEO/AUDIO 字段解析到的源文件变化 -> 本节点重跑 (避免缓存旧资源)
+        # IMAGE/VIDEO/AUDIO/MASK 字段解析到的源文件变化 -> 本节点重跑 (避免缓存旧资源)
         try:
             state = normalize_state(data)
             for f in state["fields"][1:MAX_FIELDS]:
@@ -375,12 +406,12 @@ class FallingTSMarkDownTableNode:
 
         返回:
             tuple: 长度 MAX_OUTPUTS; [0]=选中行 ID, [1..]=各非 ID 字段值 (按类型转换),
-                IMAGE/VIDEO/AUDIO 字段解析成功为对应类型, 解析失败输出 None (可选输入惯例),
+                IMAGE/VIDEO/AUDIO/MASK 字段解析成功为对应类型, 解析失败输出 None (可选输入惯例),
                 未用槽 None, [MAX_OUTPUTS-1]=整行 {id, values} 的 JSON 字符串。
         """
         state = normalize_state(data)
         out = list(build_outputs(state))
-        # IMAGE/VIDEO/AUDIO 字段 -> 解析 @{ID}/路径 并加载为对应类型; 解析失败输出 None
+        # IMAGE/VIDEO/AUDIO/MASK 字段 -> 解析 @{ID}/路径 并加载为对应类型; 解析失败输出 None
         for i, f in enumerate(state["fields"][1:MAX_FIELDS], start=1):
             loader = _KIND_LOADERS.get(f["type"])
             if loader:
