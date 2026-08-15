@@ -182,6 +182,19 @@ app.registerExtension({
         return;
       }
 
+      /* 1.5 释放 ComfyUI 模型缓存: 进入本段前, 上一段用过的生成模型(如 H3)不再需要,
+            先 /free 卸载可释放 10GB+ 内存与显存, 避免与本段模型争抢导致 Windows 换页变慢。
+            仅本段(partial)提交前调用; 失败仅影响性能, 不阻断流程。 */
+      try {
+        await fetch("/free", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unload_models: true, free_memory: true }),
+        });
+      } catch {
+        /* 忽略 */
+      }
+
       /* 2. 确定本段 partial targets: 目标是"下一个继续节点之后"的输出节点
             (让执行子图穿过并到达下一个继续, 它收到本段预览输出 -> 缓存 -> 阻塞) */
       const next = findNextContinue(node);
