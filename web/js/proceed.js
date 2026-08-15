@@ -50,6 +50,26 @@ function getLink(graph, linkId) {
 }
 
 /**
+ * 从图的链路表直接收集某节点的全部输出链路(以 source_id 匹配)。
+ * 不依赖节点 outputs[].links 反向索引 —— 该索引在部分工作流 JSON 里可能缺失
+ * (脚本生成/旧版前端保存), 用链路表遍历保证分段锚点收集永远可靠。
+ *
+ * @param {LGraph} graph 画布图对象
+ * @param {number|string} nodeId 源节点 ID
+ * @returns {object[]} 该节点输出的链路对象数组(可能为空)
+ */
+function outgoingLinks(graph, nodeId) {
+  const out = [];
+  const links = graph?.links;
+  if (!links) return out;
+  for (let i = 0; i < links.length; i++) {
+    const l = links[i];
+    if (l && l.source_id === nodeId) out.push(l);
+  }
+  return out;
+}
+
+/**
  * BFS 沿输出链路向下游搜索, 返回第一个遇到的继续节点(下一个分段边界)。
  * 点「继续」时用来确定 partial execution 的锚点: 锚点之前的子图不执行。
  *
@@ -58,13 +78,7 @@ function getLink(graph, linkId) {
  */
 function findNextContinue(startNode) {
   const visited = new Set();
-  const queue = [];
-  for (const out of startNode.outputs ?? []) {
-    for (const linkId of out.links ?? []) {
-      const link = getLink(startNode.graph, linkId);
-      if (link) queue.push(link.target_id);
-    }
-  }
+  const queue = outgoingLinks(startNode.graph, startNode.id).map((l) => l.target_id);
   while (queue.length) {
     const nid = queue.shift();
     if (visited.has(nid)) continue;
@@ -72,12 +86,7 @@ function findNextContinue(startNode) {
     const n = startNode.graph?.getNodeById?.(nid);
     if (!n) continue;
     if (isContinueNode(n)) return n;
-    for (const out of n.outputs ?? []) {
-      for (const linkId of out.links ?? []) {
-        const link = getLink(n.graph, linkId);
-        if (link) queue.push(link.target_id);
-      }
-    }
+    queue.push(...outgoingLinks(n.graph, n.id).map((l) => l.target_id));
   }
   return null;
 }
@@ -92,13 +101,7 @@ function findNextContinue(startNode) {
 function collectOutputsAfter(startNode) {
   const targets = new Set();
   const visited = new Set();
-  const queue = [];
-  for (const out of startNode.outputs ?? []) {
-    for (const linkId of out.links ?? []) {
-      const link = getLink(startNode.graph, linkId);
-      if (link) queue.push(link.target_id);
-    }
-  }
+  const queue = outgoingLinks(startNode.graph, startNode.id).map((l) => l.target_id);
   while (queue.length) {
     const nid = queue.shift();
     if (visited.has(nid)) continue;
@@ -107,12 +110,7 @@ function collectOutputsAfter(startNode) {
     if (!n) continue;
     if (isContinueNode(n)) continue; /* 遇到继续: 本段到此为止 */
     if (isOutputNode(n)) targets.add(String(n.id));
-    for (const out of n.outputs ?? []) {
-      for (const linkId of out.links ?? []) {
-        const link = getLink(n.graph, linkId);
-        if (link) queue.push(link.target_id);
-      }
-    }
+    queue.push(...outgoingLinks(n.graph, n.id).map((l) => l.target_id));
   }
   return [...targets];
 }

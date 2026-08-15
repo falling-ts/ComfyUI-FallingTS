@@ -173,6 +173,58 @@ function previewUrl(path) {
   return `/fallingts_mdtable/preview?path=${encodeURIComponent(path)}`;
 }
 
+// 媒体字段类型 (前端需要提前解析为预览 URL 的)
+const MEDIA_TYPES = new Set(["IMAGE", "MASK", "VIDEO", "AUDIO"]);
+
+/**
+ * 从 Vue pinia store 按 id 取 store 对象。
+ *
+ * @param {string} id store id(如 "nodeOutput")
+ * @returns {object|null} pinia store 对象; 不可用时返回 null
+ */
+function getStore(id) {
+  try {
+    const el = document.getElementById("vue-app");
+    const pinia = el?.__vue_app__?.config?.globalProperties?.$pinia;
+    return pinia?._s?.get(id) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 把节点当前选中行的媒体字段(IMAGE/MASK/VIDEO/AUDIO)提前解析为前端预览 URL,
+ * 写入官方 preview store —— 供 ImageCrop(拖框预览)/中键大图等
+ * 前端组件即时使用(无需先跑工作流; `@{ID}` 由后端 /preview 路由即时解析)。
+ * 图片(IMAGE/MASK)排在前面, WidgetImageCrop 取首个 URL 作预览。
+ *
+ * @param {LGraphNode} node 节点对象
+ * @param {Array} fields 字段定义 [{name, type}]
+ * @param {Object} values 选中行值 {字段名: 值}
+ * @returns {void}
+ */
+function syncNodeMediaPreview(node, fields, values) {
+  if (!node) return;
+  node.hideOutputImages = true; // 只供 getNodeImageUrls / ImageCrop 取图, 不在节点上做大图预览
+  const urls = [];
+  for (const f of fields || []) {
+    if (!MEDIA_TYPES.has(f.type)) continue;
+    const raw = String(values?.[f.name] ?? "").trim();
+    if (!raw) continue;
+    urls.push(previewUrl(raw));
+  }
+  // 官方 preview store: 供 getNodeImageUrls / WidgetImageCrop 取预览
+  // (节点底部会显示一张小预览图, 由 useNodePreviewState 触发, 无法关闭; 用 CSS 限高 + 节点折叠收起)
+  const store = getStore("nodeOutput");
+  if (store && typeof store.setNodePreviewsByNodeId === "function") {
+    try {
+      store.setNodePreviewsByNodeId(node.id, urls);
+    } catch (err) {
+      /* store 可能未就绪, 忽略 */
+    }
+  }
+}
+
 /**
  * 中键点击 md 表格图片预览 → 打开可缩放大图弹层。
  *
@@ -698,6 +750,8 @@ function createMdTableWidget(node, inputName, inputData) {
     formEl.innerHTML = "";
     selInfo.textContent = state.selected.id ? `已选: ${state.selected.id}` : "未选择 (点「打开数据」选一行)";
     pathInput.value = state.md_path;
+    // 选中行/字段变化 → 提前解析媒体字段为节点预览 (供 ImageCrop 等即时使用)
+    syncNodeMediaPreview(node, state.fields, state.selected.values);
 
     if (!state.fields.length || !state.selected.id) {
       const hint = document.createElement("div");
@@ -790,6 +844,7 @@ function createMdTableWidget(node, inputName, inputData) {
       mediaInput.addEventListener("change", () => {
         setVal(name, mediaInput.value);
         renderMedia();
+        syncNodeMediaPreview(node, state.fields, state.selected.values);
       });
       row.appendChild(mediaInput);
       // 解析行: 显示 @{ID} 解析出的实际文件绝对路径
@@ -1047,6 +1102,7 @@ app.registerExtension({
       const w = this.widgets?.find((w) => w.name === "data");
       const st = normalize(w?.value ?? DEFAULT_STATE);
       syncOutputs(this, st.fields);
+      syncNodeMediaPreview(this, st.fields, st.selected.values);
     };
   },
 
@@ -1071,7 +1127,48 @@ app.registerExtension({
    *
    * @returns {void}
    */
+  /**
+   * 扩展初始化: 注入 CSS 隐藏节点底部预览图; document 捕获阶段拦截 md 表格预览图的中键点击。
+   *
+   * 节点底部那张预览图是 ComfyUI 供 getNodeImageUrls / ImageCrop 拖框预览用的(useNodePreviewState
+   * 自动渲染), 用 CSS display:none 隐藏其显示即可 —— preview store 数据不受影响,
+   * ImageCropV2 仍能正常取图拖框。
+   * 选择器用 preview URL 特征 + 排除表单缩略图(data-fts-zoom), 不影响字段内嵌预览。
+   *
+   * @returns {void}
+   */
   setup() {
+    // 隐藏 MD 表节点底部预览图 + 分辨率文字(仅 JS 方案)。
+    // 定位: node-type="FallingTSMarkDownTable" → 往上 data-testid="node-widgets"
+    //   → 再往上找第一个「兄弟含 MD 表预览图」的祖元素 → 隐藏 img 与其后的 div(分辨率)。
+    // 只命中 MD 表节点自身, 不影响 ImageCropV2 等引用同一预览图的节点。
+    // preview store 数据不受影响, ImageCropV2 仍能取图拖框。
+    const hideMdPreview = () => {
+      document.querySelectorAll('[node-type="FallingTSMarkDownTable"]').forEach((mdEl) => {
+        let widgets = mdEl;
+        while (widgets && widgets.dataset?.testid !== "node-widgets") widgets = widgets.parentElement;
+        if (!widgets) return;
+        let node = widgets;
+        while (node && node.parentElement) {
+          const parent = node.parentElement;
+          const img = Array.from(parent.children).find(
+            (el) => el !== node && el.tagName === "IMG" &&
+              (el.getAttribute("src") || "").includes("fallingts_mdtable/preview")
+          );
+          if (img) {
+            img.style.display = "none";
+            const next = img.nextElementSibling;
+            if (next && next.tagName === "DIV") next.style.display = "none";
+            return;
+          }
+          node = parent;
+        }
+      });
+    };
+    hideMdPreview();
+    const obs = new MutationObserver(hideMdPreview);
+    obs.observe(document.body, { childList: true, subtree: true });
+
     document.addEventListener("pointerdown", openImageZoomOnMiddleClick, true);
   },
 });
