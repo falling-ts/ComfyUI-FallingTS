@@ -64,7 +64,9 @@ function outgoingLinks(graph, nodeId) {
   if (!links) return out;
   for (let i = 0; i < links.length; i++) {
     const l = links[i];
-    if (l && l.source_id === nodeId) out.push(l);
+    if (!l) continue;
+    const srcId = l.origin_id ?? l.source_id; /* litegraph 标准字段是 origin_id, 兼容部分版本用 source_id */
+    if (srcId === nodeId) out.push(l);
   }
   return out;
 }
