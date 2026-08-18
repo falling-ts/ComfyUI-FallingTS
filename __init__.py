@@ -19,7 +19,7 @@ if _plugin_dir not in sys.path:
 from importlib import import_module
 from plugin import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS, inject, comfy_entrypoint
 from proceed.nodes import FallingTSContinueNode
-from selector.nodes import FallingTSSelectorNode
+from selector.nodes import FallingTSSelectorNode, FallingTSSelectOneNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from route.nodes import FallingTSRouteNode
@@ -44,6 +44,7 @@ __all__ = [
     "FallingTSContinueNode",
     "FallingTSRouteNode",
     "FallingTSSelectorNode",
+    "FallingTSSelectOneNode",
     "FallingTSTableNode",
     "FallingTSSwitchNode",
     "FallingTSMarkDownTableNode",

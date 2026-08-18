@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 9 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 11 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── AGENTS.md                   # AI 编码指南(本文件)
 ├── CLAUDE.md                   # Claude Code 垫片,内容为 @AGENTS.md
@@ -26,7 +26,7 @@ ComfyUI-FallingTS/
 ├── route/
 │   └── nodes.py                # FallingTSRouteNode 路由节点 (1进2出)
 ├── selector/
-│   └── nodes.py                # FallingTSSelectorNode 下拉选择器
+│   └── nodes.py                # FallingTSSelectorNode 下拉选择器 + FallingTSSelectOneNode 多对一选择
 ├── table/
 │   └── nodes.py                # FallingTSTableNode 通用表格 (Excel 式)
 ├── switch/
@@ -59,6 +59,7 @@ ComfyUI-FallingTS/
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
         ├── route.js                    # 路由节点「假输出」分支真正执行
         ├── selector.js                 # 下拉选择器实时联动
+        ├── select_one.js               # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
         ├── table_lookup.js             # 通用表格 Excel 式控件
         └── workflow_reload_button.js   # 刷新工作流按钮
@@ -71,6 +72,7 @@ ComfyUI-FallingTS/
 | proceed | FallingTSContinue | 继续节点 |
 | route | FallingTSRoute | 路由节点 (1进2出) |
 | selector | FallingTSSelector | 下拉选择器 |
+| selector | FallingTSSelectOne | 多对一选择 (通用 ANY: items 展开输入端口且标签为实际项内容, 下拉选哪项输出哪项(selected_value/selected/index 三输出)) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 |

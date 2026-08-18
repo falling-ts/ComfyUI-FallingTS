@@ -23,6 +23,26 @@
       }
     }
   },
+  "FallingTSSelectOne": {
+    "display_name": "FallingTS 多对一选择",
+    "description": "多对一选择 (参考下拉选择器, 通用 ANY 节点): items 逗号分隔展开输入端口 (标签为实际项内容), 下拉选哪项就从右侧输出哪项(selected_value 选中项值 / selected 选中项文本 / index 选中项索引), 未选中的分支 lazy 不执行。",
+    "inputs": {
+      "items": {
+        "name": "输入项列表",
+        "tooltip": "用英文逗号分隔的输入项列表 (如: 右侧提示词,后面提示词,左侧提示词); 每项在节点左侧展开为一个输入端口, 端口标签显示该项内容"
+      },
+      "selection": {
+        "name": "选择项",
+        "tooltip": "下拉选择要输出的那一项 (选项由输入项列表文本框实时生成)"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "选中值",
+        "tooltip": "选中的那一项输入的值 (ANY); 未选中的项不输出"
+      }
+    }
+  },
   "FallingTSTable": {
     "display_name": "FallingTS 通用表格 (Excel 式)",
     "description": "通用 Excel 式表格 (数据内嵌工作流): 顶部「选择」下拉选行, 输出该行 A/B/C... 各列字符串; 行数/列数可调 (最少 1), 输出端口随列数增减。",

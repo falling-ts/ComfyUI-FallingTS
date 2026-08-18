@@ -13,12 +13,13 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 通用表格 | `FallingTSTable` | `FallingTS/表格` | Excel 式表格(数据内嵌工作流):顶部「选择」下拉选行,输出该行 A/B/C... 各列字符串;行/列数可调,输出端口随列数增减 |
 | MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
 | 下拉选择器 | `FallingTSSelector` | `FallingTS/工具` | 文本+下拉:逗号分隔选项实时更新下拉,选中项输出索引(INT) + 选项文本(STRING) |
+| 多对一选择 | `FallingTSSelectOne` | `FallingTS/工具` | 通用 ANY 节点:items 逗号分隔实时展开左侧输入端口(标签为实际项内容),下拉选哪项就从右侧输出 selected_value(选中项输入值,ANY) + selected(选中项文本) + index(选中项索引,0 起);未选中的输入声明 lazy,上游不执行 |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
 | 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
 
-### Web 前端增强(10 个,安装即用,无需配置)
+### Web 前端增强(11 个,安装即用,无需配置)
 
 | 文件 | 功能 |
 |------|------|
@@ -30,6 +31,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/md_table.js` | MarkDown 数据表 DOM 控件:系统选择器选文件 + 数据弹窗(搜索/分页/单选) + 按类型渲染表单 + 刷新 |
 | `web/js/selector.js` | 选择器 `items` → 下拉选项实时联动,失配自动重置 |
+| `web/js/select_one.js` | 多对一选择:`items` → 展开输入端口(标签为实际项内容)+ 下拉选项联动 |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
 | `web/js/node_image_middleclick.js` | 节点图片**鼠标中键**全屏预览(单图居中,多图左右循环切换,与已生成预览同款布局) |
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放:滚轮/拖拽/双击/`+/−/0` 快捷键 |
