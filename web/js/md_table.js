@@ -1,5 +1,6 @@
 // FallingTSMarkDownTable 前端 (md 数据表超级节点):
 // - 节点上: 「选择md文件」弹系统选择器 (后端 tkinter, 存以项目根为锚的斜杠相对路径如 stories/七纹刻印/x.md, 跨机可携带; 路径框也可手动粘贴绝对/相对路径),
+//   「内嵌浏览」按钮直接弹内嵌文件浏览器; 系统选择器不可用 (headless 服务器无桌面会话) 时自动弹, 跨平台行为一致;
 //   「打开数据」弹内嵌 HTML 表格弹窗 (各字段模糊搜索 + 分页 + 首列单选),
 //   「确定」载入选中行到节点表单 (竖向排列, 按类型渲染控件, 可编辑), 「刷新」按 ID 重查 md 文件;
 // - 弹窗: 无序号列, 首列单选 radio, 底部 每页 10/20/30/50/100 + 首页/上一页/下一页/尾页,
@@ -336,6 +337,12 @@ function injectModalStyle() {
 .fts-md-btn:disabled{opacity:.4;cursor:default}
 .fts-md-btn-primary{background:#2a6df4;border-color:#2a6df4;color:#fff}
 .fts-md-btn-primary:disabled{background:#3a3a3a;border-color:#555;color:#777}
+.fts-md-bread{padding:8px 14px;font-size:11px;color:#888;border-bottom:1px solid #333;display:flex;align-items:center;flex-wrap:wrap;background:#212121}
+.fts-md-browselist{overflow:auto;flex:1;padding:6px 10px;min-height:200px}
+.fts-md-browse{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;cursor:pointer;color:#ddd;font-size:12px}
+.fts-md-browse:hover{background:#2a2a2a}
+.fts-md-browse .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fts-md-browse.file .nm{color:#9cdcfe}
 `;
   document.head.appendChild(style);
 }
@@ -564,6 +571,120 @@ function openModal(fields, rows, onConfirm, preselectedId = null) {
   render();
 }
 
+// ─── 内嵌文件浏览器 (headless 回退: 无系统对话框也能选 md) ────────────────────
+
+/**
+ * 内嵌文件浏览器弹窗: 从项目根逐级浏览 (目录在前), 点目录进入, 点文件选定并读取。
+ * 不依赖系统对话框, headless 服务器与 Windows 行为一致; 选中值为项目根相对斜杠路径 (跨机可携带)。
+ *
+ * @param {string} initialDir 初始目录 (项目根相对, 空为根)
+ * @param {Function} onPick 选定文件回调 (relPath) -> void
+ * @returns {void}
+ */
+function openBrowse(initialDir = "", onPick = () => {}) {
+  injectModalStyle();
+
+  const overlay = document.createElement("div");
+  overlay.className = "fts-md-overlay";
+  const modal = document.createElement("div");
+  modal.className = "fts-md-modal";
+  modal.style.width = "min(560px, 92vw)";
+
+  const head = document.createElement("div");
+  head.className = "fts-md-head";
+  const title = document.createElement("span");
+  title.textContent = "选择 md 文件 (内嵌浏览)";
+  head.appendChild(title);
+  const closeX = document.createElement("span");
+  closeX.textContent = "✕";
+  closeX.style.cssText = "cursor:pointer;color:#888;font-size:14px;padding:0 4px";
+  head.appendChild(closeX);
+  modal.appendChild(head);
+
+  const bread = document.createElement("div");
+  bread.className = "fts-md-bread";
+  modal.appendChild(bread);
+
+  const list = document.createElement("div");
+  list.className = "fts-md-browselist";
+  modal.appendChild(list);
+
+  let closed = false;
+  const onKey = (e) => {
+    if (e.key === "Escape") close();
+  };
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  closeX.addEventListener("click", close);
+  document.addEventListener("keydown", onKey, true);
+
+  async function render(dir) {
+    list.innerHTML = '<div style="padding:20px;color:#777">加载中…</div>';
+    let r;
+    try {
+      const resp = await fetch("fallingts_mdtable/browse?path=" + encodeURIComponent(dir));
+      r = await resp.json();
+    } catch (err) {
+      list.innerHTML = '<div style="padding:20px;color:#f66">加载失败: ' + esc(String(err)) + '</div>';
+      return;
+    }
+    if (!r.ok) {
+      list.innerHTML = '<div style="padding:20px;color:#f66">' + esc(r.error || "加载失败") + '</div>';
+      return;
+    }
+    // 面包屑: 根 / a / b (逐级可点回退)
+    bread.innerHTML = "";
+    const mkCrumb = (label, target, isRoot) => {
+      const el = document.createElement("span");
+      el.textContent = label;
+      el.style.cssText =
+        "cursor:pointer;color:" + (isRoot ? "#9cdcfe" : "#ddd") + ";padding:2px 6px;border-radius:3px;";
+      el.addEventListener("click", () => render(target));
+      bread.appendChild(el);
+    };
+    mkCrumb(r.root, "", true);
+    let acc = "";
+    const segs = r.dir ? r.dir.split("/") : [];
+    for (let i = 0; i < segs.length; i++) {
+      acc += (acc ? "/" : "") + segs[i];
+      const sep = document.createElement("span");
+      sep.textContent = " / ";
+      sep.style.color = "#555";
+      bread.appendChild(sep);
+      mkCrumb(segs[i], acc, false);
+    }
+    if (closed) return;
+    if (!r.entries.length) {
+      list.innerHTML = '<div style="padding:20px;color:#777">(空目录)</div>';
+      return;
+    }
+    list.innerHTML = "";
+    for (let i = 0; i < r.entries.length; i++) {
+      const e = r.entries[i];
+      const row = document.createElement("div");
+      row.className = "fts-md-browse" + (e.is_dir ? "" : " file");
+      row.innerHTML = '<span>' + (e.is_dir ? "📁" : "📄") + '</span><span class="nm">' + esc(e.name) + "</span>";
+      const full = r.dir ? r.dir + "/" + e.name : e.name;
+      row.addEventListener("click", () => {
+        if (e.is_dir) {
+          render(full);
+        } else {
+          close();
+          onPick(full);
+        }
+      });
+      list.appendChild(row);
+    }
+  }
+
+  document.body.appendChild(overlay);
+  render(initialDir);
+}
+
 // ─── 节点 DOM 控件 ──────────────────────────────────────────────────
 
 /**
@@ -659,6 +780,8 @@ function buildRoot() {
   pathRow.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;";
   const btnPick = mkNodeBtn("📁 选择md文件");
   pathRow.appendChild(btnPick);
+  const btnBrowse = mkNodeBtn("📂 内嵌浏览");
+  pathRow.appendChild(btnBrowse);
   const pathInput = document.createElement("input");
   pathInput.type = "text";
   pathInput.placeholder = "md 文件路径 (推荐相对路径如 stories/七纹刻印/x.md; 绝对路径亦可, 可手动粘贴)";
@@ -687,7 +810,7 @@ function buildRoot() {
   refreshRow.appendChild(btnRefresh);
 
   root.append(pathRow, actionRow, formEl, refreshRow);
-  return { root, pathRow, actionRow, formEl, refreshRow, btnPick, btnOpen, btnRefresh, pathInput, selInfo };
+  return { root, pathRow, actionRow, formEl, refreshRow, btnPick, btnOpen, btnRefresh, pathInput, selInfo, btnBrowse };
 }
 
 /**
@@ -700,7 +823,7 @@ function buildRoot() {
  */
 function createMdTableWidget(node, inputName, inputData) {
   let state = normalize(inputData?.[1]?.default ?? DEFAULT_STATE);
-  const { root, formEl, btnPick, btnOpen, btnRefresh, pathInput, selInfo } = buildRoot();
+  const { root, formEl, btnPick, btnOpen, btnRefresh, pathInput, selInfo, btnBrowse } = buildRoot();
   let widgetRef = null;
   let busy = false;
 
@@ -920,7 +1043,33 @@ function createMdTableWidget(node, inputName, inputData) {
 
   // ── 按钮行为 ────────────────────────────────────────────────────
 
-  // 选择文件: 后端 tkinter 系统选择器 -> 斜杠相对路径 (不在项目根下退回绝对路径) -> 读 md 更新字段/清空选择
+  // 内嵌文件浏览器: 点目录进入/点文件选定 (选中值即斜杠相对路径, 跨机可携带)
+  const openBrowseForNode = (dir) =>
+    openBrowse(dir, async (rel) => {
+      if (busy) return;
+      busy = true;
+      btnPick.textContent = "⏳ 读取中…";
+      try {
+        await loadFromFile(rel);
+      } finally {
+        busy = false;
+        btnPick.textContent = "📁 选择md文件";
+      }
+    });
+  // 初始目录: 当前 md 路径的上级目录 (绝对路径则从根开始)
+  const initialBrowseDir = () => {
+    const cur = state.md_path.trim();
+    if (!cur || /^[a-zA-Z]:[\\/]/.test(cur) || cur.startsWith("/")) return "";
+    const i = cur.lastIndexOf("/");
+    return i >= 0 ? cur.slice(0, i) : "";
+  };
+  btnBrowse.addEventListener("click", () => {
+    if (busy) return;
+    openBrowseForNode(initialBrowseDir());
+  });
+
+  // 选择文件: 后端 tkinter 系统选择器 -> 斜杠相对路径 (不在项目根下退回绝对路径) -> 读 md 更新字段/清空选择;
+  // headless (服务器无桌面会话) 系统选择器不可用 -> 自动开内嵌文件浏览
   btnPick.addEventListener("click", async () => {
     if (busy) return;
     busy = true;
@@ -928,11 +1077,19 @@ function createMdTableWidget(node, inputName, inputData) {
     try {
       const resp = await fetch("/fallingts_mdtable/select_file", { method: "POST" });
       const data = await resp.json();
-      if (!data.ok) {
-        app.extensionManager.toast.add({ severity: "error", summary: data.error || "选择文件失败" });
+      if (data.ok) {
+        await loadFromFile(data.rel_path || data.path); // 优先可携带的相对路径
         return;
       }
-      await loadFromFile(data.rel_path || data.path); // 优先可携带的相对路径
+      if (data.unavailable) {
+        // headless: 无桌面会话, 系统对话框弹不出 -> 内嵌文件浏览兜底
+        app.extensionManager.toast.add({ severity: "info", summary: "服务器无桌面会话, 改用内嵌文件浏览" });
+        openBrowseForNode(initialBrowseDir());
+        return;
+      }
+      if (!data.cancelled) {
+        app.extensionManager.toast.add({ severity: "error", summary: data.error || "选择文件失败" });
+      }
     } catch (err) {
       console.error("[FallingTS.MdTable] 选择文件失败:", err);
       app.extensionManager.toast.add({ severity: "error", summary: "选择文件失败: 无法连接后端" });

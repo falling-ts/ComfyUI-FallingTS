@@ -2,13 +2,14 @@
 """FallingTSMarkDownTable 节点: 从 md 文件解析数据表, 弹窗选行, 节点内按字段类型渲染可编辑表单。
 
 数据流:
-- 「选择md文件」: 后端 tkinter 弹**系统文件选择器**, 记录以**项目根为锚的斜杠分隔相对路径** (如 `stories/七纹刻印/x.md`, 跨机可携带); 不在项目根下退回绝对路径 (headless 时前端可直接在路径框粘贴绝对/相对路径);
+- 「选择md文件」: 后端 tkinter 弹**系统文件选择器**, 记录以**项目根为锚的斜杠分隔相对路径** (如 `stories/七纹刻印/x.md`, 跨机可携带); 不在项目根下退回绝对路径;
+- 系统选择器需要本机桌面会话, headless 服务器打不开: 「内嵌浏览」按钮/选择器不可用时自动弹**内嵌文件浏览器** (browse 路由逐级列目录, 选中即斜杠相对路径, 跨平台行为一致);
 - 「打开数据」: 前端内嵌 HTML 弹窗 (各字段模糊搜索 + 分页 + 首列单选), 选一行;
 - 「确定」: 关闭弹窗, 节点把选中行的数据载入表单 (竖向排列, 按类型渲染控件), 可编辑;
 - 「刷新」: 按 ID 重新查询 md 文件, 用磁盘最新值更新表单 (md 文件是唯一数据源, 节点只存路径+字段+选中行值)。
 
 后端职责:
-- 注册 3 条路由: select_file (系统选择器, 返回斜杠相对路径) / read (解析 md, 相对路径转系统绝对路径定位) / preview (本地 image/video/audio 预览);
+- 注册 4 条路由: select_file (系统选择器, headless 时 unavailable) / browse (内嵌文件浏览器列表, headless 回退) / read (解析 md, 相对路径转系统绝对路径定位) / preview (本地 image/video/audio 预览);
 - execute 读控件状态 (FALLINGTS_MD_TABLE) 输出: 0=ID, 1..N=各字段值 (按类型转换), 末位=data JSON;
 - 输出端口声明为通配 `*` 定长槽, 前端按字段裁剪/重命名/定显示类型 (沿用 FallingTSTable 动态端口模式)。
 """
@@ -234,38 +235,43 @@ _KIND_LOADERS = {
 # ─── 系统文件选择器 ──────────────────────────────────────────────────
 
 
-def _pick_file_dialog():
-    """弹系统原生文件选择器 (tkinter), 返回选中文件的绝对路径; 失败/取消返回 None。
+def _pick_file_dialog() -> dict:
+    """弹系统原生文件选择器 (tkinter), 返回结构化结果 (区分 选中/取消/不可用)。
 
-    tkinter 需要本机桌面会话; 在非主线程建 Tk 在 Windows 上可行。
-    headless / 失败时前端会回退到手动粘贴路径。
+    tkinter 需要本机桌面会话 (X11/Wayland); headless 服务器无显示, 建 Tk 必然失败,
+    此时前端改走内嵌文件浏览器 (browse 路由), 跨平台行为一致。
 
     返回:
-        str | None: 选中文件的绝对路径, 未选或异常为 None。
+        dict: {"status": "picked", "path": 绝对路径} |
+              {"status": "cancelled"} (用户取消) |
+              {"status": "unavailable", "reason": 原因} (无 tkinter/无桌面会话)。
     """
     try:
         import tkinter as tk
         from tkinter import filedialog
-    except Exception:
-        return None
+    except Exception as exc:
+        return {"status": "unavailable", "reason": "tkinter 不可用 (" + exc.__class__.__name__ + ")"}
     try:
         root = tk.Tk()
-    except Exception:
-        return None
+    except Exception as exc:
+        return {"status": "unavailable", "reason": "无桌面会话 (" + exc.__class__.__name__ + ")"}
     try:
         root.withdraw()
         root.attributes("-topmost", True)
-        return filedialog.askopenfilename(
+        picked = filedialog.askopenfilename(
             title="选择 Markdown 数据文件",
             filetypes=[("Markdown 文件", "*.md;*.markdown"), ("所有文件", "*.*")],
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc)[:120]}
     finally:
         try:
             root.destroy()
         except Exception:
             pass
+    if not picked:
+        return {"status": "cancelled"}
+    return {"status": "picked", "path": picked}
 
 
 @PromptServer.instance.routes.post("/fallingts_mdtable/select_file")
@@ -275,18 +281,22 @@ async def _select_file(request: web.Request) -> web.Response:
     返回:
         web.Response:
         - 成功: 200, {"ok": true, "path": "系统绝对路径", "rel_path": "项目根相对斜杠路径或 None"};
-        - 未选/失败: 200, {"ok": false, "error": "..."} (前端回退手动粘贴)。
+        - 用户取消: 200, {"ok": false, "cancelled": true, "error": "未选择文件"};
+        - 不可用 (headless 无桌面会话): 200, {"ok": false, "unavailable": true, "error": "..."}
+          (前端自动改用内嵌文件浏览 /browse)。
 
     rel_path 跨机可携带 (原样存入工作流, 读取时解析为系统绝对路径);
     不在项目根下退回绝对路径 (rel_path 为 None)。
     """
     loop = asyncio.get_running_loop()
-    picked = await loop.run_in_executor(None, _pick_file_dialog)
-    if not picked:
+    res = await loop.run_in_executor(None, _pick_file_dialog)
+    if res["status"] != "picked":
+        if res["status"] == "cancelled":
+            return web.json_response({"ok": False, "cancelled": True, "error": "未选择文件"})
         return web.json_response(
-            {"ok": False, "error": "未选择文件 (或无法弹出系统选择器, 可直接在节点路径框粘贴)"}
+            {"ok": False, "unavailable": True, "error": "系统选择器不可用 (" + res["reason"] + "), 已改用内嵌文件浏览"}
         )
-    path = os.path.normpath(picked)
+    path = os.path.normpath(res["path"])
     root = _project_root()
     rel = None
     if root:
@@ -296,6 +306,56 @@ async def _select_file(request: web.Request) -> web.Response:
         except ValueError:
             rel = None  # 跨盘 (Windows)/跨文件系统无法相对化, 退回绝对路径
     return web.json_response({"ok": True, "path": path, "rel_path": rel})
+
+
+# ─── 内嵌文件浏览器 (headless 回退: 无系统对话框也能选 md) ──────────────
+
+
+@PromptServer.instance.routes.get("/fallingts_mdtable/browse")
+async def _browse_md(request: web.Request) -> web.Response:
+    """HTTP 路由: 列出项目根下目录内容 (前端内嵌文件浏览器, headless 回退)。
+
+    查询:
+        path: 项目根相对目录 (斜杠分隔); 空为项目根。
+
+    返回:
+        web.Response:
+        - 成功: 200, {"ok": true, "root": "根目录名", "dir": "当前相对目录",
+          "parent": "父级相对目录或 null", "entries": [{"name", "is_dir"}...]} (目录在前);
+        - 失败: 400, {"ok": false, "error": "..."} (超出项目根/非目录/根不可用)。
+    """
+    root = _project_root()
+    if not root or not os.path.isdir(root):
+        return web.json_response({"ok": False, "error": "项目根目录不可用"}, status=400)
+    raw = request.query.get("path", "").strip().lstrip("/")
+    target = os.path.normpath(os.path.join(root, raw)) if raw else root
+    try:
+        if os.path.commonpath([root, target]) != root:
+            return web.json_response({"ok": False, "error": "路径超出项目根"}, status=400)
+    except ValueError:
+        return web.json_response({"ok": False, "error": "路径超出项目根"}, status=400)
+    if not os.path.isdir(target):
+        label = raw or os.path.basename(root)
+        return web.json_response({"ok": False, "error": "目录不存在: " + label}, status=400)
+    dirs = []
+    files = []
+    try:
+        for entry in os.scandir(target):
+            (dirs if entry.is_dir() else files).append(entry.name)
+    except OSError as exc:
+        return web.json_response({"ok": False, "error": "读取失败: " + str(exc)}, status=400)
+    dirs.sort(key=str.lower)
+    files.sort(key=str.lower)
+    cur_rel = "" if os.path.normpath(target) == root else os.path.relpath(target, root).replace(os.sep, "/")
+    return web.json_response(
+        {
+            "ok": True,
+            "root": os.path.basename(root),
+            "dir": cur_rel,
+            "parent": os.path.dirname(cur_rel) if cur_rel else None,
+            "entries": [{"name": d, "is_dir": True} for d in dirs] + [{"name": f, "is_dir": False} for f in files],
+        }
+    )
 
 
 # ─── 读取 / 解析 md ──────────────────────────────────────────────────
