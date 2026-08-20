@@ -1,5 +1,5 @@
 // FallingTSMarkDownTable 前端 (md 数据表超级节点):
-// - 节点上: 「选择md文件」弹系统选择器 (后端 tkinter, 返回绝对路径, 路径框也可手动粘贴),
+// - 节点上: 「选择md文件」弹系统选择器 (后端 tkinter, 存以项目根为锚的斜杠相对路径如 stories/七纹刻印/x.md, 跨机可携带; 路径框也可手动粘贴绝对/相对路径),
 //   「打开数据」弹内嵌 HTML 表格弹窗 (各字段模糊搜索 + 分页 + 首列单选),
 //   「确定」载入选中行到节点表单 (竖向排列, 按类型渲染控件, 可编辑), 「刷新」按 ID 重查 md 文件;
 // - 弹窗: 无序号列, 首列单选 radio, 底部 每页 10/20/30/50/100 + 首页/上一页/下一页/尾页,
@@ -252,7 +252,7 @@ function openImageZoomOnMiddleClick(e) {
 /**
  * 解析 md 文件 (后端路由), 返回 {ok, fields, rows, total, error}。
  *
- * @param {string} path md 绝对路径
+ * @param {string} path md 路径 (斜杠分隔相对路径或系统绝对路径, 后端解析为绝对路径)
  * @returns {Promise<object>} 读取结果
  */
 async function readMd(path) {
@@ -661,7 +661,7 @@ function buildRoot() {
   pathRow.appendChild(btnPick);
   const pathInput = document.createElement("input");
   pathInput.type = "text";
-  pathInput.placeholder = "md 文件绝对路径 (可手动粘贴)";
+  pathInput.placeholder = "md 文件路径 (推荐相对路径如 stories/七纹刻印/x.md; 绝对路径亦可, 可手动粘贴)";
   pathInput.style.cssText =
     "flex:1;min-width:160px;box-sizing:border-box;background:#1f1f1f;color:#eee;" +
     "border:1px solid #444;border-radius:3px;font-size:11px;padding:2px 6px;";
@@ -920,7 +920,7 @@ function createMdTableWidget(node, inputName, inputData) {
 
   // ── 按钮行为 ────────────────────────────────────────────────────
 
-  // 选择文件: 后端 tkinter 系统选择器 -> 绝对路径 -> 读 md 更新字段/清空选择
+  // 选择文件: 后端 tkinter 系统选择器 -> 斜杠相对路径 (不在项目根下退回绝对路径) -> 读 md 更新字段/清空选择
   btnPick.addEventListener("click", async () => {
     if (busy) return;
     busy = true;
@@ -932,7 +932,7 @@ function createMdTableWidget(node, inputName, inputData) {
         app.extensionManager.toast.add({ severity: "error", summary: data.error || "选择文件失败" });
         return;
       }
-      await loadFromFile(data.path);
+      await loadFromFile(data.rel_path || data.path); // 优先可携带的相对路径
     } catch (err) {
       console.error("[FallingTS.MdTable] 选择文件失败:", err);
       app.extensionManager.toast.add({ severity: "error", summary: "选择文件失败: 无法连接后端" });
@@ -1026,7 +1026,7 @@ function createMdTableWidget(node, inputName, inputData) {
   /**
    * 设置 md 路径并读取解析, 更新字段与路径显示。
    *
-   * @param {string} path md 绝对路径
+   * @param {string} path md 路径 (推荐斜杠分隔相对路径, 绝对路径亦可)
    * @returns {Promise<void>}
    */
   async function loadFromFile(path) {

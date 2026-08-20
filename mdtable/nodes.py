@@ -2,13 +2,13 @@
 """FallingTSMarkDownTable 节点: 从 md 文件解析数据表, 弹窗选行, 节点内按字段类型渲染可编辑表单。
 
 数据流:
-- 「选择md文件」: 后端 tkinter 弹**系统文件选择器**, 记录绝对路径 (headless 时前端可直接在路径框粘贴);
+- 「选择md文件」: 后端 tkinter 弹**系统文件选择器**, 记录以**项目根为锚的斜杠分隔相对路径** (如 `stories/七纹刻印/x.md`, 跨机可携带); 不在项目根下退回绝对路径 (headless 时前端可直接在路径框粘贴绝对/相对路径);
 - 「打开数据」: 前端内嵌 HTML 弹窗 (各字段模糊搜索 + 分页 + 首列单选), 选一行;
 - 「确定」: 关闭弹窗, 节点把选中行的数据载入表单 (竖向排列, 按类型渲染控件), 可编辑;
 - 「刷新」: 按 ID 重新查询 md 文件, 用磁盘最新值更新表单 (md 文件是唯一数据源, 节点只存路径+字段+选中行值)。
 
 后端职责:
-- 注册 3 条路由: select_file (系统选择器) / read (解析 md) / preview (本地 image/video/audio 预览);
+- 注册 3 条路由: select_file (系统选择器, 返回斜杠相对路径) / read (解析 md, 相对路径转系统绝对路径定位) / preview (本地 image/video/audio 预览);
 - execute 读控件状态 (FALLINGTS_MD_TABLE) 输出: 0=ID, 1..N=各字段值 (按类型转换), 末位=data JSON;
 - 输出端口声明为通配 `*` 定长槽, 前端按字段裁剪/重命名/定显示类型 (沿用 FallingTSTable 动态端口模式)。
 """
@@ -117,6 +117,59 @@ def resolve_media_path(raw, exts=None) -> str | None:
     return None
 
 
+# ─── md 路径解析 (跨机可携带: 相对路径 → 系统绝对路径) ─────────────────────
+
+
+def _comfyui_base() -> str | None:
+    """ComfyUI 基础目录 (folder_paths.base_path, 即 ComfyUI/ 目录; 不可用时 None)。"""
+    try:
+        from folder_paths import base_path
+    except Exception:
+        return None
+    return os.path.normpath(base_path) if base_path else None
+
+
+def _project_root() -> str | None:
+    """项目根目录 = ComfyUI 基础目录的父目录 (ComfyUI 安装目录上一级)。
+
+    md 数据表放在 stories/ 等项目根子目录; 相对路径以项目根为锚, 工作流文件
+    同步到另一台机器 (本地/服务器) 后同一相对路径即可定位到文件。
+    """
+    base = _comfyui_base()
+    return os.path.dirname(base) if base else None
+
+
+def resolve_md_path(raw) -> str | None:
+    """把 md 路径解析为系统绝对路径 (未找到返回 None)。
+
+    解析规则 (依次):
+    - 绝对路径: 原样使用 (兼容旧版本工作流存的绝对路径);
+    - 相对路径 (斜杠分隔, 如 `stories/七纹刻印/x.md`): 依次相对
+      项目根 → ComfyUI 基础目录 → 进程 CWD 拼接, 取第一个存在;
+    - 均未命中: None (调用方报错)。
+
+    参数:
+        raw: md_path 值 (相对/绝对路径字符串, 分隔符不限)。
+
+    返回:
+        str | None: 解析出的系统绝对路径; 未找到为 None。
+    """
+    p = os.path.normpath(str(raw or "").strip())
+    if not p or p == ".":
+        return None
+    if os.path.isabs(p):
+        return p if os.path.isfile(p) else None
+    seen = set()
+    for base in (_project_root(), _comfyui_base(), os.getcwd()):
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        cand = os.path.normpath(os.path.join(base, p))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 def load_image_tensor(path):
     """读图片为 ComfyUI IMAGE 张量 [B,H,W,3] float32 0~1。"""
     import numpy as np
@@ -217,20 +270,32 @@ def _pick_file_dialog():
 
 @PromptServer.instance.routes.post("/fallingts_mdtable/select_file")
 async def _select_file(request: web.Request) -> web.Response:
-    """HTTP 路由: 弹系统文件选择器并返回选中的 md 绝对路径。
+    """HTTP 路由: 弹系统文件选择器, 返回选中路径 + 项目根相对路径。
 
     返回:
         web.Response:
-        - 成功: 200, {"ok": true, "path": "绝对路径"};
+        - 成功: 200, {"ok": true, "path": "系统绝对路径", "rel_path": "项目根相对斜杠路径或 None"};
         - 未选/失败: 200, {"ok": false, "error": "..."} (前端回退手动粘贴)。
+
+    rel_path 跨机可携带 (原样存入工作流, 读取时解析为系统绝对路径);
+    不在项目根下退回绝对路径 (rel_path 为 None)。
     """
     loop = asyncio.get_running_loop()
-    path = await loop.run_in_executor(None, _pick_file_dialog)
-    if not path:
+    picked = await loop.run_in_executor(None, _pick_file_dialog)
+    if not picked:
         return web.json_response(
             {"ok": False, "error": "未选择文件 (或无法弹出系统选择器, 可直接在节点路径框粘贴)"}
         )
-    return web.json_response({"ok": True, "path": os.path.normpath(path)})
+    path = os.path.normpath(picked)
+    root = _project_root()
+    rel = None
+    if root:
+        try:
+            if os.path.commonpath([root, path]) == root:
+                rel = os.path.relpath(path, root).replace(os.sep, "/")
+        except ValueError:
+            rel = None  # 跨盘 (Windows)/跨文件系统无法相对化, 退回绝对路径
+    return web.json_response({"ok": True, "path": path, "rel_path": rel})
 
 
 # ─── 读取 / 解析 md ──────────────────────────────────────────────────
@@ -240,14 +305,19 @@ async def _select_file(request: web.Request) -> web.Response:
 async def _read_md(request: web.Request) -> web.Response:
     """HTTP 路由: 读取并解析 md 文件, 返回字段定义 + 全部数据行。
 
+    md 路径支持斜杠分隔相对路径 (resolve_md_path 解析为系统绝对路径) 与绝对路径 (旧工作流兼容)。
+
     返回:
         web.Response:
-        - 成功: 200, {"ok": true, "path", "fields": [{name,type}], "rows": [{id, values}], "total"};
+        - 成功: 200, {"ok": true, "path" (系统绝对路径), "fields": [{name,type}], "rows": [{id, values}], "total"};
         - 失败: 400, {"ok": false, "error": "..."}。
     """
-    path = request.query.get("path", "").strip()
-    if not path or not os.path.isfile(path):
-        return web.json_response({"ok": False, "error": f"文件不存在: {path}"}, status=400)
+    raw = request.query.get("path", "").strip()
+    if not raw:
+        return web.json_response({"ok": False, "error": "未提供 md 路径"}, status=400)
+    path = resolve_md_path(raw)
+    if not path:
+        return web.json_response({"ok": False, "error": f"文件不存在: {raw}"}, status=400)
     try:
         fields, rows = parse_md_file(path)
     except ValueError as exc:
