@@ -681,6 +681,7 @@ function openBrowse(initialDir = "", onPick = () => {}) {
     }
   }
 
+  overlay.appendChild(modal);
   document.body.appendChild(overlay);
   render(initialDir);
 }
