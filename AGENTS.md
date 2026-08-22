@@ -26,7 +26,7 @@ ComfyUI-FallingTS/
 ├── route/
 │   └── nodes.py                # FallingTSRouteNode 路由节点 (1进2出)
 ├── selector/
-│   └── nodes.py                # FallingTSSelectorNode 下拉选择器 + FallingTSSelectOneNode 多对一选择
+│   └── nodes.py                # FallingTSSelectorNode 多对一选择 (下拉 + 组号, 通用 ANY)
 ├── table/
 │   └── nodes.py                # FallingTSTableNode 通用表格 (Excel 式)
 ├── switch/
@@ -58,8 +58,7 @@ ComfyUI-FallingTS/
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
         ├── route.js                    # 路由节点「假输出」分支真正执行
-        ├── selector.js                 # 下拉选择器实时联动
-        ├── select_one.js               # 多对一选择: items 展开输入端口 + 下拉联动
+        ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
         ├── table_lookup.js             # 通用表格 Excel 式控件
         └── workflow_reload_button.js   # 刷新工作流按钮
@@ -71,8 +70,7 @@ ComfyUI-FallingTS/
 |------|------|------|
 | proceed | FallingTSContinue | 继续节点 |
 | route | FallingTSRoute | 路由节点 (1进2出) |
-| selector | FallingTSSelector | 下拉选择器 |
-| selector | FallingTSSelectOne | 多对一选择 (通用 ANY: items 展开输入端口且标签为实际项内容, 下拉选哪项输出哪项(selected_value/selected/index 三输出)) |
+| selector | FallingTSSelector | 多对一选择 (通用 ANY: items 展开输入端口且标签为实际项内容, 下拉选或输入组号(0 起, 可连上游 INT, -1 = 用下拉)切第几组, 就从右侧输出该组(selected_value/selected/index 三输出)) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 |

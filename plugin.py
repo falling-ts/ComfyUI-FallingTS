@@ -12,7 +12,7 @@ from comfy_api.latest import ComfyExtension
 from importlib import import_module
 
 from proceed.nodes import FallingTSContinueNode
-from selector.nodes import FallingTSSelectorNode, FallingTSSelectOneNode
+from selector.nodes import FallingTSSelectorNode
 from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from route.nodes import FallingTSRouteNode
@@ -34,7 +34,6 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSContinue": FallingTSContinueNode,
     "FallingTSRoute": FallingTSRouteNode,
     "FallingTSSelector": FallingTSSelectorNode,
-    "FallingTSSelectOne": FallingTSSelectOneNode,
     "FallingTSTable": FallingTSTableNode,
     "FallingTSSwitch": FallingTSSwitchNode,
     "FallingTSMarkDownTable": FallingTSMarkDownTableNode,
@@ -45,8 +44,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
-    "FallingTSSelector": "FallingTS 下拉选择器",
-    "FallingTSSelectOne": "FallingTS 多对一选择",
+    "FallingTSSelector": "FallingTS 多对一选择",
     "FallingTSTable": "FallingTS 通用表格 (Excel 式)",
     "FallingTSSwitch": "FallingTS 分组开关 (total组)",
     "FallingTSContinue": "FallingTS 继续节点",

@@ -1,12 +1,12 @@
 # selector/nodes.py
-"""FallingTS 下拉选择器: 文本输入框(英文逗号分隔选项) + 下拉框选择, 输出选中项在选项列表中的索引。
+"""FallingTS 多对一选择: items 文本框(英文逗号分隔)实时展开输入端口, 下拉选择或输入组号(可连上游 INT 驱动)选哪一项,
+就输出哪一路的输入值 + 选项文本 + 索引; 未选中的输入标记 lazy, 上游不执行。
 
 行为:
-- items 文本框里用英文逗号写选项列表, 例如 "4步加速,20步标准,30步精修";
-- 下拉框 (selection) 会跟随 items 内容实时更新选项 (前端 web/js/selector.js 联动);
-- 下拉选择哪个 item, 节点就输出该 item 在列表中的索引 (从 0 开始), 供下游按索引路由/查表;
-- selection 值不在 items 列表时 (旧工作流/手动改动), 回退到第一项, 不报错。
-"""
+- items 里每写一个选项(逗号分隔), 前端 (web/js/selector.js) 就展开一个输入端口, 端口标签显示该项实际内容;
+- 组号 (select_index, 从 0 起) >= 0 时直接选第 k 组(可手动输入或连上游 INT 驱动), 组号为 -1 时改用下拉 (selection);
+- 只拉取并输出选中项输入的值, 未选中的分支不会加入执行列表;
+- 选中项未连线时输出 None (不报错); selection 失配(旧工作流/手动改动)回退第一项。"""
 
 from __future__ import annotations
 
@@ -25,101 +25,6 @@ def _split_items(items: str) -> list[str]:
     return [s.strip() for s in (items or "").split(",") if s.strip()]
 
 
-class FallingTSSelectorNode:
-    """文本+下拉选择器: 逗号分隔选项写在文本框, 下拉选哪个, 就输出它在列表中的索引。
-
-    items 默认空, selection 默认空下拉; 前端在 items 变化时实时同步下拉选项。
-    输出: index: 选中项在 items 列表中的索引, 从 0 开始 (INT)。
-    设计说明: 文本本身仅供人查看 (下拉框内显示), 机器侧用索引标识最精确;
-    映射表 (索引 -> 名称/提示词/比例) 集中放在下游加载器中, 避免字符串比较路由。
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls) -> dict:
-        """声明节点输入。
-
-        返回:
-            dict:
-            - "required".items: 选项列表文本框(英文逗号分隔), 下拉选项由此实时生成;
-            - "required".selection: 下拉选择项, 类型为动态列表(前端 selector.js 联动), 默认空。
-        """
-        return {
-            "required": {
-                "items": (
-                    "STRING",
-                    {
-                        "default": DEFAULT_ITEMS,
-                        "multiline": False,
-                        "tooltip": "用英文逗号分隔的选项列表 (如: 9:16,16:9), 下拉框会跟随此内容更新",
-                    },
-                ),
-                "selection": (
-                    [],
-                    {
-                        "default": "",
-                        "tooltip": "下拉选择项 (选项由上方 items 文本框实时生成)",
-                    },
-                ),
-            },
-        }
-
-    RETURN_TYPES = ("INT", "STRING")
-    RETURN_NAMES = ("index", "selected")
-    OUTPUT_TOOLTIPS = (
-        "选中项在 items 列表中的索引, 从 0 开始 (INT)",
-        "选中项的选项文本 (STRING), 与下拉框当前显示一致, 可用于后续保存/记录",
-    )
-    FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
-
-    @classmethod
-    def IS_CHANGED(cls, items: str, selection: str):
-        """缓存失效签名: 选项列表或选中项变化时该节点判定为已变化而重新执行。
-
-        参数:
-            items (str): 选项列表文本;
-            selection (str): 当前选中项。
-
-        返回:
-            tuple[str, str]: (items, selection) 作为 ComfyUI 缓存键的一部分。
-        """
-        return (items, selection)
-
-    @classmethod
-    def VALIDATE_INPUTS(cls, items: str, selection: str, input_types) -> bool:
-        """输入校验: 动态下拉的选项由 items 实时生成, 后端静态选项表为空,
-        跳过默认 value_not_in_list 校验(execute 内已有失配回退逻辑)。
-
-        参数:
-            items (str): 选项列表文本;
-            selection (str): 当前选中项;
-            input_types (dict): 节点输入类型表(引擎传入)。
-
-        返回:
-            bool: 恒为 True(校验始终通过, 实际校验在 execute 内做)。
-        """
-        return True
-
-    def execute(self, items: str, selection: str):
-        """节点执行入口: 输出选中项在选项列表中的索引与文本。
-
-        逻辑: selection 在选项列表里 → 输出其索引与文本; 失配(旧工作流/手动改动/列表空)
-        则回退到第 0 项(索引 0, 文本为首项或空)。
-
-        参数:
-            items (str): 逗号分隔的选项列表文本;
-            selection (str): 下拉框选中的选项文本。
-
-        返回:
-            tuple[int, str]: (选中项索引, 选中项文本); 失配时回退 (0, 首项或 "")。
-        """
-        options = _split_items(items)
-        if selection in options:
-            return (options.index(selection), selection)
-        # 旧工作流或手动改动导致 selection 不在列表里 / 列表为空: 回退索引 0
-        return (0, options[0] if options else "")
-
-
 # 多对一选择: 最多同时展开的输入端口数 (与 switch 的 MAX_GROUPS 同一范式, 前端按 items 增删)
 MAX_INPUTS = 50
 
@@ -127,7 +32,7 @@ MAX_INPUTS = 50
 MISSING = object()
 
 
-class FallingTSSelectOneNode:
+class FallingTSSelectorNode:
     """多对一选择节点: items 文本框(英文逗号分隔)实时展开左侧 input1..inputN 输入端口,
     下拉选择或输入组号选择哪一项, 就从右侧 selected_value 输出哪一路, 并附带选中项的选项文本 (selected) 与列表索引 (index); 未选中的输入标记 lazy, 上游不执行。
 
@@ -139,7 +44,7 @@ class FallingTSSelectOneNode:
     - 只拉取并输出选中项 input(k+1) 的值 (check_lazy_status 只请求选中项),
       未选中的分支不会加入执行列表 —— "没有选择的不输出/不执行";
     - 三个输出: selected_value(选中的那一项输入值, ANY) / selected(选中项的选项文本, STRING) / index(选中项在 items 列表中的索引, 从 0 起, INT);
-    - 选中项未连线时输出 None (不报错); selection 失配(旧工作流/手动改动)回退第一项, 与下拉选择器一致。
+    - 选中项未连线时输出 None (不报错); selection 失配(旧工作流/手动改动)回退第一项。
     """
 
     @classmethod
@@ -204,7 +109,7 @@ class FallingTSSelectOneNode:
     FUNCTION = "execute"
     CATEGORY = "FallingTS/工具"
     DESCRIPTION = (
-        "多对一选择 (参考下拉选择器 + 分组开关): items 逗号分隔展开输入端口, "
+        "多对一选择 (参考分组开关): items 逗号分隔展开输入端口, "
         "下拉选或输入组号(从 0 起, 可连上游 INT 驱动)切第几组, 就从右侧输出该组(含选中项文本与索引), 未选中的分支 lazy 不执行。"
     )
     SEARCH_ALIASES = ["多对一", "多选一", "选择", "切换", "switch", "路由", "items", "下拉", "组号", "数字切换"]
@@ -293,10 +198,8 @@ class FallingTSSelectOneNode:
 
 NODE_CLASS_MAPPINGS = {
     "FallingTSSelector": FallingTSSelectorNode,
-    "FallingTSSelectOne": FallingTSSelectOneNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FallingTSSelector": "FallingTS 下拉选择器",
-    "FallingTSSelectOne": "FallingTS 多对一选择",
+    "FallingTSSelector": "FallingTS 多对一选择",
 }

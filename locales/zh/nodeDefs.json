@@ -1,29 +1,5 @@
 {
   "FallingTSSelector": {
-    "display_name": "FallingTS 下拉选择器",
-    "description": "文本+下拉选择器: 逗号分隔选项写在文本框, 下拉选哪个, 就输出它在列表中的索引。",
-    "inputs": {
-      "items": {
-        "name": "选项列表",
-        "tooltip": "用英文逗号分隔的选项列表 (如: 9:16,16:9), 下拉框会跟随此内容更新"
-      },
-      "selection": {
-        "name": "选择项",
-        "tooltip": "下拉选择项 (选项由上方选项列表文本框实时生成)"
-      }
-    },
-    "outputs": {
-      "0": {
-        "name": "索引",
-        "tooltip": "选中项在选项列表中的索引, 从 0 开始 (INT)"
-      },
-      "1": {
-        "name": "选项文本",
-        "tooltip": "选中项的选项文本 (STRING), 与下拉框当前显示一致, 可用于后续保存/记录"
-      }
-    }
-  },
-  "FallingTSSelectOne": {
     "display_name": "FallingTS 多对一选择",
     "description": "多对一选择 (参考下拉选择器 + 分组开关, 通用 ANY 节点): items 逗号分隔展开输入端口 (标签为实际项内容), 下拉选或输入组号(从 0 起, 可连上游 INT 驱动)切第几组, 就从右侧输出该组(selected_value 选中项值 / selected 选中项文本 / index 选中项索引), 未选中的分支 lazy 不执行。",
     "inputs": {
