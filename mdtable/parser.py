@@ -172,6 +172,7 @@ def _clean_cell(value: str) -> str:
     v = _LINK_RE.sub(r"\1", v)       # [文本](url) -> 文本
     v = v.replace("**", "").replace("__", "")  # 粗体
     v = v.strip("`").strip()         # 行内代码反引号
+    v = re.sub(r"<br\s*/?>", "\n", v, flags=re.IGNORECASE)  # 分段符 <br>/<br/>/<br /> -> 真实换行
     return v.strip()
 
 
