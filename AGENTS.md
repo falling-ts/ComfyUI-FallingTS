@@ -25,6 +25,9 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSContinueNode 继续节点
 ├── route/
 │   └── nodes.py                # FallingTSRouteNode 路由节点 (total组路由, 参考分组开关)
+├── onemany/
+│   ├── __init__.py
+│   └── nodes.py                # FallingTSOneToManyNode 一对多下拉选择 (total组, value 广播到选中组输出)
 ├── selector/
 │   └── nodes.py                # FallingTSSelectorNode 多对一选择 (下拉 + 组号, 通用 ANY)
 ├── table/
@@ -58,6 +61,7 @@ ComfyUI-FallingTS/
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
         ├── route.js                    # total组路由节点: total 动态端口 + 假分支真正执行
+        ├── onemany.js                  # 一对多下拉选择: total 动态输出端口 + selection 多选下拉 + 选中组分支真正执行
         ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
         ├── table_lookup.js             # 通用表格 Excel 式控件
@@ -70,6 +74,7 @@ ComfyUI-FallingTS/
 |------|------|------|
 | proceed | FallingTSContinue | 继续节点 |
 | route | FallingTSRoute | 路由节点 (total组路由, 参考分组开关: 1个 switch + total 组数, 每组 = 为假时_i/为真时_i 输入 + 输出_i) |
+| onemany | FallingTSOneToMany | 一对多下拉选择 (total组, 参考多对一选择/路由: total 组数(最少 1, 最多 50) = 输出端口 output_1..output_total, value 单一 ANY 输入按 selection 多选下拉(选项 = 组号 1..total, 可多选, 逗号分隔存值)广播到选中组输出, 未选中组 None; partial 提交时所有选中组输出下游输出节点真正执行) |
 | selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1), 左侧输入 = 组数 × 组名数量(第1组在前第2组在后), 下拉选一个组名, 右侧各组 选中值 输出各自该组名的输入, 顶部固定 选中项/索引) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
