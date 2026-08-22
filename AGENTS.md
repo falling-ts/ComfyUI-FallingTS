@@ -70,7 +70,7 @@ ComfyUI-FallingTS/
 |------|------|------|
 | proceed | FallingTSContinue | 继续节点 |
 | route | FallingTSRoute | 路由节点 (1进2出) |
-| selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1)动态增删输入/输出端口, 下拉选第几组, 该组输入导通到该组输出(selected_value/selected/index 三附加输出)) |
+| selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1), 左侧输入 = 组数 × 组名数量(第1组在前第2组在后), 下拉选一个组名, 右侧各组 选中值 输出各自该组名的输入, 顶部固定 选中项/索引) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 |
