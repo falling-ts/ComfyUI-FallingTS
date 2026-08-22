@@ -60,6 +60,25 @@ function syncGroups(node) {
   node.setDirtyCanvas?.(true, true);
 }
 
+/**
+ * 节点高度收回自然高度(只缩不扩: 用户手动拉高的高度保留)。
+ *
+ * 后端声明 MAX_GROUPS=50 个输出, 新建节点时构造器先加上全部 50 个输出并把初始高度
+ * 撑到容纳 50 个输出 (上千 px); syncGroups 按 total 删掉多余端口后需把多余高度收回,
+ * 否则新建节点异常高大。仅新建时生效(onNodeCreated): 加载工作流时 configure 恢复
+ * 保存的高度, 不受影响。
+ *
+ * @param {LGraphNode} node 分组开关节点对象
+ * @returns {void}
+ */
+function fitHeight(node) {
+  const natural = node.computeSize?.();
+  if (!natural || !node.size) return;
+  if (node.size[1] > natural[1]) {
+    node.setSize([node.size[0], natural[1]]);
+  }
+}
+
 app.registerExtension({
   name: "FallingTS.Switch",
 
@@ -102,6 +121,7 @@ app.registerExtension({
       };
 
       syncGroups(node);
+      fitHeight(node);
     };
   },
 });
