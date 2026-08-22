@@ -25,15 +25,19 @@
   },
   "FallingTSSelectOne": {
     "display_name": "FallingTS 多对一选择",
-    "description": "多对一选择 (参考下拉选择器, 通用 ANY 节点): items 逗号分隔展开输入端口 (标签为实际项内容), 下拉选哪项就从右侧输出哪项(selected_value 选中项值 / selected 选中项文本 / index 选中项索引), 未选中的分支 lazy 不执行。",
+    "description": "多对一选择 (参考下拉选择器 + 分组开关, 通用 ANY 节点): items 逗号分隔展开输入端口 (标签为实际项内容), 下拉选或输入组号(从 0 起, 可连上游 INT 驱动)切第几组, 就从右侧输出该组(selected_value 选中项值 / selected 选中项文本 / index 选中项索引), 未选中的分支 lazy 不执行。",
     "inputs": {
       "items": {
         "name": "输入项列表",
         "tooltip": "用英文逗号分隔的输入项列表 (如: 右侧提示词,后面提示词,左侧提示词); 每项在节点左侧展开为一个输入端口, 端口标签显示该项内容"
       },
+      "select_index": {
+        "name": "组号",
+        "tooltip": "组号 (从 0 起, 与索引输出一致): 输入数字直接切换第几组, 可连上游 INT 驱动; -1 = 改用下拉选择"
+      },
       "selection": {
         "name": "选择项",
-        "tooltip": "下拉选择要输出的那一项 (选项由输入项列表文本框实时生成)"
+        "tooltip": "下拉选择要输出的那一项 (选项由输入项列表文本框实时生成); 组号为 -1 时生效"
       }
     },
     "outputs": {
