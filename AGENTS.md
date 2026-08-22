@@ -24,7 +24,7 @@ ComfyUI-FallingTS/
 ├── proceed/
 │   └── nodes.py                # FallingTSContinueNode 继续节点
 ├── route/
-│   └── nodes.py                # FallingTSRouteNode 路由节点 (1进2出)
+│   └── nodes.py                # FallingTSRouteNode 路由节点 (total组路由, 参考分组开关)
 ├── selector/
 │   └── nodes.py                # FallingTSSelectorNode 多对一选择 (下拉 + 组号, 通用 ANY)
 ├── table/
@@ -57,7 +57,7 @@ ComfyUI-FallingTS/
         ├── preview-video.js            # PreviewVideo 底部保存按钮
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
-        ├── route.js                    # 路由节点「假输出」分支真正执行
+        ├── route.js                    # total组路由节点: total 动态端口 + 假分支真正执行
         ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
         ├── table_lookup.js             # 通用表格 Excel 式控件
@@ -69,7 +69,7 @@ ComfyUI-FallingTS/
 | 包 | 节点 | 说明 |
 |------|------|------|
 | proceed | FallingTSContinue | 继续节点 |
-| route | FallingTSRoute | 路由节点 (1进2出) |
+| route | FallingTSRoute | 路由节点 (total组路由, 参考分组开关: 1个 switch + total 组数, 每组 = 为假时_i/为真时_i 输入 + 输出_i) |
 | selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1), 左侧输入 = 组数 × 组名数量(第1组在前第2组在后), 下拉选一个组名, 右侧各组 选中值 输出各自该组名的输入, 顶部固定 选中项/索引) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |

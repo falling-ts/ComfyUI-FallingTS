@@ -48,7 +48,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSTable": "FallingTS 通用表格 (Excel 式)",
     "FallingTSSwitch": "FallingTS 分组开关 (total组)",
     "FallingTSContinue": "FallingTS 继续节点",
-    "FallingTSRoute": "FallingTS 路由节点 (1进2出)",
+    "FallingTSRoute": "FallingTS 路由节点 (total组)",
     "FallingTSMarkDownTable": "FallingTS MarkDown 数据表",
     "FallingTSFrameRateConvert": "FallingTS 帧率转换 (抽帧)",
     "PreviewVideo": "Preview Video (保存)",

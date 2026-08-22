@@ -72,26 +72,16 @@
     }
   },
   "FallingTSRoute": {
-    "display_name": "FallingTS 路由节点",
-    "description": "1 进 2 出路由: 一个值按 switch 路由到两路输出之一, 未选输出为阻断(ExecutionBlocker), 下游不执行。",
+    "display_name": "FallingTS 路由节点 (total组)",
+    "description": "total 组路由 (参考分组开关): 一个 switch 布尔同时路由 total 组, 每组 = 为假时/为真时/输出 (ANY), total 最少 1; partial 提交时 switch=false 的各组输出下游输出节点真正执行 (前端增强)。",
     "inputs": {
       "switch": {
-        "name": "切换",
-        "tooltip": "true → 输入走 真输出; false → 输入走 假输出; 未选输出为阻断"
+        "name": "开关(布尔)",
+        "tooltip": "为真时各组输出 为真时_i, 为假时各组输出 为假时_i"
       },
-      "value": {
-        "name": "输入",
-        "tooltip": "要路由的值 (通常是本段结果图像)"
-      }
-    },
-    "outputs": {
-      "0": {
-        "name": "假输出",
-        "tooltip": "switch=false 时输出输入值, switch=true 时为阻断"
-      },
-      "1": {
-        "name": "真输出",
-        "tooltip": "switch=true 时输出输入值, switch=false 时为阻断"
+      "total": {
+        "name": "总数",
+        "tooltip": "组数, 最少 1, 修改后输入/输出端口随之增减"
       }
     }
   }

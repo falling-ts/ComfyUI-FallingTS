@@ -9,7 +9,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 节点 | Node ID | 分类 | 功能 |
 |------|---------|------|------|
 | 继续节点 | `FallingTSContinue` | `FallingTS/控制` | 工作流**分段执行**:默认阻塞下游,「继续」放行一段,逐段运行到底(靠执行缓存,不重复算上游) |
-| 路由节点 | `FallingTSRoute` | `FallingTS/控制` | 1 进 2 出:一个值按 `switch` 路由到两路输出之一,未选那路输出阻断(ExecutionBlocker),下游不执行 |
+| 路由节点 | `FallingTSRoute` | `FallingTS/控制` | total 组路由(参考分组开关):一个 `switch` 同时路由 total 组,每组 = 为假时/为真时/输出 (ANY),total 最少 1 |
 | 通用表格 | `FallingTSTable` | `FallingTS/表格` | Excel 式表格(数据内嵌工作流):顶部「选择」下拉选行,输出该行 A/B/C... 各列字符串;行/列数可调,输出端口随列数增减 |
 | MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
 | 多对一选择 | `FallingTSSelector` | `FallingTS/工具` | 通用 ANY 节点:items 逗号分隔组名,total 组数(最少 1),左侧输入 = 组数 × 组名数量(第 1 组在前第 2 组在后,标签为组名),下拉选一个组名,右侧各组 选中值 输出各自该组名的输入值(未选中的 None 且 lazy 不执行);顶部固定输出 选中项(组名文本) + 索引(0 起) |
@@ -23,7 +23,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 文件 | 功能 |
 |------|------|
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
-| `web/js/route.js` | 路由节点假输出分支真正执行:partial 提交时把 switch=false 的假输出分支下游输出节点并入 targets,保存本段并停止 |
+| `web/js/route.js` | 路由节点:按 `total` 动态增删各组端口 + 假分支真正执行:partial 提交时把 switch=false 的各组输出下游输出节点并入 targets,保存本段并停止 |
 | `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
 | `web/js/preview-video.js` | 视频预览节点「保存」按钮 |
 | `web/js/preview-audio.js` | 音频预览节点「保存」按钮 |
@@ -67,30 +67,30 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 - `POST /proceed/reset` — 重置所有继续节点为阻塞
 - `POST /proceed/restart/{node_id}` — 重跑令牌 +1 破除下游缓存,并回到阻塞
 
-### 1.1 路由节点 `FallingTSRoute`(1 进 2 出)
+### 1.1 路由节点 `FallingTSRoute`(total 组路由,参考分组开关)
 
-**用途**:一个值按布尔开关路由到两路输出之一;**未选那路输出 `ExecutionBlocker`**,下游直接跳过不执行。
+**用途**:一个 `switch` 布尔同时路由 total 组 —— 每组 = 为假时_i/为真时_i 两个输入 + 输出_i 一个输出 (ANY);`total` 为组数(最少 1,最多 50),前端按 total 动态增删端口。适合"false=保存本段并停止、true=继续下一段"的多组分支场景。
 
 **输入**:
 - `switch`(BOOLEAN,默认 true)
-- `value`(ANY)
+- `total`(INT,默认 2,最少 1,最多 50)
+- 每组 `false_i`(为假时,ANY)/ `true_i`(为真时,ANY),共 total 组
 
 **输出**:
-- `output_false` — switch=false 时输出 value,true 时为阻断
-- `output_true` — switch=true 时输出 value,false 时为阻断
+- `output_i` — 第 i 组输出:switch=true 时取 true_i,false 时取 false_i(未连线为 None)
 
 **行为**:
-| switch | output_false | output_true |
-|---|---|---|
-| true | 阻断 | value |
-| false | value | 阻断 |
+| switch | 各组 output_i |
+|---|---|
+| true | true_i |
+| false | false_i |
 
-**假输出分支真正执行(前端 route.js)**:分段执行(点「继续」)只跑 targets + targets 的上游祖先,而假输出分支的末端输出节点(保存等)不在其中,引擎不调度它。`web/js/route.js` 在 partial 提交时把 `switch=false` 的 route **假输出分支下游的输出节点并入 targets** —— 假输出后面接的保存/预览/对比节点都能真正执行并拿到数据;真输出分支本就是下一继续的上游、已被继续节点 targets 覆盖。
+**假分支真正执行(前端 route.js)**:分段执行(点「继续」)只跑 targets + targets 的上游祖先,而假分支的末端输出节点(保存等)不在其中,引擎不调度它。`web/js/route.js` 在 partial 提交时把 `switch=false` 的 route **各组输出下游的输出节点并入 targets** —— 假输出后面接的保存/预览/对比节点都能真正执行并拿到数据;真输出分支本就是下一继续的上游、已被继续节点 targets 覆盖。
 
 **典型用法**:继续节点后接路由,实现"false=保存本段并停止、true=继续下一段":
 ```
-继续#N ─value→ FallingTSRoute ─output_false→ 保存图片(文件名用表格 ID)
-        switch               └─output_true──→ 原下游(继续下一段)
+数据A → 为假时_1 → FallingTSRoute ─output_1→ 保存/预览(false 分支)
+数据B → 为真时_1 →   (total 组)    └output_1→ 原下游(继续下一段)
 ```
 
 ### 2. 通用表格 `FallingTSTable`
@@ -210,7 +210,7 @@ ComfyUI-FallingTS/
 ├── proceed/          # 分段执行控制节点(阻塞/继续,缓存式)
 │   ├── nodes.py      #   FallingTSContinue + HTTP 路由(continue/reset/restart)
 │   └── __init__.py
-├── route/            # 路由节点 (1 进 2 出)
+├── route/            # 路由节点 (total 组路由)
 │   ├── nodes.py      #   FallingTSRoute
 │   └── __init__.py
 ├── table/            # 通用表格节点 (Excel 式)
