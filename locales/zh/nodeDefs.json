@@ -1,25 +1,33 @@
 {
   "FallingTSSelector": {
     "display_name": "FallingTS 多对一选择",
-    "description": "多对一选择 (参考下拉选择器 + 分组开关, 通用 ANY 节点): items 逗号分隔展开输入端口 (标签为实际项内容), 下拉选或输入组号(从 0 起, 可连上游 INT 驱动)切第几组, 就从右侧输出该组(selected_value 选中项值 / selected 选中项文本 / index 选中项索引), 未选中的分支 lazy 不执行。",
+    "description": "多对一选择 (多组切换, 参考分组开关, 通用 ANY 节点): items 逗号分隔组名, total 组数(最少 1)动态增删输入/输出端口, 下拉选第几组, 该组输入导通到该组输出(其余组 None, 未选中的分支 lazy 不执行); 附加输出 selected_value 选中组值 / selected 选中组名 / index 选中组索引(0 起)。",
     "inputs": {
       "items": {
-        "name": "输入项列表",
-        "tooltip": "用英文逗号分隔的输入项列表 (如: 右侧提示词,后面提示词,左侧提示词); 每项在节点左侧展开为一个输入端口, 端口标签显示该项内容"
+        "name": "组名列表",
+        "tooltip": "用英文逗号分隔的组名列表 (如: 右侧提示词,后面提示词,左侧提示词); 组名作为各组输入/输出端口标签与下拉选项"
       },
-      "select_index": {
-        "name": "组号",
-        "tooltip": "组号 (从 0 起, 与索引输出一致): 输入数字直接切换第几组, 可连上游 INT 驱动; -1 = 改用下拉选择"
+      "total": {
+        "name": "组数",
+        "tooltip": "组数 (最少 1, 最多 50), 每组 = 输入 + 输出, 修改后输入/输出端口随之增减"
       },
       "selection": {
-        "name": "选择项",
-        "tooltip": "下拉选择要输出的那一项 (选项由输入项列表文本框实时生成); 组号为 -1 时生效"
+        "name": "选择组",
+        "tooltip": "下拉选择第几组导通 (选项由组名列表文本框实时生成)"
       }
     },
     "outputs": {
       "0": {
         "name": "选中值",
-        "tooltip": "选中的那一项输入的值 (ANY); 未选中的项不输出"
+        "tooltip": "选中组输入的值 (ANY), 与选中组的组输出一致"
+      },
+      "1": {
+        "name": "选中项",
+        "tooltip": "选中组的组名文本 (STRING), 与下拉框显示一致"
+      },
+      "2": {
+        "name": "索引",
+        "tooltip": "选中组在组名列表中的索引, 从 0 开始 (INT)"
       }
     }
   },
@@ -50,18 +58,18 @@
   "FallingTSContinue": {
     "display_name": "FallingTS 继续节点",
     "description": "分段执行控制节点: 通用数据透传, 分段/继续/重跑由前端 partial execution 控制。",
-  "inputs": {
-    "any": {
-      "name": "输入",
-      "tooltip": "透传数据, 通常接上一节点的输出, 原样输出"
+    "inputs": {
+      "any": {
+        "name": "输入",
+        "tooltip": "透传数据, 通常接上一节点的输出, 原样输出"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "输出",
+        "tooltip": "与输入完全一致的数据"
+      }
     }
-  },
-  "outputs": {
-    "0": {
-      "name": "输出",
-      "tooltip": "与输入完全一致的数据"
-    }
-  }
   },
   "FallingTSRoute": {
     "display_name": "FallingTS 路由节点",

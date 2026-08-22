@@ -12,7 +12,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 路由节点 | `FallingTSRoute` | `FallingTS/控制` | 1 进 2 出:一个值按 `switch` 路由到两路输出之一,未选那路输出阻断(ExecutionBlocker),下游不执行 |
 | 通用表格 | `FallingTSTable` | `FallingTS/表格` | Excel 式表格(数据内嵌工作流):顶部「选择」下拉选行,输出该行 A/B/C... 各列字符串;行/列数可调,输出端口随列数增减 |
 | MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
-| 多对一选择 | `FallingTSSelector` | `FallingTS/工具` | 通用 ANY 节点:items 逗号分隔实时展开左侧输入端口(标签为实际项内容),下拉选或输入组号(从 0 起,可连上游 INT 驱动,-1 = 用下拉)切第几组,就从右侧输出 selected_value(选中项输入值,ANY) + selected(选中项文本) + index(选中项索引,0 起);未选中的输入声明 lazy,上游不执行 |
+| 多对一选择 | `FallingTSSelector` | `FallingTS/工具` | 通用 ANY 节点:items 逗号分隔组名,total 组数(最少 1)动态增删输入/输出端口(组端口标签为组名),下拉选第几组,该组输入导通到该组输出(未选中的组 None 且 lazy 不执行);附加输出 selected_value(选中组值,ANY) + selected(选中组名) + index(选中组索引,0 起) |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
@@ -29,7 +29,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/preview-audio.js` | 音频预览节点「保存」按钮 |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/md_table.js` | MarkDown 数据表 DOM 控件:系统选择器选文件 + 数据弹窗(搜索/分页/单选) + 按类型渲染表单 + 刷新 |
-| `web/js/selector.js` | 多对一选择:`items` → 展开输入端口(标签为实际项内容)+ 下拉选项联动 |
+| `web/js/selector.js` | 多对一选择:`total` 组数增删输入/输出端口(标签为组名)+ `items` 下拉选项联动 |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
 | `web/js/node_image_middleclick.js` | 节点图片**鼠标中键**全屏预览(单图居中,多图左右循环切换,与已生成预览同款布局) |
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放:滚轮/拖拽/双击/`+/−/0` 快捷键 |
@@ -147,10 +147,11 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 ### 3. 多对一选择 `FallingTSSelector`
 
-- `items` 文本框(英文逗号分隔)在左侧实时展开输入端口,端口标签显示该项实际内容;
-- 下拉选或输入**组号**(从 0 起,可连上游 INT 驱动,-1 = 改用下拉)切第几组;
-- 输出 **selected_value**(ANY,选中项输入值) + **selected**(STRING,选中项文本) + **index**(INT,选中项索引,0 起);
-- 未选中的分支声明 lazy,上游不执行;选中项未连线输出 None(不报错);selection 失配回退第一项。
+- `items` 文本框(英文逗号分隔组名)提供各组端口标签与下拉选项;
+- `total` 组数(最少 1,最多 50)动态增删 `input1..inputN` 输入端口与 `output1..outputN` 输出端口(同分组开关范式,槽位稳定);
+- 下拉选第 k 组 → 该组 `input_k` 导通到 `output_k`,其余组输出 None,未选中的分支 lazy 不执行;
+- 附加输出 **selected_value**(ANY,选中组值) + **selected**(STRING,选中组名) + **index**(INT,选中组索引,0 起);
+- 选中组未连线输出 None(不报错);selection 失配回退第一组。
 
 ### 4. 分组开关 `FallingTSSwitch`
 
