@@ -13,7 +13,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 通用表格 | `FallingTSTable` | `FallingTS/表格` | Excel 式表格(数据内嵌工作流):顶部「选择」下拉选行,输出该行 A/B/C... 各列字符串;行/列数可调,输出端口随列数增减 |
 | MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
 | 多对一选择 | `FallingTSSelector` | `FallingTS/工具` | 通用 ANY 节点:items 逗号分隔组名,total 组数(最少 1),左侧输入 = 组数 × 组名数量(第 1 组在前第 2 组在后,标签为组名),下拉选一个组名,右侧各组 选中值 输出各自该组名的输入值(未选中的 None 且 lazy 不执行);顶部固定输出 选中项(组名文本) + 索引(0 起) |
-| 一对多下拉选择 | `FallingTSOneToMany` | `FallingTS/工具` | total 组一对多(参考多对一选择/路由节点):一个 `value` 输入(ANY)按 `selection` **多选下拉**(选项 = 组号 1..total,可多选)广播到选中组的若干输出 `output_1..output_total`,未选中组输出 None,未连线时各组 None;partial 提交时**所有选中组**输出下游输出节点真正执行(前端增强) |
+| 一对多选择 | `FallingTSOneToMany` | `FallingTS/工具` | total 组一对多(参考多对一选择/路由节点):`items` 逗号分隔组名(与多对一同源),`total` 组数,一个 `value` 输入(ANY)按 `selection` **可连线组名**(直接接多对一 选中项,按组名匹配)广播到选中组的输出 `output_1..output_total`,未选中组输出 None,未连线时各组 None;partial 提交时**所有选中组**输出下游输出节点真正执行(前端增强) |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
@@ -31,7 +31,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/md_table.js` | MarkDown 数据表 DOM 控件:系统选择器选文件 + 数据弹窗(搜索/分页/单选) + 按类型渲染表单 + 刷新 |
 | `web/js/selector.js` | 多对一选择:`total` 组数 × `items` 组名数量 增删输入端口(标签为组名)+ 各组 选中值 输出显隐 + 下拉选项联动 |
-| `web/js/onemany.js` | 一对多下拉选择:按 `total` 动态增删输出端口 + `selection` 多选下拉(选项 = 组号 1..total)+ 选中组分支真正执行:partial 提交时把所有选中组输出下游输出节点并入 targets |
+| `web/js/onemany.js` | 一对多选择:按 `total` 动态增删输出端口 + 端口标签 = 组名(items)+ `selection` 可连线组名(直接接多对一 选中项)+ 选中组分支真正执行:partial 提交时把所有选中组输出下游输出节点并入 targets |
 | `web/js/switch.js` | 分组开关按 `total` 动态增删输入/输出端口 |
 | `web/js/node_image_middleclick.js` | 节点图片**鼠标中键**全屏预览(单图居中,多图左右循环切换,与已生成预览同款布局) |
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放:滚轮/拖拽/双击/`+/−/0` 快捷键 |
@@ -157,13 +157,14 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 ### 3.1 一对多下拉选择 `FallingTSOneToMany`(total 组,参考多对一选择/路由节点)
 
-- `total` 输出组数(最少 1,最多 50):输出端口 `output_1..output_total`(ANY)随 `total` 动态增删,只动尾部,已有连线槽位永不漂移;
+- `total` 输出组数(最少 1,最多 50):输出端口 `output_1..output_total`(ANY)随 `total` 动态增删,只动尾部,已有连线槽位永不漂移;端口标签 = 组名;
+- `items` 逗号分隔组名列表(与多对一选择 `items` 同源):输出端口标签 = 组名(如 右面,后面,左面);为空时按 `组1,组2,...` 补全;
 - `value` 单一输入(ANY):未连线时为 None;
-- `selection` **多选下拉**(选项 = 组号 1..total,可多选,含 全选/清空 快捷按钮):值存为逗号分隔组号(如 `1,3`),前端 DOM 控件(参考通用表格的 `addDOMWidget` 范式),序列化进 `widgets_values` 与后端同名对接;
+- `selection` **可连线 STRING 输入**(直接接多对一 **选中项**,连线值优先):值 = 逗号分隔组名(如 `右面` 或 `右面,后面`),按组名匹配;未连线且为空时默认第一组;
 - 被选中组的输出 `output_i` = `value`,未选中组输出 **None**;未连线时各组输出均 None;
-- `total` 变化时:输出端口增删 + 下拉选项(1..total)重建 + 越界组号自动裁剪 + 节点高度收回(只缩不扩);
+- `total`/`items` 变化时:输出端口增删 + 端口标签(组名)同步 + 节点高度收回(只缩不扩);
 - **关键(预加载)**:分段执行(点「继续」)只跑 targets + targets 上游祖先,选中组末端输出节点(保存/预览)可能不在其中。`web/js/onemany.js` 在 partial 提交时把**所有选中组**输出下游的输出节点并入 targets —— 选中的多个分支下游都能真正执行拿到数据(与 `route.js` 补假分支同一机制,区别在于这里是「所有选中组」而非单一假分支);
-- 未用端口不进入 prompt;`IS_CHANGED` 签名 = `(total, selection)`。
+- 未用端口不进入 prompt;`IS_CHANGED` 签名 = `(total, items, selection)`。
 
 ### 4. 分组开关 `FallingTSSwitch`
 
@@ -225,8 +226,8 @@ ComfyUI-FallingTS/
 ├── route/            # 路由节点 (total 组路由)
 │   ├── nodes.py      #   FallingTSRoute
 │   └── __init__.py
-├── onemany/          # 一对多下拉选择节点 (total 组)
-│   ├── nodes.py      #   FallingTSOneToMany(value 广播到选中组输出, 多选下拉 selection)
+├── onemany/          # 一对多选择节点 (total 组)
+│   ├── nodes.py      #   FallingTSOneToMany(value 广播到选中组输出, selection 可连线组名)
 │   └── __init__.py
 ├── table/            # 通用表格节点 (Excel 式)
 │   ├── nodes.py      #   FallingTSTable(ID 首列 + 选择下拉, STRING 输出)

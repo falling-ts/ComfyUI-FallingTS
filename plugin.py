@@ -51,7 +51,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSSwitch": "FallingTS 分组开关 (total组)",
     "FallingTSContinue": "FallingTS 继续节点",
     "FallingTSRoute": "FallingTS 路由节点 (total组)",
-    "FallingTSOneToMany": "FallingTS 一对多下拉选择 (total组)",
+    "FallingTSOneToMany": "FallingTS 一对多选择 (total组)",
     "FallingTSMarkDownTable": "FallingTS MarkDown 数据表",
     "FallingTSFrameRateConvert": "FallingTS 帧率转换 (抽帧)",
     "PreviewVideo": "Preview Video (保存)",

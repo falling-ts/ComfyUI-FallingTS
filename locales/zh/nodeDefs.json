@@ -72,16 +72,20 @@
     }
   },
   "FallingTSOneToMany": {
-    "display_name": "FallingTS 一对多下拉选择 (total组)",
-    "description": "total 组一对多下拉选择 (参考多对一选择/路由节点的 total 组范式): 一个 value 输入 (ANY) 按 selection 多选下拉广播到 total 组中的若干输出; total 为输出组数 (最少 1, 最多 50), 输出端口 output_1..output_total; selection 为多选下拉 (选项 = 组号 1..total, 可多选), 值存为逗号分隔组号 (如 1,3); 被选中组的输出 = value, 未选中组为 None, 未连线时各组输出 None; partial 提交时所有选中组输出下游输出节点真正执行 (前端增强)。",
+    "display_name": "FallingTS 一对多选择 (total组)",
+    "description": "total 组一对多选择 (参考多对一选择/路由节点的 total 组范式): items 逗号分隔组名 (与多对一 items 同源), total 为输出组数 (最少 1, 最多 50), 输出端口 output_1..output_total; selection 为可连线 STRING 输入 (直接接多对一 选中项, 连线值优先), 值 = 逗号分隔组名 (如 右面,后面), 按组名匹配; 一个 value 输入 (ANY) 广播到所有选中组输出, 未选中组为 None; partial 提交时所有选中组输出下游输出节点真正执行 (前端增强)。",
     "inputs": {
       "total": {
         "name": "组数",
         "tooltip": "输出组数 (最少 1, 最多 50), 输出端口 output_1..output_total 随之增减"
       },
+      "items": {
+        "name": "组名列表",
+        "tooltip": "用英文逗号分隔的组名列表 (如: 右面,后面,左面), 与多对一选择 items 同源; 为空时按 组1,组2,... 补全"
+      },
       "selection": {
-        "name": "选择输出组",
-        "tooltip": "多选下拉: 选中哪些输出组 (选项 = 组号 1..total, 可多选), 值存为逗号分隔组号 (如 1,3); 选中组的输出 = value, 未选中组为 None"
+        "name": "选中组名",
+        "tooltip": "可连线 (直接接多对一 选中项, 连线值优先): 选中的组名 (逗号分隔, 如 右面 或 右面,后面), 按组名匹配; 选中组的输出 = value, 未选中组为 None, 为空默认第一组"
       },
       "value": {
         "name": "输入",
@@ -91,7 +95,7 @@
     "outputs": {
       "0": {
         "name": "输出 1",
-        "tooltip": "第 1 组输出 (ANY): selection 含组号 1 时为 value 输入值, 否则 None"
+        "tooltip": "第 1 组输出 (ANY): selection 含第 1 组组名时为 value 输入值, 否则 None"
       }
     }
   },
