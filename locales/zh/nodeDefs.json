@@ -108,5 +108,61 @@
         "tooltip": "组数, 最少 1, 修改后输入/输出端口随之增减"
       }
     }
+  },
+  "FallingTSImageComposite": {
+    "display_name": "FallingTS 四图合成 (2×2 带标注)",
+    "description": "四图 2×2 Z 字合成单张带标注图: 4 个 IMAGE 输入 + 4 个标注 (STRING, 可连线, 默认 前面/右面/后面/左面); 统一尺寸 (取最大高宽, 小图 Lanczos 放大) → 每张子图左上角 CJK 白字黑描边标注 → 2×2 Z 字排列 (上排 前面/右面, 下排 后面/左面), 间距/底色可调。",
+    "inputs": {
+      "image1": {
+        "name": "图 1 (左上)",
+        "tooltip": "左上子图 (默认标注 前面, 通常接原图)"
+      },
+      "image2": {
+        "name": "图 2 (右上)",
+        "tooltip": "右上子图 (默认标注 右面)"
+      },
+      "image3": {
+        "name": "图 3 (左下)",
+        "tooltip": "左下子图 (默认标注 后面)"
+      },
+      "image4": {
+        "name": "图 4 (右下)",
+        "tooltip": "右下子图 (默认标注 左面)"
+      },
+      "label1": {
+        "name": "标注 1",
+        "tooltip": "左上标注 (可连线, 空 = 不画)"
+      },
+      "label2": {
+        "name": "标注 2",
+        "tooltip": "右上标注 (可连线, 空 = 不画)"
+      },
+      "label3": {
+        "name": "标注 3",
+        "tooltip": "左下标注 (可连线, 空 = 不画)"
+      },
+      "label4": {
+        "name": "标注 4",
+        "tooltip": "右下标注 (可连线, 空 = 不画)"
+      },
+      "font_size": {
+        "name": "字号 (%)",
+        "tooltip": "字号 (子图宽百分比, 默认 8.0)"
+      },
+      "padding": {
+        "name": "间距",
+        "tooltip": "图间距与外边距 (像素, 默认 6)"
+      },
+      "background_color": {
+        "name": "底色",
+        "tooltip": "间距底色 (十六进制, 默认 #000000)"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "IMAGE",
+        "tooltip": "2×2 Z 字合成单张图 (2×宽 + 3×间距, 2×高 + 3×间距)"
+      }
+    }
   }
 }

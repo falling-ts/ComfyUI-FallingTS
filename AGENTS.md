@@ -1,12 +1,12 @@
 # ComfyUI-FallingTS
 
-我的 ComfyUI 自定义节点插件:通用工具节点集(Continue/Route/Selector/Table/Switch/MarkDown 数据表)+ 媒体预览保存节点(图片/视频/音频)+ 前端增强。位于 `custom_nodes\ComfyUI-FallingTS`,经根 `custom_nodes` 目录级软链接被 ComfyUI 加载。
+我的 ComfyUI 自定义节点插件:通用工具节点集(Continue/Route/Selector/Table/Switch/MarkDown 数据表/四图合成)+ 媒体预览保存节点(图片/视频/音频)+ 前端增强。位于 `custom_nodes\ComfyUI-FallingTS`,经根 `custom_nodes` 目录级软链接被 ComfyUI 加载。
 
 ## 项目目录结构
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 11 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 12 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── AGENTS.md                   # AI 编码指南(本文件)
 ├── CLAUDE.md                   # Claude Code 垫片,内容为 @AGENTS.md
@@ -38,6 +38,11 @@ ComfyUI-FallingTS/
 │   ├── __init__.py
 │   ├── nodes.py                # FallingTSMarkDownTableNode MarkDown 数据表
 │   └── parser.py               # 表格解析
+├── composite/
+│   ├── __init__.py
+│   └── nodes.py                # FallingTSImageCompositeNode 四图合成 (2×2 带标注 Z 字排列: 4 图 + 4 标注 → 统一尺寸 → 左上角中文标注 → 2×2 合成单图)
+├── fonts/
+│   └── Alibaba-PuHuiTi-Heavy.ttf  # CJK 字体 (随包, 合成节点标注渲染用)
 ├── preview-image/
 │   ├── __init__.py
 │   └── nodes.py                # PreviewImageSaveNode 图片预览保存
@@ -79,6 +84,7 @@ ComfyUI-FallingTS/
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 |
+| composite | FallingTSImageComposite | 四图合成 (2×2 带标注 Z 字排列: 4 图 image1..4 + 4 标注 label1..4 (可连线, 默认 前面/右面/后面/左面), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 上排 前面(原图)/右面 下排 后面/左面 合成单图; 字号/间距/底色可调) |
 | preview-image | PreviewImageSave | 图片预览保存 |
 | preview-video | PreviewVideo | 视频预览保存 |
 | preview-audio | PreviewAudioSave | 音频预览保存 |

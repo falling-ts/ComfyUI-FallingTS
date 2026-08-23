@@ -19,6 +19,7 @@ from route.nodes import FallingTSRouteNode
 from fanout.nodes import FallingTSFanoutNode
 from mdtable.nodes import FallingTSMarkDownTableNode
 from fps.nodes import FallingTSFrameRateConvertNode
+from composite.nodes import FallingTSImageCompositeNode
 
 # preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
@@ -40,6 +41,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSSwitch": FallingTSSwitchNode,
     "FallingTSMarkDownTable": FallingTSMarkDownTableNode,
     "FallingTSFrameRateConvert": FallingTSFrameRateConvertNode,
+    "FallingTSImageComposite": FallingTSImageCompositeNode,
     "PreviewVideo": PreviewVideoNode,
     "PreviewImageSave": PreviewImageSaveNode,
     "PreviewAudioSave": PreviewAudioSaveNode,
@@ -54,6 +56,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSFanout": "FallingTS 扇出选择 (total组)",
     "FallingTSMarkDownTable": "FallingTS MarkDown 数据表",
     "FallingTSFrameRateConvert": "FallingTS 帧率转换 (抽帧)",
+    "FallingTSImageComposite": "FallingTS 四图合成 (2×2 带标注)",
     "PreviewVideo": "Preview Video (保存)",
     "PreviewImageSave": "Preview Image (保存)",
     "PreviewAudioSave": "Preview Audio (保存)",
