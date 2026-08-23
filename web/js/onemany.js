@@ -1,10 +1,8 @@
 // FallingTS 一对多选择节点前端联动 (多对一选择的镜像, 参考 selector.js 的 total/items 动态端口范式):
 // - total 组数 (最少 1) = 左侧输入端口数 (每组一个 input_i, 第 1 组在前第 2 组在后), 端口标签 = 组号;
 // - items 组名列表(英文逗号分隔)变化时, 实时同步 selection 下拉选项 (选项 = 所有组名);
-// - 输出槽位: 前 2 个固定 selected (选中项) / index (索引), 其后 total × 组名数量
-//   (第 i 组 = 每个组名一个输出, 端口标签循环为组名), 动态部分按 total×M 显隐, 增删只动尾部;
-// - 旧布局迁移: 早期版本前 2 个槽位直接是 output_1/output_2 (无固定 selected/index),
-//   加载旧工作流时整体后移 2 位补齐固定端口, 已有连线按端口名重接, 槽位含义永不漂移;
+// - 输出槽位: total × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名), 按 total×M 显隐;
+//   增删只动尾部, 已有连线的槽位索引永不漂移;
 // - selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项), 选中第 k 个组名 ->
 //   第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None;
 // - 关键(预加载): partial 提交(点「继续」)时, 把本节点每组「选中组名」对应的输出下游的输出节点
@@ -17,7 +15,6 @@ const CONTINUE_CLASS = "FallingTSContinue";
 const MAX_GROUPS = 50;
 const MAX_OUTPUTS = 50;
 const DEFAULT_TOTAL = 2;
-const FIXED_OUTPUTS = 2; // 固定前 2 个输出: selected (选中项) / index (索引)
 
 /**
  * 把逗号分隔文本拆成去空白的组名数组。
@@ -91,53 +88,10 @@ function resolveSelectionIndex(names, selection) {
 }
 
 /**
- * 旧布局迁移: 早期版本的输出槽位直接是 output_1..outputN (无前 2 个固定 selected/index),
- * 加载旧工作流时把动态端口整体后移 2 位, 补上固定端口, 已有连线按端口名重接。
+ * 按 total + items 对齐节点: 组输入端口 (total 个, 每组一个) + total×M 输出端口 (按组名标注) + 下拉选项。
  *
- * 步骤: 捕获各 outputN 端口的连线目标 -> 删除全部输出 -> 重建 selected/index + outputN
- * (outputN 由 syncNode 的尾部增删补齐) -> 按端口名把连线接回。新布局 (首槽位 = selected) 直接跳过。
- *
- * @param {object} node 一对多节点对象
- * @returns {void}
- */
-function migrateLegacyLayout(node) {
-  const outs = node.outputs ?? [];
-  if (!outs.length || outs[0].name === "selected") return;
-  const graph = node.graph;
-  const captured = new Map(); // 端口名 outputN -> [{ targetId, targetSlot, type }]
-  for (const o of outs) {
-    if (!/^output_\d+$/.test(o.name || "")) continue;
-    const targets = [];
-    for (const linkId of o.links ?? []) {
-      const link = getLink(graph, linkId);
-      if (link?.target_id != null) {
-        targets.push({ targetId: link.target_id, targetSlot: link.target_slot, type: link.type ?? "*" });
-      }
-    }
-    if (targets.length) captured.set(o.name, targets);
-  }
-  while ((node.outputs ?? []).length) {
-    node.removeOutput(node.outputs.length - 1);
-  }
-  node.addOutput("selected", "STRING");
-  node.addOutput("index", "INT");
-  for (const [name, targets] of captured) {
-    const slot = (node.outputs ?? []).findIndex((o) => o.name === name);
-    if (slot < 0) continue; // 该端口已被尾部增删裁掉 (total×M 变小), 连线丢弃
-    for (const t of targets) {
-      const targetNode = graph?.getNodeById?.(t.targetId);
-      if (!targetNode) continue;
-      node.connect(slot, targetNode, t.targetSlot, t.type);
-    }
-  }
-}
-
-/**
- * 按 total + items 对齐节点: 组输入端口 (total 个, 每组一个) + 固定 selected/index + total×M 输出端口
- * (按组名标注) + 下拉选项。
- *
- * 槽位稳定性: 输入只从尾部增删 (widget 槽之后追加); 输出 = 固定前 2 个 + 动态 total×M,
- * 动态部分只从尾部增删, 已有连线的槽位含义永不漂移 (旧布局经 migrateLegacyLayout 一次性后移)。
+ * 槽位稳定性: 输入只从尾部增删 (widget 槽之后追加); 输出按 total×M 追加, 只从尾部增删,
+ * 已有连线的槽位索引永不漂移。
  *
  * @param {object} node 一对多节点对象
  * @returns {void}
@@ -146,9 +100,6 @@ function syncNode(node) {
   const total = getTotal(node);
   const options = [...new Set(splitItems(node.widgets?.find((w) => w.name === "items")?.value))];
   const M = options.length;
-
-  // 0) 旧布局迁移 (首槽位不是 selected 时整体后移 2 位, 连线按端口名重接)
-  migrateLegacyLayout(node);
 
   // 1) selection 下拉选项同步 (兼容层 + widgetValue store 两层)
   //    选项 = 所有组名; 选中项越界 (改 items 后) 自动重置为第一组名
@@ -182,22 +133,19 @@ function syncNode(node) {
     dyn[i].localized_name = `组${i + 1}`;
   }
 
-  // 3) 输出端口: 固定 selected/index 2 个 + total × M (第 i 组 = 每个组名一个输出, 标签循环为组名,
-  //    动态部分最多 MAX_OUTPUTS, 只动尾部)。后端声明 selected/index + output_1..output_MAX_OUTPUTS,
-  //    未使用的动态端口被删除, 不进入 prompt
-  const wantOutputs = M ? FIXED_OUTPUTS + Math.min(total * M, MAX_OUTPUTS) : FIXED_OUTPUTS;
+  // 3) 输出端口: total × M (第 i 组 = 每个组名一个输出, 标签循环为组名, 最多 MAX_OUTPUTS, 只动尾部)
+  //    后端声明 output_1..output_MAX_OUTPUTS, 未使用的端口被删除, 不进入 prompt
+  const wantOutputs = M ? Math.min(total * M, MAX_OUTPUTS) : 0;
   while ((node.outputs ?? []).length > wantOutputs) {
     node.removeOutput(node.outputs.length - 1);
   }
   while ((node.outputs ?? []).length < wantOutputs) {
-    const idx = (node.outputs ?? []).length + 1 - FIXED_OUTPUTS;
+    const idx = (node.outputs ?? []).length + 1;
     node.addOutput(`output_${idx}`, "*");
   }
-  node.outputs[0].localized_name = "选中项";
-  node.outputs[1].localized_name = "索引";
-  for (let i = 0; i < wantOutputs - FIXED_OUTPUTS; i++) {
+  for (let i = 0; i < wantOutputs; i++) {
     const nameIdx = M ? i % M : -1;
-    node.outputs[FIXED_OUTPUTS + i].localized_name = M ? options[nameIdx] : `输出 ${i + 1}`;
+    node.outputs[i].localized_name = M ? options[nameIdx] : `输出 ${i + 1}`;
   }
 
   node.setDirtyCanvas?.(true, true);
@@ -206,10 +154,10 @@ function syncNode(node) {
 /**
  * 节点高度收回自然高度(只缩不扩: 用户手动拉高的高度保留)。
  *
- * 后端声明共 52 个输出 (固定 selected/index 2 + 动态 output_1..output_50), 新建节点时构造器
- * 先加上全部 52 个输出并把初始高度撑到容纳 52 个输出 (上千 px); syncNode 按 2 + total×M
- * 删掉多余端口后需把多余高度收回, 否则新建节点异常高大。仅新建时生效(onNodeCreated):
- * 加载工作流时 configure 恢复保存的高度, 不受影响。
+ * 后端声明 MAX_OUTPUTS=50 个输出, 新建节点时构造器先加上全部 50 个输出并把初始高度
+ * 撑到容纳 50 个输出 (上千 px); syncNode 按 total×M 删掉多余端口后需把多余高度收回,
+ * 否则新建节点异常高大。仅新建时生效(onNodeCreated): 加载工作流时 configure 恢复
+ * 保存的高度, 不受影响。
  *
  * @param {object} node 一对多节点对象
  * @returns {void}
@@ -245,8 +193,8 @@ function getLink(graph, linkId) {
 }
 
 /**
- * 从本节点每组「选中组名」对应的输出 (第 i 组槽位 2 + i×M+k, 前 2 槽位为固定 selected/index) 下游 BFS,
- * 收集输出节点 (遇到继续节点停止)。收集到的节点 ID 在 partial 提交时并入 targets, 让各组的选中分支真正执行。
+ * 从本节点每组「选中组名」对应的输出 (第 i 组槽位 i×M+k) 下游 BFS, 收集输出节点
+ * (遇到继续节点停止)。收集到的节点 ID 在 partial 提交时并入 targets, 让各组的选中分支真正执行。
  *
  * @param {object} node 一对多节点对象
  * @returns {string[]} 输出节点 ID 字符串数组(已去重); 一个都没有时返回空数组
@@ -262,7 +210,7 @@ function collectActiveBranchOutputs(node) {
   const visited = new Set();
   const queue = [];
   for (let i = 0; i < total; i++) {
-    const slot = FIXED_OUTPUTS + i * M + k;
+    const slot = i * M + k;
     const o = outs[slot];
     if (!o) continue;
     for (const linkId of o.links ?? []) {
