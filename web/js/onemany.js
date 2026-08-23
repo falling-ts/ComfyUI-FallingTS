@@ -1,17 +1,19 @@
-// FallingTS 一对多下拉选择 (total 组) 前端 (参考 selector.js 的 total/items 动态端口范式):
-// - total 输出组数 (最少 1, 最多 MAX_GROUPS), 按 total 动态增删输出端口 output_1..output_total;
-// - items 组名列表 (逗号分隔, 与多对一选择 items 同源), 输出端口标签 = 组名 (缺省 组i);
-// - selection 为可连线 STRING 输入 (直接接多对一 选中项, 连线值优先), 值 = 逗号分隔组名 (如 "右面,后面");
-//   选中组的输出 = value 输入, 未选中组 None; 未连线且为空时默认第一组;
-// - total/items 变化时: 输出端口增删 + 端口标签同步 + 高度收回;
-// - 关键(预加载): partial 提交(点「继续」)时, 把本节点所有「选中组」输出下游的输出节点并入 targets,
-//   让选中的多个分支下游真正执行 —— 与 route.js 补假分支同一机制, 但这里是「所有选中组」而非单一假分支。
+// FallingTS 一对多选择节点前端联动 (多对一选择的镜像, 参考 selector.js 的 total/items 动态端口范式):
+// - total 组数 (最少 1) = 左侧输入端口数 (每组一个 input_i, 第 1 组在前第 2 组在后), 端口标签 = 组号;
+// - items 组名列表(英文逗号分隔)变化时, 实时同步 selection 下拉选项 (选项 = 所有组名);
+// - 输出槽位: total × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名), 按 total×M 显隐;
+//   增删只动尾部, 已有连线的槽位索引永不漂移;
+// - selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项), 选中第 k 个组名 ->
+//   第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None;
+// - 关键(预加载): partial 提交(点「继续」)时, 把本节点每组「选中组名」对应的输出下游的输出节点
+//   并入 targets, 让各组的选中分支下游真正执行 —— 与 route.js 补假分支同一机制。
 
 import { app } from "../../../scripts/app.js";
 
 const NODE_CLASS = "FallingTSOneToMany";
 const CONTINUE_CLASS = "FallingTSContinue";
 const MAX_GROUPS = 50;
+const MAX_OUTPUTS = 50;
 const DEFAULT_TOTAL = 2;
 
 /**
@@ -41,66 +43,121 @@ function getTotal(node) {
 }
 
 /**
- * 把 selection 文本 (逗号分隔组名) 解析为组名集合。
+ * 判断输入槽是否为动态展开的组端口 (inputN), 排除 widget 槽 (items/total/selection)。
  *
- * @param {*} value 逗号分隔组名文本 (如 "右面,后面"), 可为空/None/数组
- * @returns {Set<string>} 组名集合, 空项忽略
+ * @param {object} input 输入槽对象
+ * @returns {boolean} 是否动态组端口
  */
-function parseSelection(value) {
-  const items = Array.isArray(value) ? value : String(value ?? "").split(",");
-  const set = new Set();
-  for (const s of items) {
-    const name = String(s).trim();
-    if (name) set.add(name);
-  }
-  return set;
+function isDynamicInput(input) {
+  return !input.widget && /^input\d+$/.test(input.name || "");
 }
 
 /**
- * 取节点组名列表 (items 拆分, 按 total 补全为 组i)。
+ * 从新前端 widgetValue store 取节点某个 widget 的真实对象(优先), 否则返回 null。
+ * 新前端 combo 渲染优先读 store 里的真实 widget (node.widgets 只是兼容层), 两层都要同步。
  *
- * @param {object} node 一对多节点对象
- * @returns {string[]} 长度 = total 的组名数组
+ * @param {object} node 画布节点对象
+ * @param {string} name widget 名(如 "selection")
+ * @returns {object|null} store 里的真实 widget 对象; store 不可用时返回 null
  */
-function getGroupNames(node) {
-  const total = getTotal(node);
-  const items = splitItems(node.widgets?.find((w) => w.name === "items")?.value);
-  const names = [];
-  for (let i = 0; i < total; i++) {
-    names.push(items[i] || "组" + (i + 1));
+function getStoreWidget(node, name) {
+  try {
+    const el = document.getElementById("vue-app");
+    const pinia = el?.__vue_app__?.config?.globalProperties?.$pinia;
+    const store = pinia?._s?.get("widgetValue");
+    const w = node.widgets?.find((w) => w.name === name);
+    if (w?.widgetId && store?.getWidget) {
+      return store.getWidget(w.widgetId) ?? null;
+    }
+  } catch {
+    // store 不可用时退化为只更新 node.widgets
   }
-  return names;
+  return null;
 }
 
 /**
- * 按 total 对齐输出端口: output_1..output_total (只动尾部, 已有连线的槽位永不漂移),
- * 端口标签 = 组名 (items 来源, 缺省 输出 i)。
+ * 选中项 -> 组名索引: 按选中项匹配, 失配回退 0 (与后端 _resolve_index 一致)。
+ *
+ * @param {string[]} names 组名列表
+ * @param {*} selection 选中项 (下拉选中的组名)
+ * @returns {number} 0 ~ names.length-1 的组名索引
+ */
+function resolveSelectionIndex(names, selection) {
+  const idx = names.indexOf(String(selection ?? "").trim());
+  return idx >= 0 ? idx : 0;
+}
+
+/**
+ * 按 total + items 对齐节点: 组输入端口 (total 个, 每组一个) + total×M 输出端口 (按组名标注) + 下拉选项。
+ *
+ * 槽位稳定性: 输入只从尾部增删 (widget 槽之后追加); 输出按 total×M 追加, 只从尾部增删,
+ * 已有连线的槽位索引永不漂移。
  *
  * @param {object} node 一对多节点对象
  * @returns {void}
  */
-function syncOutputs(node) {
+function syncNode(node) {
   const total = getTotal(node);
-  while ((node.outputs?.length ?? 0) > total) {
+  const options = [...new Set(splitItems(node.widgets?.find((w) => w.name === "items")?.value))];
+  const M = options.length;
+
+  // 1) selection 下拉选项同步 (兼容层 + widgetValue store 两层)
+  //    选项 = 所有组名; 选中项越界 (改 items 后) 自动重置为第一组名
+  const getOptions = () => [...new Set(splitItems(node.widgets?.find((w) => w.name === "items")?.value))];
+  const applyTo = (widget) => {
+    if (!widget) return;
+    widget.options = { ...(widget.options || {}), values: getOptions };
+    const opts = getOptions();
+    if (widget.value !== "" && !opts.includes(widget.value)) {
+      widget.value = opts[0] ?? "";
+      widget.callback?.(widget.value);
+    }
+  };
+  applyTo(node.widgets?.find((w) => w.name === "selection"));
+  applyTo(getStoreWidget(node, "selection"));
+
+  // 2) 动态组输入端口 input1..input_total (每组一个, 最多 MAX_GROUPS)
+  //    类型恒为 * (ANY); 端口标签 = 组号 (组1..组total), 内部名称保持 inputN 供后端定位
+  let dyn = (node.inputs ?? []).filter(isDynamicInput);
+  while (dyn.length > total) {
+    const slot = dyn[dyn.length - 1];
+    node.removeInput(node.inputs.indexOf(slot));
+    dyn = (node.inputs ?? []).filter(isDynamicInput);
+  }
+  while (dyn.length < total) {
+    const idx = dyn.length + 1;
+    node.addInput(`input${idx}`, "*");
+    dyn = (node.inputs ?? []).filter(isDynamicInput);
+  }
+  for (let i = 0; i < dyn.length; i++) {
+    dyn[i].localized_name = `组${i + 1}`;
+  }
+
+  // 3) 输出端口: total × M (第 i 组 = 每个组名一个输出, 标签循环为组名, 最多 MAX_OUTPUTS, 只动尾部)
+  //    后端声明 output_1..output_MAX_OUTPUTS, 未使用的端口被删除, 不进入 prompt
+  const wantOutputs = M ? Math.min(total * M, MAX_OUTPUTS) : 0;
+  while ((node.outputs ?? []).length > wantOutputs) {
     node.removeOutput(node.outputs.length - 1);
   }
-  while ((node.outputs?.length ?? 0) < total) {
-    const idx = (node.outputs?.length ?? 0) + 1;
-    node.addOutput("output_" + idx, "*");
+  while ((node.outputs ?? []).length < wantOutputs) {
+    const idx = (node.outputs ?? []).length + 1;
+    node.addOutput(`output_${idx}`, "*");
   }
-  const names = getGroupNames(node);
-  for (let i = 0; i < total; i++) {
-    node.outputs[i].localized_name = names[i] || "输出 " + (i + 1);
+  for (let i = 0; i < wantOutputs; i++) {
+    const nameIdx = M ? i % M : -1;
+    node.outputs[i].localized_name = M ? options[nameIdx] : `输出 ${i + 1}`;
   }
+
   node.setDirtyCanvas?.(true, true);
 }
 
 /**
  * 节点高度收回自然高度(只缩不扩: 用户手动拉高的高度保留)。
  *
- * 后端声明 MAX_GROUPS=50 个输出, 新建节点时构造器先加上全部 50 个输出并把初始高度
- * 撑到容纳 50 个输出 (上千 px); syncOutputs 按 total 删掉多余端口后需把多余高度收回,
- * 否则新建节点异常高大。
+ * 后端声明 MAX_OUTPUTS=50 个输出, 新建节点时构造器先加上全部 50 个输出并把初始高度
+ * 撑到容纳 50 个输出 (上千 px); syncNode 按 total×M 删掉多余端口后需把多余高度收回,
+ * 否则新建节点异常高大。仅新建时生效(onNodeCreated): 加载工作流时 configure 恢复
+ * 保存的高度, 不受影响。
  *
  * @param {object} node 一对多节点对象
  * @returns {void}
@@ -111,17 +168,6 @@ function fitHeight(node) {
   if (node.size[1] > natural[1]) {
     node.setSize([node.size[0], natural[1]]);
   }
-}
-
-/**
- * 整体同步: 输出端口对齐 + 高度收回。total/items 变化 / 节点创建 / 加载工作流 时统一调用。
- *
- * @param {object} node 一对多节点对象
- * @returns {void}
- */
-function syncAll(node) {
-  syncOutputs(node);
-  fitHeight(node);
 }
 
 // ─── 判断/链路工具 (与 selector.js / route.js 同款) ─────────────────────────
@@ -147,34 +193,25 @@ function getLink(graph, linkId) {
 }
 
 /**
- * 取节点 selection 输入当前选中的组名集合。
- *
- * @param {object} node 一对多节点对象
- * @returns {Set<string>} 选中组名集合
- */
-function getSelectedNames(node) {
-  return parseSelection(node.widgets?.find((w) => w.name === "selection")?.value);
-}
-
-/**
- * 从本节点所有「选中组」输出(组名属于 selected 的槽位)下游 BFS, 收集输出节点
- * (遇到继续节点停止)。收集到的节点 ID 在 partial 提交时并入 targets, 让选中的多个分支真正执行。
+ * 从本节点每组「选中组名」对应的输出 (第 i 组槽位 i×M+k) 下游 BFS, 收集输出节点
+ * (遇到继续节点停止)。收集到的节点 ID 在 partial 提交时并入 targets, 让各组的选中分支真正执行。
  *
  * @param {object} node 一对多节点对象
  * @returns {string[]} 输出节点 ID 字符串数组(已去重); 一个都没有时返回空数组
  */
-function collectSelectedBranchOutputs(node) {
-  const selected = getSelectedNames(node);
+function collectActiveBranchOutputs(node) {
   const total = getTotal(node);
-  const names = getGroupNames(node);
+  const names = splitItems(node.widgets?.find((w) => w.name === "items")?.value);
+  const M = names.length;
+  if (!M) return [];
+  const k = resolveSelectionIndex(names, node.widgets?.find((w) => w.name === "selection")?.value);
   const outs = node.outputs ?? [];
   const targets = new Set();
   const visited = new Set();
   const queue = [];
   for (let i = 0; i < total; i++) {
-    const name = names[i];
-    if (!name || !selected.has(name)) continue;
-    const o = outs[i];
+    const slot = i * M + k;
+    const o = outs[slot];
     if (!o) continue;
     for (const linkId of o.links ?? []) {
       const link = getLink(node.graph, linkId);
@@ -200,7 +237,7 @@ function collectSelectedBranchOutputs(node) {
 }
 
 /**
- * 收集图中所有一对多节点「选中组」分支下游的输出节点(去重)。
+ * 收集图中所有一对多节点每组「选中组名」分支下游的输出节点(去重)。
  *
  * @param {object} graph 画布图对象
  * @returns {string[]} 输出节点 ID 字符串数组
@@ -209,7 +246,7 @@ function collectAllTargets(graph) {
   const targets = new Set();
   for (const n of graph?._nodes ?? []) {
     if (!isOneToManyNode(n)) continue;
-    for (const t of collectSelectedBranchOutputs(n)) targets.add(t);
+    for (const t of collectActiveBranchOutputs(n)) targets.add(t);
   }
   return [...targets];
 }
@@ -219,8 +256,8 @@ app.registerExtension({
 
   /**
    * 扩展初始化钩子: 包装全局提交入口 app.queuePrompt。
-   * partial 提交(点「继续」, queueNodeIds 非空)时, 把图中每个一对多节点「选中组」
-   * 输出下游的输出节点并入 targets, 让选中的多个分支下游真正执行(预加载)。
+   * partial 提交(点「继续」, queueNodeIds 非空)时, 把图中每个一对多节点每组「选中组名」
+   * 输出下游的输出节点并入 targets, 让各组的选中分支下游真正执行(预加载)。
    *
    * @returns {void}
    */
@@ -228,7 +265,7 @@ app.registerExtension({
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
     /**
-     * 包装 queuePrompt: 只处理 partial 提交分支(队列 NodeIds 非空), 并入选中组分支 targets。
+     * 包装 queuePrompt: 只处理 partial 提交分支(队列 NodeIds 非空), 并入选中分支 targets。
      *
      * @param {number} number 提交次数
      * @param {number} batch 批次数
@@ -248,7 +285,7 @@ app.registerExtension({
   },
 
   /**
-   * 节点定义注册前钩子: 给 FallingTSOneToMany 绑定 total/items → 输出端口/标签联动。
+   * 节点定义注册前钩子: 给 FallingTSOneToMany 绑定 total/items → 输入端口/输出端口/下拉选项联动。
    *
    * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
    * @param {object} nodeData 节点定义数据(来自 /object_info)
@@ -259,8 +296,8 @@ app.registerExtension({
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     /**
-     * 节点创建钩子: total/items 变化时同步输出端口与标签; 加载工作流时按保存的值对齐。
-     * selection 为标准 STRING widget (可连线, 接多对一 选中项), 无需自定义 DOM。
+     * 节点创建钩子: total/items 变化时同步输入端口/输出端口/下拉选项; 加载工作流时按保存的值对齐。
+     * selection 为标准下拉 widget (可连线, 接多对一 选中项), 选项由 items 实时生成。
      *
      * @returns {*} 原 onNodeCreated 的返回值
      */
@@ -272,10 +309,10 @@ app.registerExtension({
         const widget = node.widgets?.find((w) => w.name === name);
         if (!widget) return;
         const orig = widget.callback;
-        /** widget 回调: total/items 值变化后重新对齐输出端口与标签。 */
+        /** widget 回调: total/items 值变化后重新对齐输入端口/输出端口/下拉选项。 */
         widget.callback = function (value) {
           const out = orig?.apply(this, arguments);
-          syncAll(node);
+          syncNode(node);
           return out;
         };
       };
@@ -284,28 +321,28 @@ app.registerExtension({
 
       // 兜底: 新前端输入可能不走 widget.callback, 用节点级 onWidgetChanged 再同步一次
       const onWidgetChanged = nodeType.prototype.onWidgetChanged;
-      /** 节点级 widget 变化钩子: total/items 变化时同步输出端口与标签。 */
+      /** 节点级 widget 变化钩子: total/items 变化时同步端口与下拉。 */
       nodeType.prototype.onWidgetChanged = function (widget, value, ...args) {
         const out = onWidgetChanged?.apply(this, arguments);
         if (widget?.name === "items" || widget?.name === "total") {
-          syncAll(this);
+          syncNode(this);
         }
         return out;
       };
 
       // 加载/还原工作流: configure 末尾 (widgets_values 已应用) 再对齐一次
       const prevOnConfigure = node.onConfigure;
-      /** configure 钩子: 工作流加载完成后按保存的 total/items 对齐输出端口与标签。 */
+      /** configure 钩子: 工作流加载完成后按保存的 total/items 对齐端口与下拉。 */
       node.onConfigure = function (info) {
         prevOnConfigure?.call(this, info);
-        syncAll(node);
+        syncNode(node);
       };
 
-      syncAll(node);
+      syncNode(node);
       fitHeight(node);
       // 节点刚创建时 widgetValue store 可能还没注册完成, 下一 tick 再同步一次
       setTimeout(() => {
-        syncAll(node);
+        syncNode(node);
         fitHeight(node);
       }, 0);
       return result;

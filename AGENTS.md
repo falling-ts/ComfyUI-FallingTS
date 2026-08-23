@@ -27,7 +27,7 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSRouteNode 路由节点 (total组路由, 参考分组开关)
 ├── onemany/
 │   ├── __init__.py
-│   └── nodes.py                # FallingTSOneToManyNode 一对多选择 (total组, value 广播到选中组输出, selection 可连线组名)
+│   └── nodes.py                # FallingTSOneToManyNode 一对多选择 (多对一的镜像: total=组数=输入数, 每组一个 input_i, 输出=组数×组名数, 选中项下拉, 每组 input_i 路由到选中组名对应输出)
 ├── selector/
 │   └── nodes.py                # FallingTSSelectorNode 多对一选择 (下拉 + 组号, 通用 ANY)
 ├── table/
@@ -61,7 +61,7 @@ ComfyUI-FallingTS/
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
         ├── route.js                    # total组路由节点: total 动态端口 + 假分支真正执行
-        ├── onemany.js                  # 一对多选择: total 动态输出端口 + items 组名标签 + selection 可连线组名 + 选中组分支真正执行
+        ├── onemany.js                  # 一对多选择(多对一镜像): total=组数=输入端口数(input_i 每组一个) + 输出=组数×组名数(标签=组名) + 选中项下拉选项联动 + 选中组分支真正执行
         ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
         ├── table_lookup.js             # 通用表格 Excel 式控件
@@ -74,7 +74,7 @@ ComfyUI-FallingTS/
 |------|------|------|
 | proceed | FallingTSContinue | 继续节点 |
 | route | FallingTSRoute | 路由节点 (total组路由, 参考分组开关: 1个 switch + total 组数, 每组 = 为假时_i/为真时_i 输入 + 输出_i) |
-| onemany | FallingTSOneToMany | 一对多选择 (total组, 参考多对一选择/路由: items 逗号分隔组名(与多对一同源), total 组数(最少 1, 最多 50) = 输出端口 output_1..output_total, value 单一 ANY 输入按 selection 可连线组名(直接接多对一 选中项, 按组名匹配, 逗号分隔存值)广播到选中组输出, 未选中组 None; partial 提交时所有选中组输出下游输出节点真正执行) |
+| onemany | FallingTSOneToMany | 一对多选择 (多对一的镜像: items 逗号分隔组名(与多对一同源), total 组数(最少 1, 最多 50) = 左侧输入端口数(每组一个 input_i), 右侧输出 = 组数 × 组名数量(每组每个组名一个, 标签=组名), selection 选中项(下拉框, 选项=组名, 可连线直接接多对一 选中项)选中第 k 个组名 → 每组 input_i 路由到该组该组名对应的输出, 第 i 组其余输出 None; partial 提交时每组选中组名输出下游输出节点真正执行) |
 | selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1), 左侧输入 = 组数 × 组名数量(第1组在前第2组在后), 下拉选一个组名, 右侧各组 选中值 输出各自该组名的输入, 顶部固定 选中项/索引) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
