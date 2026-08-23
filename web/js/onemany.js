@@ -3,8 +3,9 @@
 // - items 组名列表(英文逗号分隔)变化时, 实时同步 selection 下拉选项 (选项 = 所有组名);
 // - 输出槽位: total × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名), 按 total×M 显隐;
 //   增删只动尾部, 已有连线的槽位索引永不漂移;
-// - selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项), 选中第 k 个组名 ->
-//   第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None;
+// - selection 选中项 (下拉框, 选项 = 组名), 槽位类型同步为 STRING,INT (多类型, 逗号匹配) ->
+//   可连线接多对一 选中项 (STRING 组名) 或 索引 (INT, 0 起, 传入索引直接选中所属索引的组名),
+//   选中第 k 个组名 -> 第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None;
 // - 陈旧输入槽自愈: 旧版单一输入 value 遗留槽 (保存的工作流会原样保留) 在加载/同步时自动移除,
 //   节点左侧只剩 组1..组total + widget 控件;
 // - 关键(预加载): partial 提交(点「继续」)时, 把本节点每组「选中组名」对应的输出下游的输出节点
@@ -78,13 +79,18 @@ function getStoreWidget(node, name) {
 }
 
 /**
- * 选中项 -> 组名索引: 按选中项匹配, 失配回退 0 (与后端 _resolve_index 一致)。
+ * 选中项 -> 组名索引: 传入索引 (number, 0 起) 直接取该索引; 传入组名 (string) 按名匹配;
+ * 失配/越界回退 0 (与后端 _resolve_index 一致)。
  *
  * @param {string[]} names 组名列表
- * @param {*} selection 选中项 (下拉选中的组名)
+ * @param {*} selection 选中项 (下拉选中的组名, 或连线传入的索引)
  * @returns {number} 0 ~ names.length-1 的组名索引
  */
 function resolveSelectionIndex(names, selection) {
+  if (typeof selection === "number" && Number.isFinite(selection)) {
+    const k = Math.floor(selection);
+    return k >= 0 && k < names.length ? k : 0;
+  }
   const idx = names.indexOf(String(selection ?? "").trim());
   return idx >= 0 ? idx : 0;
 }
@@ -111,7 +117,7 @@ function syncNode(node) {
     if (!widget) return;
     widget.options = { ...(widget.options || {}), values: getOptions };
     const opts = getOptions();
-    if (widget.value !== "" && !opts.includes(widget.value)) {
+    if (typeof widget.value === "string" && widget.value !== "" && !opts.includes(widget.value)) {
       widget.value = opts[0] ?? "";
       widget.callback?.(widget.value);
     }
@@ -126,6 +132,14 @@ function syncNode(node) {
     if (!slot.widget && !/^input\d+$/.test(slot.name || "")) {
       node.removeInput(node.inputs.indexOf(slot));
     }
+  }
+
+  // 2b) selection 槽类型 -> "STRING,INT" (新前端 isValidConnection 按逗号多类型匹配):
+  //     多对一 选中项 (STRING 组名) 与 索引 (INT, 0 起) 均可连入; 下拉 widget 保留 (选项 = 组名),
+  //     未连线时手动选组名, 连线传索引时后端直接选中所属索引的组名
+  const selSlot = (node.inputs ?? []).find((i) => i.name === "selection");
+  if (selSlot && selSlot.type !== "STRING,INT") {
+    selSlot.type = "STRING,INT";
   }
 
   // 3) 动态组输入端口 input1..input_total (每组一个, 最多 MAX_GROUPS)
@@ -207,6 +221,7 @@ function getLink(graph, linkId) {
 /**
  * 从本节点每组「选中组名」对应的输出 (第 i 组槽位 i×M+k) 下游 BFS, 收集输出节点
  * (遇到继续节点停止)。收集到的节点 ID 在 partial 提交时并入 targets, 让各组的选中分支真正执行。
+ * selection 已连线时, 运行时值 (组名/索引) 执行时才确定, 无法预知选中哪条分支 -> 每组全部组名分支都收集。
  *
  * @param {object} node 一对多节点对象
  * @returns {string[]} 输出节点 ID 字符串数组(已去重); 一个都没有时返回空数组
@@ -217,17 +232,22 @@ function collectActiveBranchOutputs(node) {
   const M = names.length;
   if (!M) return [];
   const k = resolveSelectionIndex(names, node.widgets?.find((w) => w.name === "selection")?.value);
+  const selSlot = (node.inputs ?? []).find((i) => i.name === "selection");
+  const connected = selSlot?.link != null;
   const outs = node.outputs ?? [];
   const targets = new Set();
   const visited = new Set();
   const queue = [];
   for (let i = 0; i < total; i++) {
-    const slot = i * M + k;
-    const o = outs[slot];
-    if (!o) continue;
-    for (const linkId of o.links ?? []) {
-      const link = getLink(node.graph, linkId);
-      if (link) queue.push(link.target_id);
+    const start = connected ? i * M : i * M + k;
+    const end = connected ? i * M + M : start + 1;
+    for (let slot = start; slot < end; slot++) {
+      const o = outs[slot];
+      if (!o) continue;
+      for (const linkId of o.links ?? []) {
+        const link = getLink(node.graph, linkId);
+        if (link) queue.push(link.target_id);
+      }
     }
   }
   while (queue.length) {
@@ -309,7 +329,7 @@ app.registerExtension({
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     /**
      * 节点创建钩子: total/items 变化时同步输入端口/输出端口/下拉选项; 加载工作流时按保存的值对齐。
-     * selection 为标准下拉 widget (可连线, 接多对一 选中项), 选项由 items 实时生成。
+     * selection 为标准下拉 widget (槽类型 STRING,INT: 可连线接多对一 选中项组名/索引), 选项由 items 实时生成。
      *
      * @returns {*} 原 onNodeCreated 的返回值
      */

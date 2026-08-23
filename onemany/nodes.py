@@ -1,6 +1,6 @@
 # onemany/nodes.py
 """FallingTS 一对多选择 (多对一选择的镜像, 参考多对一选择的 total 组范式):
-items 组名列表(英文逗号分隔) + total 组数(最少 1) + selection 选中项(下拉框, 选项 = 组名, 可连线接多对一 选中项);
+items 组名列表(英文逗号分隔) + total 组数(最少 1) + selection 选中项(下拉框, 选项 = 组名, 可连线接多对一 选中项/索引);
 左侧输入端口 = 组数 (每组一个 input_i, 第 1 组在前第 2 组在后),
 右侧输出端口 = 组数 × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名)。
 
@@ -8,9 +8,10 @@ items 组名列表(英文逗号分隔) + total 组数(最少 1) + selection 选�
 - total 为组数 (最少 1, 最多 MAX_GROUPS), 左侧 total 个输入端口 input_1..input_total, 每组一个;
 - items 组名列表有 M 个组名时, 右侧共 total × M 个输出端口 (最多 MAX_OUTPUTS):
   第 i 组 = 每个组名一个输出, 端口标签循环为组名列表内容;
-- selection 选中项 = 下拉框选中的组名 (选项 = 所有组名, 可连线接多对一 选中项), 选中第 k 个组名:
+- selection 选中项 = 下拉框选中的组名 (选项 = 所有组名), 可连线接多对一 选中项 (组名文本) 或 索引 (0 起,
+  传入索引直接选中所属索引的组名), 选中第 k 个组名:
   第 i 组的输入值 input_i 路由到第 i 组中该组名对应的输出, 第 i 组其余输出 None;
-- selection 失配(旧工作流/手动改动)回退第一组名;
+- selection 失配/索引越界(旧工作流/手动改动)回退第一组名;
 - 未连线时各组输入为 None, 各组输出均为 None。
 """
 
@@ -42,7 +43,7 @@ MISSING = object()
 class FallingTSOneToManyNode:
     """一对多选择节点 (多对一的镜像): total 组数(最少 1) 动态展开左侧 input_1..input_total 输入端口
     (每组一个), 右侧 total × 组名数量 动态展开 output_1..outputN 输出端口 (第 i 组 = 每个组名一个输出,
-    端口标签循环为组名), selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项) 选中第 k 个组名 ->
+    端口标签循环为组名), selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项/索引) 选中第 k 个组名 ->
     第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None。
 
     行为:
@@ -63,8 +64,8 @@ class FallingTSOneToManyNode:
             - "required".items: 逗号分隔的组名列表, 每个组名在每组各展开一个输出端口 (前端联动);
             - "required".total: 组数 (INT, 最少 1, 最多 MAX_GROUPS), 左侧 total 个输入端口 (每组一个),
               右侧输出 = 组数 × 组名数量, 前端按此动态增删端口;
-            - "required".selection: 选中项 下拉框 (选项 = 组名, 可连线接多对一 选中项),
-              选中组名决定每组 input_i 路由到哪个输出;
+            - "required".selection: 选中项 下拉框 (选项 = 组名, 可连线接多对一 选中项/索引),
+              传入组名按名匹配, 传入索引直接选中所属索引的组名, 决定每组 input_i 路由到哪个输出;
             - "optional".input1..inputMAX_GROUPS: 组数据端口 (ANY, 每组一个), 全部标记 lazy=True,
               各组输入值路由到该组选中组名对应的输出。
         """
@@ -100,7 +101,7 @@ class FallingTSOneToManyNode:
                     [],
                     {
                         "default": "",
-                        "tooltip": "选中项 下拉框 (选项 = 组名, 可连线接多对一 选中项), 选中组名决定每组 input_i 路由到哪个输出",
+                        "tooltip": "选中项 下拉框 (选项 = 组名, 可连线接多对一 选中项/索引): 传组名按名匹配, 传索引 (0 起) 直接选中所属索引的组名",
                     },
                 ),
             },
@@ -120,33 +121,38 @@ class FallingTSOneToManyNode:
     DESCRIPTION = (
         "一对多选择 (多对一的镜像): items 逗号分隔组名, total 组数(最少 1, = 左侧输入端口数, 每组一个 input_i), "
         "右侧 total × 组名数量 个输出 (每组每个组名一个, 标签 = 组名), "
-        "selection 选中项 (下拉框, 可连线接多对一 选中项), 每组 input_i 路由到该组名对应的输出, 其余 None, 未连线为 None。"
+        "selection 选中项 (下拉框, 可连线接多对一 选中项/索引, 传索引直接选中所属索引的组名), 每组 input_i 路由到该组名对应的输出, 其余 None, 未连线为 None。"
     )
     SEARCH_ALIASES = [
         "一对多", "多选多", "扇出", "广播", "路由", "one-to-many", "fanout", "group", "组名", "多组", "total", "items", "选中项",
     ]
 
     @classmethod
-    def IS_CHANGED(cls, items: str = "", total: int = 2, selection: str = "", **kwargs):
+    def IS_CHANGED(cls, items: str = "", total: int = 2, selection = "", **kwargs):
         """缓存失效签名: 组名列表、组数或选中项变化时重新执行 (动态输入值变化由引擎依赖机制处理)。"""
         return (items, total, selection)
 
     @classmethod
-    def VALIDATE_INPUTS(cls, items: str = "", total: int = 2, selection: str = "", input_types=None, **kwargs) -> bool:
+    def VALIDATE_INPUTS(cls, items: str = "", total: int = 2, selection = "", input_types=None, **kwargs) -> bool:
         """输入校验: 动态下拉选项由 items 实时生成, 后端静态选项表为空, 恒通过 (execute 内有失配回退)。"""
         return True
 
     @staticmethod
-    def _resolve_index(options: list[str], selection: str) -> int:
-        """选中组名 -> 索引: 按选中项匹配, 失配(旧工作流/手动改动)回退 0。
+    def _resolve_index(options: list[str], selection) -> int:
+        """选中项 -> 索引: 传入索引 (INT, 0 起) 直接取该索引的组名; 传入组名 (STRING) 按名匹配;
+        失配/越界/非法值(旧工作流/手动改动)回退 0。
 
         参数:
             options (list[str]): 组名列表(调用方已保证非空);
-            selection (str): 选中项 (下拉选中的组名)。
+            selection: 选中项 (下拉选中的组名文本, 或连线传入的索引, 0 起)。
 
         返回:
             int: 0 ~ len(options)-1 的组名索引。
         """
+        if isinstance(selection, bool) or not isinstance(selection, (int, str)):
+            return 0
+        if isinstance(selection, int):
+            return selection if 0 <= selection < len(options) else 0
         if selection in options:
             return options.index(selection)
         return 0
@@ -171,7 +177,7 @@ class FallingTSOneToManyNode:
         参数:
             items (str): 逗号分隔的组名列表;
             total (int): 组数;
-            selection (str): 选中项 (下拉选中的组名);
+            selection: 选中项 (下拉选中的组名, 或连线传入的索引, 0 起);
             **kwargs: 各 inputN 输入值 (未连线的键不存在)。
 
         返回:
@@ -185,13 +191,13 @@ class FallingTSOneToManyNode:
                 need.append(name)
         return need
 
-    def execute(self, items: str = "", total: int = 2, selection: str = "", **kwargs):
+    def execute(self, items: str = "", total: int = 2, selection = "", **kwargs):
         """节点执行入口: 各组 input_i 路由到该组选中组名对应的输出, 第 i 组其余输出 None。
 
         参数:
             items (str): 组名列表 (逗号分隔), 提供各输出端口标签 (M 个组名);
             total (int): 组数 (1~MAX_GROUPS, 非法值回退 2), = 左侧输入端口数 (每组一个 input_i);
-            selection (str): 选中项 (下拉选中的组名), 决定每组 input_i 路由到哪个输出;
+            selection: 选中项 (下拉选中的组名, 或连线传入的索引, 0 起), 决定每组 input_i 路由到哪个输出;
             **kwargs: 各 inputN 输入值 (未连线/未求值时键不存在或为 None)。
 
         返回:
