@@ -45,7 +45,7 @@ class PreviewVideoNode(IO.ComfyNode):
                 "Encodes to the temp folder for preview."
             ),
             inputs=[
-                IO.Video.Input("video", tooltip="要预览的视频。"),
+                IO.Video.Input("video", tooltip="要预览的视频 (None = 无值, 如扇出未选中分支, 跳过预览, 输出该节点最近一次预览的视频供下游)。"),
                 IO.String.Input(
                     "filename_prefix",
                     default="video",
@@ -62,14 +62,14 @@ class PreviewVideoNode(IO.ComfyNode):
     def execute(cls, video, filename_prefix: str = "video", prompt=None, extra_pnginfo=None) -> IO.NodeOutput:
         """节点执行入口: 把视频编码为 mp4 写入临时目录并在前端播放, 同时缓存供「保存」直接写 output。
 
-        逻辑: 视频为 None (如扇出节点未选中分支输出 = 无值) 跳过预览/缓存, 透传 None;
+        逻辑: 视频为 None (如扇出节点未选中分支输出 = 无值) 跳过预览/缓存, 输出本节点最近一次预览的视频(从未预览过则 None);
         否则取尺寸生成随机前缀文件名, 经 folder_paths 得到临时目录保存路径,
         以 MP4 + AUTO 编码保存, 返回 UI.PreviewVideo 让前端播放临时文件。
         同时把 video/filename_prefix 缓存进 _last_output[unique_id] —— 点「保存」按钮,
         前端 POST 到 /preview-video/save/{node_id}, 后端直接用这份缓存写 output, 【不重跑工作流】。
 
         参数:
-            video (Video|None): 要预览的视频对象(惰性内存对象); None (如扇出未选中分支) 跳过预览/缓存。
+            video (Video|None): 要预览的视频对象(惰性内存对象); None (如扇出未选中分支) 跳过预览/缓存, 输出本节点最近一次预览的视频(从未预览过则 None)。
             filename_prefix (str, 默认 "video"): 保存文件名前缀(控件; 若被上游连线,
                 widget 只是占位符, 本参数为实际接收值, 保存时以此为准)。
             prompt (dict|None): 工作流 prompt(预留元数据)。
@@ -77,19 +77,21 @@ class PreviewVideoNode(IO.ComfyNode):
 
         返回:
             IO.NodeOutput: 视频输出 + UI.PreviewVideo 预览事件(指向 temp 目录文件);
-            video 为 None 时回放上一次预览事件(保持原预览不清空), 透传 None。
+            video 为 None 时回放上一次预览事件(保持原预览不清空) 并输出本节点最近一次预览的视频(从未预览过则 None)。
         """
         # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览事件
-        # (temp 文件仍在, 原预览保持), 透传 None, 不更新「保存」缓存
+        # (temp 文件仍在, 原预览保持), 输出本节点【最近一次预览的视频】(下游可拿到该分支之前预览的
+        # 视频, 而非 None); 从未预览过则输出 None, 不更新「保存」缓存
         if video is None:
             nid = getattr(cls.hidden, "unique_id", None)
             cached = _last_output.get(str(nid)) if nid else None
+            last_video = cached.get("video") if cached else None
             if cached and cached.get("file"):
                 return IO.NodeOutput(
-                    None,
+                    last_video,
                     ui=UI.PreviewVideo([UI.SavedResult(cached["file"], cached["subfolder"], IO.FolderType.temp)]),
                 )
-            return IO.NodeOutput(None)
+            return IO.NodeOutput(last_video)
 
         width, height = video.get_dimensions()
         prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))

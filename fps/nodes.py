@@ -9,6 +9,11 @@ fps 参数输出指定帧率的视频。
 from __future__ import annotations
 
 
+# 最近一次抽帧结果缓存: node_id -> 图像序列张量 (BxHxWxC)
+# images 为 None (未连接/上游无值) 时输出本节点最近一次抽帧结果 (sticky), 让下游不丢数据; 从未处理则透传 None
+_last_output: dict = {}
+
+
 class FallingTSFrameRateConvertNode:
     """按目标帧率抽帧: 输入 images (源帧率 source_fps) 输出 target_fps 对应的抽帧序列。
 
@@ -43,6 +48,7 @@ class FallingTSFrameRateConvertNode:
                     },
                 ),
             },
+            "hidden": {"id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -52,31 +58,43 @@ class FallingTSFrameRateConvertNode:
     CATEGORY = "FallingTS/工具"
     DESCRIPTION = "按目标帧率抽帧: 24fps → 8fps 保留每第 3 帧; 音频不动, 视频总时长不变, 播放速率正常。"
 
-    def execute(self, images, source_fps: float, target_fps: float):
+    def execute(self, images, source_fps: float, target_fps: float, id=None):
         """节点执行入口: 按帧率比抽帧。
 
         抽帧步长 = max(1, round(source_fps / target_fps)); stride == 1 时原样返回。
-        images 为 None (未连接/上游失败) 时透传 None;
+        images 为 None (未连接/上游失败) 时输出本节点最近一次抽帧结果 (sticky, 下游不丢数据), 从未处理则透传 None;
         source_fps/target_fps 任一为 None (未连接) 时无法计算帧率比, 按原样透传 (stride=1)。
 
         参数:
             images (torch.Tensor | None): [B,H,W,3] 图像序列;
             source_fps (float | None): 源帧率 (None 视为未连接, 原样透传);
-            target_fps (float | None): 目标帧率 (None 视为未连接, 原样透传)。
+            target_fps (float | None): 目标帧率 (None 视为未连接, 原样透传);
+            id (str | None): 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点抽帧结果缓存键。
 
         返回:
             tuple[torch.Tensor | None]: 抽帧后的图像序列。
         """
         if images is None:
+            # images 为 None (未连接/上游无值): 不报错 —— 若本节点曾处理过, 输出最近一次抽帧结果 (sticky);
+            # 从未处理过则透传 None
+            if id is not None and str(id) in _last_output:
+                return (_last_output[str(id)],)
             return (None,)
         try:
             stride = max(1, round(source_fps / target_fps))
         except (TypeError, ZeroDivisionError):
             # source_fps / target_fps 任一为 None (未连接) 或非法 → 无法算帧率比, 原样透传
+            if id is not None:
+                _last_output[str(id)] = images
             return (images,)
         if stride == 1 or images.shape[0] <= 1:
+            if id is not None:
+                _last_output[str(id)] = images
             return (images,)
-        return (images[::stride],)
+        out = images[::stride]
+        if id is not None:
+            _last_output[str(id)] = out
+        return (out,)
 
 
 NODE_CLASS_MAPPINGS = {

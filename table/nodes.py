@@ -33,6 +33,10 @@ DEFAULT_TABLE = {
     "data": [["", "", ""], ["", "", ""], ["", "", ""]],
 }
 
+# 最近一次输出缓存: node_id -> 选中行各列字符串元组 (长度 MAX_COLS)
+# rows 为 None (未连接/上游无值) 时输出本节点最近一次输出行 (sticky), 让下游不丢数据; 从未输出则回退默认表
+_last_output: dict = {}
+
 
 def normalize_table(value) -> dict:
     """把前端表格控件值规范化为 {row_count, col_count, data}。
@@ -121,6 +125,7 @@ class FallingTSTableNode:
                     },
                 ),
             },
+            "hidden": {"id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("STRING",) * MAX_COLS
@@ -137,18 +142,24 @@ class FallingTSTableNode:
     )
     SEARCH_ALIASES = ["表格", "表", "table", "excel", "行", "列", "查表", "数据表", "sheet", "选择", "下拉"]
 
-    def execute(self, rows):
+    def execute(self, rows, id=None):
         """节点执行入口: 输出选中行的各列单元格字符串。
 
         逻辑: 规范化 rows 为表格状态, 取 selected_index 选中行,
         把该行各列填进 A/B/C... 输出槽(未用的槽输出空串)。
+        rows 为 None (未连接/上游无值): 不报错 —— 若本节点曾输出过数据, 输出最近一次输出行 (sticky, 下游不丢数据);
+        从未输出过则回退默认表 (空表)。
 
         参数:
-            rows (dict|list): 表格控件值(前端序列化的表格状态对象, 或旧版行对象数组)。
+            rows (dict|list|None): 表格控件值(前端序列化的表格状态对象, 或旧版行对象数组); None (未连接/上游无值)。
+            id (str | None): 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点输出缓存键。
 
         返回:
             tuple[str, ...]: 长度 MAX_COLS, 前 col_count 个为选中行各列字符串, 其余为空串。
         """
+        # rows 为 None (未连接/上游无值) 且本节点曾输出过数据 → 输出最近一次输出行 (sticky)
+        if rows is None and id is not None and str(id) in _last_output:
+            return _last_output[str(id)]
         state = normalize_table(rows)
         row_count = state["row_count"]
         col_count = state["col_count"]
@@ -158,7 +169,10 @@ class FallingTSTableNode:
         cells = [""] * MAX_COLS
         for i in range(min(col_count, MAX_COLS)):
             cells[i] = row[i]
-        return tuple(cells)
+        result = tuple(cells)
+        if id is not None:
+            _last_output[str(id)] = result
+        return result
 
 
 NODE_CLASS_MAPPINGS = {

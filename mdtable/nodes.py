@@ -47,6 +47,10 @@ _KIND_EXTS = {
     "MASK": _IMAGE_EXTS,
 }
 
+# 最近一次输出缓存: node_id -> 整行输出元组 (长度 MAX_OUTPUTS)
+# data 为 None (未连接/上游无值) 时输出本节点最近一次输出 (sticky), 让下游不丢数据; 从未输出则回退默认状态
+_last_output: dict = {}
+
 
 def _media_dirs() -> tuple[str, ...]:
     """返回资源搜索目录 (output 优先, 其次 input)。
@@ -485,6 +489,7 @@ class FallingTSMarkDownTableNode:
                     },
                 ),
             },
+            "hidden": {"id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("*",) * MAX_OUTPUTS
@@ -508,8 +513,10 @@ class FallingTSMarkDownTableNode:
     ]
 
     @classmethod
-    def IS_CHANGED(cls, data) -> str:
-        """缓存失效签名: 状态 (路径/字段/选中行/表单值) + IMAGE 字段源文件 mtime。"""
+    def IS_CHANGED(cls, data, **kwargs) -> str:
+        """缓存失效签名: 状态 (路径/字段/选中行/表单值) + IMAGE 字段源文件 mtime。
+
+        **kwargs 吸收引擎注入的隐藏输入 (id=UNIQUE_ID 等), 仅 data 参与签名。"""
         import json
 
         sig = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
@@ -527,18 +534,25 @@ class FallingTSMarkDownTableNode:
             pass
         return sig
 
-    def execute(self, data):
+    def execute(self, data, id=None):
         """节点执行入口: 由控件状态构建各字段输出值; IMAGE 字段解析为真实图片张量。
+
+        data 为 None (未连接/上游无值): 不报错 —— 若本节点曾输出过数据, 输出最近一次输出 (sticky, 下游不丢数据);
+        从未输出过则回退默认状态。
 
         参数:
             data (dict|None): FALLINGTS_MD_TABLE 控件值 ({md_path, fields, selected}),
-                由前端 getValue 序列化进工作流并作为输入传入。
+                由前端 getValue 序列化进工作流并作为输入传入; None (未连接/上游无值)。
+            id (str | None): 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点输出缓存键。
 
         返回:
             tuple: 长度 MAX_OUTPUTS; [0]=选中行 ID, [1..]=各非 ID 字段值 (按类型转换),
                 IMAGE/VIDEO/AUDIO/MASK 字段解析成功为对应类型, 解析失败输出 None (可选输入惯例),
                 未用槽 None, [MAX_OUTPUTS-1]=整行 {id, values} 的 JSON 字符串。
         """
+        # data 为 None (未连接/上游无值) 且本节点曾输出过数据 → 输出最近一次输出 (sticky)
+        if data is None and id is not None and str(id) in _last_output:
+            return _last_output[str(id)]
         state = normalize_state(data)
         out = list(build_outputs(state))
         # IMAGE/VIDEO/AUDIO/MASK 字段 -> 解析 @{ID}/路径 并加载为对应类型; 解析失败输出 None
@@ -549,7 +563,10 @@ class FallingTSMarkDownTableNode:
                     state["selected"]["values"].get(f["name"], ""), _KIND_EXTS[f["type"]]
                 )
                 out[i] = loader(path) if path else None
-        return tuple(out)
+        result = tuple(out)
+        if id is not None:
+            _last_output[str(id)] = result
+        return result
 
 
 NODE_CLASS_MAPPINGS = {

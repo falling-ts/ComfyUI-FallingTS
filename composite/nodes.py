@@ -28,6 +28,10 @@ from PIL import Image, ImageColor, ImageDraw, ImageFont
 # 随包 CJK 字体 (相对本文件): 标注渲染用
 _FONT_REL = os.path.join("..", "fonts", "Alibaba-PuHuiTi-Heavy.ttf")
 
+# 最近一次合成结果缓存: node_id -> 合成单图张量 (BxHxWxC)
+# 四图全 None (未连接/上游无值) 时输出本节点最近一次合成结果 (sticky), 让下游不丢数据; 从未合成则透传 (None,)
+_last_output: dict = {}
+
 
 def _load_font(size: int) -> ImageFont.ImageFont:
     """加载随包 CJK 字体; 缺失时退回 PIL 默认字体 (非 CJK 字符会缺字)。"""
@@ -101,6 +105,7 @@ class FallingTSImageCompositeNode:
                 "image3": ("IMAGE", {"tooltip": "左下 (默认标注 后面; 未连接/None = 空格)"}),
                 "image4": ("IMAGE", {"tooltip": "右下 (默认标注 左面; 未连接/None = 空格)"}),
             },
+            "hidden": {"id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -109,20 +114,26 @@ class FallingTSImageCompositeNode:
 
     def composite(self, image1=None, image2=None, image3=None, image4=None,
                   label1="前面", label2="右面", label3="后面", label4="左面",
-                  font_size=8.0, padding=6, background_color="#000000"):
+                  font_size=8.0, padding=6, background_color="#000000", id=None):
         """统一尺寸 + 左上角标注 → 2×2 Z 字合成为单张图。
 
         None 容忍 (输入一律安全降级, 不崩溃):
         - 某图 None (未连接/上游无值) 或 空批/非张量 (如扇出未选中分支经预览节点透传的 () 空 tuple)
           → 该格渲染为底色空格 (不画标注), 布局不变;
-        - 四图全 None/空 → 输出 None (透传, 下游 None 容忍);
+        - 四图全 None/空 → 输出本节点最近一次合成结果 (sticky, 下游不丢数据); 从未合成过则输出 None (透传);
         - font_size None → 8.0; padding None → 6; background_color None → #000000; label None → 不画。
+
+        参数 id: 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点合成结果缓存键。
         """
         # 统一归一化: 每个输入 → 单帧 HxWxC 张量, 或 None (None/空 tuple/非张量 一律 None, 该格按空格处理)
         frames = [_first_frame(img) for img in (image1, image2, image3, image4)]
         labels = (label1, label2, label3, label4)
         present = [f for f in frames if f is not None]
         if not present:
+            # 四图全 None (未连接/上游无值): 不报错 —— 若本节点曾合成过, 输出最近一次合成结果 (sticky),
+            # 让下游不丢数据; 从未合成过则透传 (None,)
+            if id is not None and str(id) in _last_output:
+                return (_last_output[str(id)],)
             return (None,)
         # 统一尺寸: 取非空图最大高/宽 (单帧 = [H,W,C])
         height = max(f.shape[0] for f in present)
@@ -163,7 +174,10 @@ class FallingTSImageCompositeNode:
         canvas.paste(tiles[2], (gap, gap * 2 + height))
         canvas.paste(tiles[3], (gap * 2 + width, gap * 2 + height))
         arr = np.asarray(canvas).astype(np.float32) / 255.0
-        return (torch.from_numpy(arr[np.newaxis, ...]),)
+        out = torch.from_numpy(arr[np.newaxis, ...])
+        if id is not None:
+            _last_output[str(id)] = out
+        return (out,)
 
 
 NODE_CLASS_MAPPINGS = {
