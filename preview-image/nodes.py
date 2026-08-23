@@ -178,7 +178,7 @@ class PreviewImageSaveNode:
         (按钮读取它们), 本方法不用于保存。
 
         参数:
-            images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 透传空批;
+            images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 透传 None(下游按无值处理);
             filename_prefix (str, 默认 "preview"): 输出文件名前缀(控件, 保存时以按钮 POST 的为准);
             format (str, 默认 "png"): png/exr(控件);
             bit_depth (str, 默认 "8-bit"): 位深(控件);
@@ -191,9 +191,9 @@ class PreviewImageSaveNode:
             dict: {"ui": {"images": [temp 预览记录...]}, "result": (images,)}。
         """
         # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览记录
-        # (temp 文件仍在, 原预览保持显示), 透传空批, 不更新「保存」缓存, 不崩溃
+        # (temp 文件仍在, 原预览保持显示), 透传 None (下游按无值处理), 不更新「保存」缓存, 不崩溃
         if images is None:
-            return {"ui": {"images": _last_ui.get(id, [])}, "result": ((),)}
+            return {"ui": {"images": _last_ui.get(id, [])}, "result": (None,)}
 
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
         # filename_prefix 一并缓存: 该输入可能被上游连线(如 MDTable 的 ID 列),

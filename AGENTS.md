@@ -100,9 +100,9 @@ ComfyUI-FallingTS/
 
 - **路由/选择类**(route/switch/fanout/selector):`_split_items`/`_clamp_total`/`_resolve_index` 等助手对 None items/total/selection 回退默认(1 组、第 0 项),未选中分支输出 None 由下游兜底;
 - **数据类**(table/mdtable):`normalize_table`/`normalize_state` 对 None 数据回退空表,不报错;
-- **预览类**(preview-image/preview-video/preview-audio):images/media 为 None → 回放 `_last_cache` 上次预览(无缓存则透传),不清缓存;
-- **合成类**(composite):image1..4 全部 optional,缺图格用底色空白占位,全空输出 None;
-- **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。
+- **预览类**(preview-image/preview-video/preview-audio):images/media 为 None → 回放 `_last_cache` 上次预览(无缓存则透传),不清缓存;透传值一律为 **None(透传 `(None,)`/`IO.NodeOutput(None)`),绝不透传空 tuple `()`** —— 空 tuple 会被下游当合法值走 `.shape`/迭代而崩溃;
+- **合成类**(composite):image1..4 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → 该格用底色空白占位;四图全无值输出 None(绝不崩溃);font_size/padding/background_color None → 默认 8.0/6/#000000;
+- **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
 ## 软链接映射
 

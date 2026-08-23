@@ -50,6 +50,10 @@ class FallingTSContinueNode:
     _released: set[str] = set()
     # 节点缓存的上游数据: node_id -> any (Run/上一段到达时收到的新数据覆盖; 点「继续」从这里取)
     _data_cache: dict[str, Any] = {}
+    # 重置代际: /proceed/reset 时递增, 纳入 IS_CHANGED -> 每次 Run 后缓存键必变,
+    # 强制继续节点重新执行(重新拉上游填 _data_cache), 不被 ComfyUI 全局执行缓存跳过
+    # (否则同进程内重跑同图时, 继续节点被缓存命中 -> execute 不执行 -> _data_cache 不填 -> 「继续」400)
+    _reset_generation: int = 0
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
@@ -82,17 +86,19 @@ class FallingTSContinueNode:
 
     @classmethod
     def IS_CHANGED(cls, id: str | None = None, **kwargs):
-        """缓存失效签名: 把"是否已放行"纳入缓存键, 放行前后返回值不同 -> 该节点被判定已变化
-        -> 强制重新执行(从而从节点缓存取数据发往下游)。
+        """缓存失效签名: 把"重置代际 + 是否已放行"纳入缓存键, 代际变化或放行状态变化 ->
+        该节点被判定已变化 -> 强制重新执行(全量 Run 拉上游填缓存; 放行后从节点缓存取数据发往下游)。
 
         参数:
             id (str | None): 节点唯一 ID, 与 INPUT_TYPES 的 hidden.id 对应;
             **kwargs: 其余输入(any 等), 本方法不读取, 仅保持签名兼容。
 
         返回:
-            tuple[bool]: (id 是否已在 _released 中,) 作为 ComfyUI 缓存键的一部分。
+            tuple: (_reset_generation, id 是否已在 _released 中) 作为 ComfyUI 缓存键的一部分。
+            _reset_generation 每次 /proceed/reset 递增 -> 每次 Run 后缓存键必变, 强制重新执行;
+            是否已放行区分全量 Run(阻塞)与 partial(放行)两种上下文, 避免互相命中缓存。
         """
-        return (id in cls._released,)
+        return (cls._reset_generation, id in cls._released)
 
     def check_lazy_status(self, any: Any = MISSING, id: str | None = None) -> list[str]:  # noqa: A002
         """lazy 输入门控: 决定本次执行要不要拉取上游的 any 数据 —— 这是"不断开连线也能从节点往下跑"的关键。
@@ -196,6 +202,7 @@ async def _handle_reset(request: web.Request) -> web.Response:
     """HTTP 路由: 重置所有继续节点为阻塞并清空缓存(前端默认 Run 时调用)。
 
     清空 _released(全部回到未放行 = 阻塞)与 _data_cache(丢弃已缓存的上游数据),
+    并递增 _reset_generation(强制继续节点重新执行, 见 IS_CHANGED),
     使下一次全量提交从开头执行、在第一个继续节点重新停住。
 
     参数:
@@ -206,6 +213,8 @@ async def _handle_reset(request: web.Request) -> web.Response:
     """
     FallingTSContinueNode._released.clear()
     FallingTSContinueNode._data_cache.clear()
+    # 递增重置代际: 强制继续节点重新执行(见 IS_CHANGED), 避免同进程重跑时被全局执行缓存跳过
+    FallingTSContinueNode._reset_generation += 1
     return web.json_response({"status": "ok"})
 
 

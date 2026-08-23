@@ -13,6 +13,7 @@
 典型用法: 场景旋镜 原图 (前面) + 右面/后面/左面 生成图 (LoadImage 载入 output 已存文件) → 单张四向标注图。
 
 None 容忍: 四图 input 均为可选 (未连接/上游无值 = None → 该格渲染为底色空格, 四图全空输出 None);
+上游透传的非标准形态 (空 tuple / 列表包装 / 零批张量) 同样按无值处理 (该格空格), 绝不崩溃;
 font_size/padding/background_color None → 回退默认 (8.0 / 6 / #000000)。
 """
 
@@ -44,9 +45,24 @@ def _bg_rgb(color) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
-def _to_pil(img, width: int, height: int) -> Image.Image:
-    """IMAGE 张量 [B,H,W,C] 0..1 → PIL RGB (取首帧, 必要时 Lanczos 缩放到 width×height)。"""
-    arr = img[0].float().clamp(0.0, 1.0).cpu().numpy()
+def _first_frame(img) -> torch.Tensor | None:
+    """IMAGE 值 → 单帧 HxWxC 张量; None/空批/非张量 (含 tuple/list 包装) → None (安全兜底, 不崩溃)。
+
+    容忍上游任意形态: IMAGE 标准 [B,H,W,C] 批张量取首帧; [H,W,C] 单帧直接用;
+    tuple/list (如预览节点透传的空批) 取其中第一个张量元素; 其余一律 None (该格按空格处理)。
+    """
+    if isinstance(img, (tuple, list)):
+        img = next((x for x in img if isinstance(x, torch.Tensor)), None)
+    if not isinstance(img, torch.Tensor) or img.dim() < 2:
+        return None
+    if img.dim() == 4 and img.shape[0] == 0:
+        return None
+    return img[0] if img.dim() == 4 else img
+
+
+def _to_pil(img_hwc, width: int, height: int) -> Image.Image:
+    """单帧 HxWxC 0..1 张量 → PIL RGB (必要时 Lanczos 缩放到 width×height)。"""
+    arr = img_hwc.float().clamp(0.0, 1.0).cpu().numpy()
     im = Image.fromarray((arr * 255).astype(np.uint8))
     if im.size != (width, height):
         im = im.resize((width, height), Image.Resampling.LANCZOS)
@@ -97,18 +113,20 @@ class FallingTSImageCompositeNode:
         """统一尺寸 + 左上角标注 → 2×2 Z 字合成为单张图。
 
         None 容忍 (输入一律安全降级, 不崩溃):
-        - 某图 None (未连接/上游无值) → 该格渲染为底色空格 (不画标注), 布局不变;
-        - 四图全 None → 输出 None (透传, 下游 None 容忍);
+        - 某图 None (未连接/上游无值) 或 空批/非张量 (如扇出未选中分支经预览节点透传的 () 空 tuple)
+          → 该格渲染为底色空格 (不画标注), 布局不变;
+        - 四图全 None/空 → 输出 None (透传, 下游 None 容忍);
         - font_size None → 8.0; padding None → 6; background_color None → #000000; label None → 不画。
         """
-        images = (image1, image2, image3, image4)
+        # 统一归一化: 每个输入 → 单帧 HxWxC 张量, 或 None (None/空 tuple/非张量 一律 None, 该格按空格处理)
+        frames = [_first_frame(img) for img in (image1, image2, image3, image4)]
         labels = (label1, label2, label3, label4)
-        present = [img for img in images if img is not None]
+        present = [f for f in frames if f is not None]
         if not present:
             return (None,)
-        # 统一尺寸: 取非空图最大高/宽 (IMAGE 张量 = [B,H,W,C])
-        width = max(img.shape[2] for img in present)
-        height = max(img.shape[1] for img in present)
+        # 统一尺寸: 取非空图最大高/宽 (单帧 = [H,W,C])
+        height = max(f.shape[0] for f in present)
+        width = max(f.shape[1] for f in present)
         try:
             gap = int(padding)
         except (TypeError, ValueError):
@@ -120,11 +138,11 @@ class FallingTSImageCompositeNode:
         bg = _bg_rgb(background_color)
         margin = max(8, int(width * 0.02))
         tiles = []
-        for img, label in zip(images, labels):
-            if img is None:
+        for frame, label in zip(frames, labels):
+            if frame is None:
                 tiles.append(Image.new("RGB", (width, height), bg))
                 continue
-            tile = _to_pil(img, width, height)
+            tile = _to_pil(frame, width, height)
             text = (label or "").strip()
             if text:
                 size = max(14, int(width * font_ratio / 100.0))
