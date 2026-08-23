@@ -1,4 +1,4 @@
-// FallingTS 一对多选择节点前端联动 (多对一选择的镜像, 参考 selector.js 的 total/items 动态端口范式):
+// FallingTS 扇出选择节点前端联动 (多对一选择的镜像, 参考 selector.js 的 total/items 动态端口范式):
 // - total 组数 (最少 1) = 左侧输入端口数 (每组一个 input_i, 第 1 组在前第 2 组在后), 端口标签 = 输入N;
 // - items 组名列表(英文逗号分隔)变化时, 实时同步 selection 下拉选项 (选项 = 所有组名);
 // - 输出槽位: total × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名), 按 total×M 显隐;
@@ -13,7 +13,7 @@
 
 import { app } from "../../../scripts/app.js";
 
-const NODE_CLASS = "FallingTSOneToMany";
+const NODE_CLASS = "FallingTSFanout";
 const CONTINUE_CLASS = "FallingTSContinue";
 const MAX_GROUPS = 50;
 const MAX_OUTPUTS = 50;
@@ -35,7 +35,7 @@ function splitItems(text) {
 /**
  * 读取节点 total widget 的当前组数, 非法值回退默认, 再裁到 [1, MAX_GROUPS]。
  *
- * @param {object} node 一对多节点对象
+ * @param {object} node 扇出节点对象
  * @returns {number} 有效组数(1 ~ MAX_GROUPS)
  */
 function getTotal(node) {
@@ -102,7 +102,7 @@ function resolveSelectionIndex(names, selection) {
  * 槽位稳定性: 输入只从尾部增删 (widget 槽之后追加); 输出按 total×M 追加, 只从尾部增删,
  * 已有连线的槽位索引永不漂移。
  *
- * @param {object} node 一对多节点对象
+ * @param {object} node 扇出节点对象
  * @returns {void}
  */
 function syncNode(node) {
@@ -185,7 +185,7 @@ function syncNode(node) {
  * 否则新建节点异常高大。仅新建时生效(onNodeCreated): 加载工作流时 configure 恢复
  * 保存的高度, 不受影响。
  *
- * @param {object} node 一对多节点对象
+ * @param {object} node 扇出节点对象
  * @returns {void}
  */
 function fitHeight(node) {
@@ -198,8 +198,8 @@ function fitHeight(node) {
 
 // ─── 判断/链路工具 (与 selector.js / route.js 同款) ─────────────────────────
 
-/** 判断是否为「一对多」节点。 */
-function isOneToManyNode(node) {
+/** 判断是否为「扇出」节点。 */
+function isFanoutNode(node) {
   return node?.type === NODE_CLASS || node?.constructor?.comfyClass === NODE_CLASS;
 }
 
@@ -223,7 +223,7 @@ function getLink(graph, linkId) {
  * (遇到继续节点停止)。收集到的节点 ID 在 partial 提交时并入 targets, 让各组的选中分支真正执行。
  * selection 已连线时, 运行时值 (组名/索引) 执行时才确定, 无法预知选中哪条分支 -> 每组全部组名分支都收集。
  *
- * @param {object} node 一对多节点对象
+ * @param {object} node 扇出节点对象
  * @returns {string[]} 输出节点 ID 字符串数组(已去重); 一个都没有时返回空数组
  */
 function collectActiveBranchOutputs(node) {
@@ -269,7 +269,7 @@ function collectActiveBranchOutputs(node) {
 }
 
 /**
- * 收集图中所有一对多节点每组「选中组名」分支下游的输出节点(去重)。
+ * 收集图中所有扇出节点每组「选中组名」分支下游的输出节点(去重)。
  *
  * @param {object} graph 画布图对象
  * @returns {string[]} 输出节点 ID 字符串数组
@@ -277,18 +277,18 @@ function collectActiveBranchOutputs(node) {
 function collectAllTargets(graph) {
   const targets = new Set();
   for (const n of graph?._nodes ?? []) {
-    if (!isOneToManyNode(n)) continue;
+    if (!isFanoutNode(n)) continue;
     for (const t of collectActiveBranchOutputs(n)) targets.add(t);
   }
   return [...targets];
 }
 
 app.registerExtension({
-  name: "FallingTS.OneToMany",
+  name: "FallingTS.Fanout",
 
   /**
    * 扩展初始化钩子: 包装全局提交入口 app.queuePrompt。
-   * partial 提交(点「继续」, queueNodeIds 非空)时, 把图中每个一对多节点每组「选中组名」
+   * partial 提交(点「继续」, queueNodeIds 非空)时, 把图中每个扇出节点每组「选中组名」
    * 输出下游的输出节点并入 targets, 让各组的选中分支下游真正执行(预加载)。
    *
    * @returns {void}
@@ -317,7 +317,7 @@ app.registerExtension({
   },
 
   /**
-   * 节点定义注册前钩子: 给 FallingTSOneToMany 绑定 total/items → 输入端口/输出端口/下拉选项联动。
+   * 节点定义注册前钩子: 给 FallingTSFanout 绑定 total/items → 输入端口/输出端口/下拉选项联动。
    *
    * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
    * @param {object} nodeData 节点定义数据(来自 /object_info)

@@ -1,5 +1,5 @@
-# onemany/nodes.py
-"""FallingTS 一对多选择 (多对一选择的镜像, 参考多对一选择的 total 组范式):
+# fanout/nodes.py
+"""FallingTS 扇出选择 (多对一选择的镜像, 参考多对一选择的 total 组范式):
 items 组名列表(英文逗号分隔) + total 组数(最少 1) + selection 选中项(下拉框, 选项 = 组名, 可连线接多对一 选中项/索引);
 左侧输入端口 = 组数 (每组一个 input_i, 第 1 组在前第 2 组在后),
 右侧输出端口 = 组数 × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名)。
@@ -40,8 +40,8 @@ MAX_OUTPUTS = 50
 MISSING = object()
 
 
-class FallingTSOneToManyNode:
-    """一对多选择节点 (多对一的镜像): total 组数(最少 1) 动态展开左侧 input_1..input_total 输入端口
+class FallingTSFanoutNode:
+    """扇出选择节点 (多对一的镜像): total 组数(最少 1) 动态展开左侧 input_1..input_total 输入端口
     (每组一个), 右侧 total × 组名数量 动态展开 output_1..outputN 输出端口 (第 i 组 = 每个组名一个输出,
     端口标签循环为组名), selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项/索引) 选中第 k 个组名 ->
     第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None。
@@ -119,7 +119,7 @@ class FallingTSOneToManyNode:
     FUNCTION = "execute"
     CATEGORY = "FallingTS/工具"
     DESCRIPTION = (
-        "一对多选择 (多对一的镜像): items 逗号分隔组名, total 组数(最少 1, = 左侧输入端口数, 每组一个 input_i), "
+        "扇出选择 (多对一的镜像): items 逗号分隔组名, total 组数(最少 1, = 左侧输入端口数, 每组一个 input_i), "
         "右侧 total × 组名数量 个输出 (每组每个组名一个, 标签 = 组名), "
         "selection 选中项 (下拉框, 可连线接多对一 选中项/索引, 传索引直接选中所属索引的组名), 每组 input_i 路由到该组名对应的输出, 其余 None, 未连线为 None。"
     )
@@ -221,9 +221,9 @@ class FallingTSOneToManyNode:
 
 
 NODE_CLASS_MAPPINGS = {
-    "FallingTSOneToMany": FallingTSOneToManyNode,
+    "FallingTSFanout": FallingTSFanoutNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FallingTSOneToMany": "FallingTS 一对多选择 (total组)",
+    "FallingTSFanout": "FallingTS 扇出选择 (total组)",
 }

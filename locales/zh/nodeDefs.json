@@ -71,8 +71,8 @@
       }
     }
   },
-  "FallingTSOneToMany": {
-    "display_name": "FallingTS 一对多选择 (total组)",
+  "FallingTSFanout": {
+    "display_name": "FallingTS 扇出选择 (total组)",
     "description": "多对一选择的镜像: items 逗号分隔组名 (与多对一 items 同源), total 为组数 (最少 1, 最多 50) = 左侧输入端口数 (每组一个 input_i), 右侧输出 = 组数 × 组名数量 (每组每个组名一个, 标签 = 组名); selection 为选中项 下拉框 (选项 = 组名, 可连线直接接多对一 选中项/索引, 连线值优先), 选中第 k 个组名 → 每组 input_i 路由到该组该组名对应的输出, 第 i 组其余输出 None; partial 提交时每组选中组名输出下游输出节点真正执行 (前端增强)。",
     "inputs": {
       "total": {
