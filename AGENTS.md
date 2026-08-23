@@ -38,6 +38,8 @@ ComfyUI-FallingTS/
 │   ├── __init__.py
 │   ├── nodes.py                # FallingTSMarkDownTableNode MarkDown 数据表
 │   └── parser.py               # 表格解析
+├── fps/
+│   └── nodes.py                # FallingTSFrameRateConvertNode 帧率转换 (按目标帧率抽帧, 目标帧率未连接/None 原样透传)
 ├── composite/
 │   ├── __init__.py
 │   └── nodes.py                # FallingTSImageCompositeNode 四图合成 (2×2 带标注 Z 字排列: 4 图 + 4 标注 → 统一尺寸 → 左上角中文标注 → 2×2 合成单图)
@@ -77,19 +79,30 @@ ComfyUI-FallingTS/
 
 | 包 | 节点 | 说明 |
 |------|------|------|
-| proceed | FallingTSContinue | 继续节点 |
+| proceed | FallingTSContinue | 继续节点 (分段执行控制: any 输入 lazy + 节点缓存 + partial execution; 未放行时拉上游填缓存并阻塞下游, 点「继续」放行后上游不再重跑、用缓存继续下游。2030-场景旋镜 用于合成段: #1 原视角→76.any→73.image1, 73/74 常开、70/71/72 默认禁用; 全量 Run 只跑生成段(76 缓存原图+阻塞), 各角度生成好并启用 70/71/72 选图后点 76「继续」只跑合成段, 不重跑生成) |
 | route | FallingTSRoute | 路由节点 (total组路由, 参考分组开关: 1个 switch + total 组数, 每组 = 为假时_i/为真时_i 输入 + 输出_i) |
 | fanout | FallingTSFanout | 扇出选择 (多对一的镜像: items 逗号分隔组名(与多对一同源), total 组数(最少 1, 最多 50) = 左侧输入端口数(每组一个 input_i), 右侧输出 = 组数 × 组名数量(每组每个组名一个, 标签=组名), selection 选中项(下拉框, 选项=组名, 可连线直接接多对一 选中项组名/索引, 索引直接选中所属索引组名)选中第 k 个组名 → 每组 input_i 路由到该组该组名对应的输出, 第 i 组其余输出 None; partial 提交时每组选中组名输出下游输出节点真正执行; 提交时按 partial_execution_targets 拦截未选中分支: partial 提交剔除未选中组名槽位下游输出节点, 全量 Run(图无继续节点)显式列「全部输出节点-未选中分支下游输出节点」提交, 未选中分支下游根本不执行(selection 连线时值运行时才定, 不拦截, 靠下游 None 容忍兜底)) |
 | selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1), 左侧输入 = 组数 × 组名数量(第1组在前第2组在后), 下拉选一个组名, 右侧各组 选中值 输出各自该组名的输入, 顶部固定 选中项/索引) |
 | table | FallingTSTable | 通用表格 (Excel 式) |
 | switch | FallingTSSwitch | 分组开关 (total组) |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 |
-| composite | FallingTSImageComposite | 四图合成 (2×2 带标注 Z 字排列: 4 图 image1..4 + 4 标注 label1..4 (可连线, 默认 前面/右面/后面/左面), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 上排 前面(原图)/右面 下排 后面/左面 合成单图; 字号/间距/底色可调) |
+| fps | FallingTSFrameRateConvert | 帧率转换 (图像序列按目标帧率抽帧: 步长 = max(1, round(source_fps/target_fps)), 每 stride 帧保留 1 帧, stride=1 原样透传; 目标帧率未连接/None 时原样透传不抽帧; 音频不动, 配合 CreateVideo 的 fps 参数输出) |
+| composite | FallingTSImageComposite | 四图合成 (2×2 带标注 Z 字排列: 4 图 image1..4 (optional, 未连接/None = 该格用底色空白占位, 全空输出 None) + 4 标注 label1..4 (可连线, 默认 前面/右面/后面/左面, None=默认), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 上排 前面(原图)/右面 下排 后面/左面 合成单图; 字号/间距/底色 None=默认 8/6/#000000, 底色非法值回退黑色) |
 | preview-image | PreviewImageSave | 图片预览保存 |
 | preview-video | PreviewVideo | 视频预览保存 |
 | preview-audio | PreviewAudioSave | 音频预览保存 |
 
 注:`preview-image` / `preview-video` / `preview-audio` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
+
+### None 容忍约定(全部 12 节点)
+
+所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退(默认值/跳过/透传/回放缓存),**绝不崩溃**。要点:
+
+- **路由/选择类**(route/switch/fanout/selector):`_split_items`/`_clamp_total`/`_resolve_index` 等助手对 None items/total/selection 回退默认(1 组、第 0 项),未选中分支输出 None 由下游兜底;
+- **数据类**(table/mdtable):`normalize_table`/`normalize_state` 对 None 数据回退空表,不报错;
+- **预览类**(preview-image/preview-video/preview-audio):images/media 为 None → 回放 `_last_cache` 上次预览(无缓存则透传),不清缓存;
+- **合成类**(composite):image1..4 全部 optional,缺图格用底色空白占位,全空输出 None;
+- **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。
 
 ## 软链接映射
 

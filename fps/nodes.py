@@ -56,19 +56,24 @@ class FallingTSFrameRateConvertNode:
         """节点执行入口: 按帧率比抽帧。
 
         抽帧步长 = max(1, round(source_fps / target_fps)); stride == 1 时原样返回。
-        images 为 None (未连接/上游失败) 时透传 None。
+        images 为 None (未连接/上游失败) 时透传 None;
+        source_fps/target_fps 任一为 None (未连接) 时无法计算帧率比, 按原样透传 (stride=1)。
 
         参数:
             images (torch.Tensor | None): [B,H,W,3] 图像序列;
-            source_fps (float): 源帧率;
-            target_fps (float): 目标帧率。
+            source_fps (float | None): 源帧率 (None 视为未连接, 原样透传);
+            target_fps (float | None): 目标帧率 (None 视为未连接, 原样透传)。
 
         返回:
             tuple[torch.Tensor | None]: 抽帧后的图像序列。
         """
         if images is None:
             return (None,)
-        stride = max(1, round(source_fps / target_fps))
+        try:
+            stride = max(1, round(source_fps / target_fps))
+        except (TypeError, ZeroDivisionError):
+            # source_fps / target_fps 任一为 None (未连接) 或非法 → 无法算帧率比, 原样透传
+            return (images,)
         if stride == 1 or images.shape[0] <= 1:
             return (images,)
         return (images[::stride],)
