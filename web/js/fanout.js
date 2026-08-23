@@ -10,6 +10,11 @@
 //   节点左侧只剩 输入1..输入total + widget 控件;
 // - 关键(预加载): partial 提交(点「继续」)时, 把本节点每组「选中组名」对应的输出下游的输出节点
 //   并入 targets, 让各组的选中分支下游真正执行 —— 与 route.js 补假分支同一机制。
+// - 关键(拦截): 提交时按 partial_execution_targets(「继续」同款机制)拦截未选中分支 ——
+//   未选中组名槽位下游的输出节点不进 targets, 引擎不调度, 根本不执行(不产生 None 下游):
+//   - partial 提交(点「继续」): 从 targets 中剔除未选中分支下游输出节点;
+//   - 全量 Run(图中无继续节点): 显式列出「全部输出节点 - 未选中分支下游输出节点」提交;
+//   - selection 已连线时值运行时才确定, 无法预知选中哪条分支 -> 不拦截, 靠下游 None 容忍兜底。
 
 import { app } from "../../../scripts/app.js";
 
@@ -283,13 +288,104 @@ function collectAllTargets(graph) {
   return [...targets];
 }
 
+/**
+ * 收集图中所有输出节点(保存/预览等终端节点)的 ID(去重)。
+ *
+ * @param {object} graph 画布图对象
+ * @returns {string[]} 输出节点 ID 字符串数组
+ */
+function collectAllOutputNodes(graph) {
+  const ids = new Set();
+  for (const n of graph?._nodes ?? []) {
+    if (isOutputNode(n)) ids.add(String(n.id));
+  }
+  return [...ids];
+}
+
+/**
+ * 计算应被拦截(不进执行 targets)的「未选中组名槽位下游输出节点」ID。
+ *
+ * 规则(保守): 输出节点在某扇出节点未选中槽位下游、且不在任何扇出节点选中槽位下游 -> 拦截;
+ * 选中/未选中分支都下游到它(混合)或只在选中分支下游 -> 保留(执行, 收 None 由下游容忍兜底)。
+ * selection 已连线时运行时值(组名/索引)才确定, 无法预知选中哪条分支 -> 该节点不做拦截。
+ *
+ * @param {object} graph 画布图对象
+ * @returns {string[]} 被拦截的输出节点 ID 字符串数组
+ */
+function collectBlockedOutputNodes(graph) {
+  const fanouts = (graph?._nodes ?? []).filter(isFanoutNode);
+  if (!fanouts.length) return [];
+  const unselSets = [];
+  const selSets = [];
+  for (const f of fanouts) {
+    const selSlot = (f.inputs ?? []).find((i) => i.name === "selection");
+    const names = splitItems(f.widgets?.find((w) => w.name === "items")?.value);
+    const M = names.length;
+    const unsel = new Set();
+    const sel = new Set();
+    // selection 未连线且组名非空: 选中项 = widget 当前值 (与后端 _resolve_index 一致)
+    if (selSlot?.link == null && M) {
+      const total = getTotal(f);
+      const k = resolveSelectionIndex(names, f.widgets?.find((w) => w.name === "selection")?.value);
+      /** 从某输出槽下游 BFS 收集节点(遇到继续节点停止, 与 collectActiveBranchOutputs 同款)。 */
+      const bfs = (slot, set) => {
+        const o = f.outputs?.[slot];
+        if (!o) return;
+        const visited = new Set();
+        const queue = [];
+        for (const linkId of o.links ?? []) {
+          const link = getLink(f.graph, linkId);
+          if (link) queue.push(link.target_id);
+        }
+        while (queue.length) {
+          const nid = queue.shift();
+          if (visited.has(nid)) continue;
+          visited.add(nid);
+          const n = f.graph?.getNodeById?.(nid);
+          if (!n) continue;
+          if (isContinueNode(n)) continue; /* 遇到继续: 本段到此为止 */
+          set.add(nid);
+          for (const out of n.outputs ?? []) {
+            for (const linkId of out.links ?? []) {
+              const link = getLink(n.graph, linkId);
+              if (link) queue.push(link.target_id);
+            }
+          }
+        }
+      };
+      for (let i = 0; i < total; i++) {
+        for (let s = 0; s < M; s++) {
+          bfs(i * M + s, s === k ? sel : unsel);
+        }
+      }
+    }
+    unselSets.push(unsel);
+    selSets.push(sel);
+  }
+  const blocked = new Set();
+  for (const n of graph?._nodes ?? []) {
+    if (!isOutputNode(n)) continue;
+    const id = String(n.id);
+    let inUnsel = false;
+    let inSel = false;
+    for (let j = 0; j < unselSets.length; j++) {
+      if (unselSets[j].has(id)) inUnsel = true;
+      if (selSets[j].has(id)) inSel = true;
+    }
+    if (inUnsel && !inSel) blocked.add(id);
+  }
+  return [...blocked];
+}
+
 app.registerExtension({
   name: "FallingTS.Fanout",
 
   /**
    * 扩展初始化钩子: 包装全局提交入口 app.queuePrompt。
-   * partial 提交(点「继续」, queueNodeIds 非空)时, 把图中每个扇出节点每组「选中组名」
-   * 输出下游的输出节点并入 targets, 让各组的选中分支下游真正执行(预加载)。
+   * - partial 提交(点「继续」, queueNodeIds 非空): 把每个扇出节点每组「选中组名」输出下游的输出节点
+   *   并入 targets(预加载), 再剔除未选中分支下游输出节点(拦截);
+   * - 全量 Run(queueNodeIds 为空且图中无继续节点): 显式列出「全部输出节点 - 未选中分支下游输出节点」
+   *   提交, 未选中分支下游不进调度表, 根本不执行; 图含继续节点时保持原分段行为(全量提交)。
    *
    * @returns {void}
    */
@@ -297,7 +393,7 @@ app.registerExtension({
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
     /**
-     * 包装 queuePrompt: 只处理 partial 提交分支(队列 NodeIds 非空), 并入选中分支 targets。
+     * 包装 queuePrompt: 按 partial_execution_targets(「继续」同款机制)预加载选中分支 + 拦截未选中分支。
      *
      * @param {number} number 提交次数
      * @param {number} batch 批次数
@@ -305,11 +401,22 @@ app.registerExtension({
      * @returns {Promise} 原始 queuePrompt 的返回值
      */
     app.queuePrompt = async function (number, batch, queueNodeIds) {
+      const graph = app.graph ?? app.rootGraph;
+      const blocked = collectBlockedOutputNodes(graph);
       if (queueNodeIds?.length) {
-        const graph = app.graph ?? app.rootGraph;
         const targets = collectAllTargets(graph);
         if (targets.length) {
           queueNodeIds = [...new Set([...queueNodeIds, ...targets])];
+        }
+        if (blocked.length) {
+          const blockedSet = new Set(blocked);
+          queueNodeIds = queueNodeIds.filter((id) => !blockedSet.has(id));
+        }
+      } else if (blocked.length && !graph?._nodes?.some(isContinueNode)) {
+        const blockedSet = new Set(blocked);
+        const kept = collectAllOutputNodes(graph).filter((id) => !blockedSet.has(id));
+        if (kept.length) {
+          queueNodeIds = kept;
         }
       }
       return orig(number, batch, queueNodeIds);
