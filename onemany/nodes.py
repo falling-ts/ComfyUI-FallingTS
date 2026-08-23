@@ -2,14 +2,17 @@
 """FallingTS 一对多选择 (多对一选择的镜像, 参考多对一选择的 total 组范式):
 items 组名列表(英文逗号分隔) + total 组数(最少 1) + selection 选中项(下拉框, 选项 = 组名, 可连线接多对一 选中项);
 左侧输入端口 = 组数 (每组一个 input_i, 第 1 组在前第 2 组在后),
-右侧输出端口 = 组数 × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名)。
+右侧顶部固定 2 个输出 selected(选中项)/index(索引) (与多对一同范式),
+其后输出端口 = 组数 × 组名数量 (第 i 组 = 每个组名一个输出, 端口标签循环为组名)。
 
 行为 (多对一的镜像):
 - total 为组数 (最少 1, 最多 MAX_GROUPS), 左侧 total 个输入端口 input_1..input_total, 每组一个;
-- items 组名列表有 M 个组名时, 右侧共 total × M 个输出端口 (最多 MAX_OUTPUTS):
+- items 组名列表有 M 个组名时, 右侧共 total × M 个动态输出端口 (最多 MAX_OUTPUTS):
   第 i 组 = 每个组名一个输出, 端口标签循环为组名列表内容;
 - selection 选中项 = 下拉框选中的组名 (选项 = 所有组名, 可连线接多对一 选中项), 选中第 k 个组名:
   第 i 组的输入值 input_i 路由到第 i 组中该组名对应的输出, 第 i 组其余输出 None;
+- 右侧顶部固定 2 个输出: selected (选中项, 选中组名的文本) + index (选中组名的索引, 从 0 起),
+  与多对一选择同一范式, 供下游读取当前选中的线路;
 - selection 失配(旧工作流/手动改动)回退第一组名;
 - 未连线时各组输入为 None, 各组输出均为 None。
 """
@@ -41,8 +44,9 @@ MISSING = object()
 
 class FallingTSOneToManyNode:
     """一对多选择节点 (多对一的镜像): total 组数(最少 1) 动态展开左侧 input_1..input_total 输入端口
-    (每组一个), 右侧 total × 组名数量 动态展开 output_1..outputN 输出端口 (第 i 组 = 每个组名一个输出,
-    端口标签循环为组名), selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项) 选中第 k 个组名 ->
+    (每组一个), 右侧顶部固定 2 个输出 selected(选中项)/index(索引), 其后 total × 组名数量 动态展开
+    output_1..outputN 输出端口 (第 i 组 = 每个组名一个输出, 端口标签循环为组名),
+    selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项) 选中第 k 个组名 ->
     第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None。
 
     行为:
@@ -50,7 +54,8 @@ class FallingTSOneToManyNode:
       端口内部名称仍为 outputN 用于定位;
     - 左侧第 i 组 = input_i (1 个输入, 每组一个, 第 1 组在前第 2 组在后);
     - selection 选中第 k 个组名 -> 第 i 组 output[(i-1)×M+k+1] = input_i 的值, 第 i 组其余输出 None;
-    - 右侧: output_1..outputN (N = total × M) 按 total/M 追加, 前端按 total×M 显隐, 按 items 组名标注;
+    - 右侧: 前 2 个固定 selected (选中项, STRING) / index (索引, INT, 从 0 起),
+      其后 output_1..outputN (N = total × M) 按 total×M 追加, 前端按 total×M 显隐, 按 items 组名标注;
     - 未连线时各组输入为 None, 各组输出均为 None。
     """
 
@@ -107,23 +112,26 @@ class FallingTSOneToManyNode:
             "optional": optional,
         }
 
-    # 输出槽位: output_1..output_MAX_OUTPUTS (total × M, 前端按 total×M 显隐, 按 items 组名标注);
-    # 增删只动尾部, 已有连线的槽位永不漂移。
-    RETURN_TYPES = ("*",) * MAX_OUTPUTS
-    RETURN_NAMES = tuple(f"output_{i}" for i in range(1, MAX_OUTPUTS + 1))
-    OUTPUT_TOOLTIPS = tuple(
-        f"第 i 组 第 j 个组名 输出 (ANY): 该组选中组名对应时 = 该组 input 值, 否则 None"
-        for i in range(1, MAX_OUTPUTS + 1)
+    # 输出槽位: 前 2 个固定 selected(选中项)/index(索引), 其后 output_1..output_MAX_OUTPUTS
+    # (total × M, 前端按 total×M 显隐, 按 items 组名标注); 增删只动尾部, 已有连线的槽位永不漂移。
+    RETURN_TYPES = ("STRING", "INT") + ("*",) * MAX_OUTPUTS
+    RETURN_NAMES = ("selected", "index") + tuple(f"output_{i}" for i in range(1, MAX_OUTPUTS + 1))
+    OUTPUT_TOOLTIPS = (
+        (
+            "选中项: 选中组名的文本 (STRING, 与下拉框显示一致)",
+            "索引: 选中组名在组名列表中的索引, 从 0 开始 (INT)",
+        )
+        + tuple(f"第 i 组 第 j 个组名 输出 (ANY): 该组选中组名对应时 = 该组 input 值, 否则 None" for i in range(1, MAX_OUTPUTS + 1))
     )
     FUNCTION = "execute"
     CATEGORY = "FallingTS/工具"
     DESCRIPTION = (
         "一对多选择 (多对一的镜像): items 逗号分隔组名, total 组数(最少 1, = 左侧输入端口数, 每组一个 input_i), "
-        "右侧 total × 组名数量 个输出 (每组每个组名一个, 标签 = 组名), "
+        "右侧顶部固定 选中项/索引, 其后 total × 组名数量 个输出 (每组每个组名一个, 标签 = 组名), "
         "selection 选中项 (下拉框, 可连线接多对一 选中项), 每组 input_i 路由到该组名对应的输出, 其余 None, 未连线为 None。"
     )
     SEARCH_ALIASES = [
-        "一对多", "多选多", "扇出", "广播", "路由", "one-to-many", "fanout", "group", "组名", "多组", "total", "items", "选中项",
+        "一对多", "多选多", "扇出", "广播", "路由", "one-to-many", "fanout", "group", "组名", "多组", "total", "items", "选中项", "索引",
     ]
 
     @classmethod
@@ -186,7 +194,7 @@ class FallingTSOneToManyNode:
         return need
 
     def execute(self, items: str = "", total: int = 2, selection: str = "", **kwargs):
-        """节点执行入口: 各组 input_i 路由到该组选中组名对应的输出, 第 i 组其余输出 None。
+        """节点执行入口: 各组 input_i 路由到该组选中组名对应的输出, 第 i 组其余输出 None, 附选中项文本与索引。
 
         参数:
             items (str): 组名列表 (逗号分隔), 提供各输出端口标签 (M 个组名);
@@ -195,9 +203,10 @@ class FallingTSOneToManyNode:
             **kwargs: 各 inputN 输入值 (未连线/未求值时键不存在或为 None)。
 
         返回:
-            tuple: 长度 MAX_OUTPUTS, 第 i 组 (i=1..total) 的 M 个输出中,
+            tuple: 前 2 个为 (selected 选中组名文本, index 选中组名索引, 从 0 起),
+            其后 MAX_OUTPUTS 个中, 第 i 组 (i=1..total) 的 M 个输出里,
             选中组名 (selection 对应索引 k) 对应的输出 = 该组 input_i 的值, 其余 None;
-            组数之外的组与组名数量不足 MAX_OUTPUTS 的尾部为 None。
+            组数之外的组与组名数量不足 MAX_OUTPUTS 的尾部为 None; 列表空/失配时回退第一组名。
         """
         options = _split_items(items)
         total = self._clamp_total(total)
@@ -211,7 +220,8 @@ class FallingTSOneToManyNode:
                 out.append(v if j == k else None)
         while len(out) < MAX_OUTPUTS:
             out.append(None)
-        return tuple(out[:MAX_OUTPUTS])
+        selected_text = options[k] if options else ""
+        return (selected_text, k, *out[:MAX_OUTPUTS])
 
 
 NODE_CLASS_MAPPINGS = {
