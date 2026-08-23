@@ -61,7 +61,7 @@ ComfyUI-FallingTS/
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
         ├── route.js                    # total组路由节点: total 动态端口 + 假分支真正执行
-        ├── onemany.js                  # 一对多选择(多对一镜像): total=组数=输入端口数(input_i 每组一个) + 输出=组数×组名数(标签=组名) + 选中项下拉选项联动 + 选中组分支真正执行
+        ├── onemany.js                  # 一对多选择(多对一镜像): total=组数=输入端口数(input_i 每组一个) + 输出=组数×组名数(标签=组名) + 选中项下拉选项联动 + 选中组分支真正执行 + 旧版 value 遗留输入槽加载时自动清理
         ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
         ├── table_lookup.js             # 通用表格 Excel 式控件

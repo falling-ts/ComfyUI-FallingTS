@@ -5,6 +5,8 @@
 //   增删只动尾部, 已有连线的槽位索引永不漂移;
 // - selection 选中项 (下拉框, 选项 = 组名, 可连线接多对一 选中项), 选中第 k 个组名 ->
 //   第 i 组 input_i 路由到第 i 组该组名对应的输出, 第 i 组其余输出 None;
+// - 陈旧输入槽自愈: 旧版单一输入 value 遗留槽 (保存的工作流会原样保留) 在加载/同步时自动移除,
+//   节点左侧只剩 组1..组total + widget 控件;
 // - 关键(预加载): partial 提交(点「继续」)时, 把本节点每组「选中组名」对应的输出下游的输出节点
 //   并入 targets, 让各组的选中分支下游真正执行 —— 与 route.js 补假分支同一机制。
 
@@ -88,7 +90,8 @@ function resolveSelectionIndex(names, selection) {
 }
 
 /**
- * 按 total + items 对齐节点: 组输入端口 (total 个, 每组一个) + total×M 输出端口 (按组名标注) + 下拉选项。
+ * 按 total + items 对齐节点: 组输入端口 (total 个, 每组一个) + total×M 输出端口 (按组名标注) + 下拉选项
+ * + 陈旧非 widget 输入槽清理 (旧版 value 遗留)。
  *
  * 槽位稳定性: 输入只从尾部增删 (widget 槽之后追加); 输出按 total×M 追加, 只从尾部增删,
  * 已有连线的槽位索引永不漂移。
@@ -116,7 +119,16 @@ function syncNode(node) {
   applyTo(node.widgets?.find((w) => w.name === "selection"));
   applyTo(getStoreWidget(node, "selection"));
 
-  // 2) 动态组输入端口 input1..input_total (每组一个, 最多 MAX_GROUPS)
+  // 2) 陈旧输入槽清理: 本节点合法输入 = 3 个 widget 槽 (items/total/selection) + total 个组端口
+  //    (input1..input_total); 其余非 widget 槽 (如旧版单一输入 value 遗留, 保存的工作流会原样保留)
+  //    直接移除, 加载/同步时自愈, 左侧只剩 组1..组total
+  for (const slot of [...(node.inputs ?? [])]) {
+    if (!slot.widget && !/^input\d+$/.test(slot.name || "")) {
+      node.removeInput(node.inputs.indexOf(slot));
+    }
+  }
+
+  // 3) 动态组输入端口 input1..input_total (每组一个, 最多 MAX_GROUPS)
   //    类型恒为 * (ANY); 端口标签 = 组号 (组1..组total), 内部名称保持 inputN 供后端定位
   let dyn = (node.inputs ?? []).filter(isDynamicInput);
   while (dyn.length > total) {
@@ -133,7 +145,7 @@ function syncNode(node) {
     dyn[i].localized_name = `组${i + 1}`;
   }
 
-  // 3) 输出端口: total × M (第 i 组 = 每个组名一个输出, 标签循环为组名, 最多 MAX_OUTPUTS, 只动尾部)
+  // 4) 输出端口: total × M (第 i 组 = 每个组名一个输出, 标签循环为组名, 最多 MAX_OUTPUTS, 只动尾部)
   //    后端声明 output_1..output_MAX_OUTPUTS, 未使用的端口被删除, 不进入 prompt
   const wantOutputs = M ? Math.min(total * M, MAX_OUTPUTS) : 0;
   while ((node.outputs ?? []).length > wantOutputs) {
