@@ -19,6 +19,7 @@ import string
 
 from PIL import Image
 import numpy as np
+import torch
 
 from aiohttp import web
 from server import PromptServer
@@ -54,7 +55,7 @@ class PreviewImageSaveNode:
         """
         return {
             "required": {
-                "images": ("IMAGE", {"tooltip": "要预览/保存的图片 (None = 无值, 如扇出未选中分支, 跳过预览)。"}),
+                "images": ("IMAGE", {"tooltip": "要预览/保存的图片 (None = 无值, 如扇出未选中分支, 跳过预览, 透传该节点最近一次预览的图供下游合成)。"}),
                 "filename_prefix": (
                     "STRING",
                     {
@@ -159,6 +160,28 @@ class PreviewImageSaveNode:
             with open(full_path, "wb") as f:
                 f.write(encoded)
 
+    @staticmethod
+    def _last_images(id) -> "torch.Tensor | None":
+        """取该节点最近一次预览的图片, 重组为 BxHxWxC 批张量 (来自 _last_output 缓存); 无缓存返回 None。
+
+        用于 None 透传: 本节点本次没有新图 (如扇出未选中分支) 时, 把该节点上一次预览的图透传给下游
+        (如四图合成), 让下游能拿到该面「之前预览过」的图进入合成, 而非黑空格。
+
+        参数:
+            id (str | None): 节点唯一 ID, 用作缓存键。
+
+        返回:
+            torch.Tensor | None: BxHxWxC 批张量; 无缓存 (从未预览过) 或形状不一致无法堆叠时 None (下游按无值处理)。
+        """
+        cache = _last_output.get(id)
+        imgs = cache.get("images") if cache else None
+        if not imgs or not all(isinstance(x, torch.Tensor) for x in imgs):
+            return None
+        try:
+            return torch.stack(imgs)
+        except RuntimeError:
+            return None
+
     def execute(
         self,
         images,
@@ -178,7 +201,7 @@ class PreviewImageSaveNode:
         (按钮读取它们), 本方法不用于保存。
 
         参数:
-            images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 透传 None(下游按无值处理);
+            images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 并透传本节点最近一次预览的图(下游可拿到该面之前预览的图进入合成; 从未预览过则透传 None, 下游按无值处理);
             filename_prefix (str, 默认 "preview"): 输出文件名前缀(控件, 保存时以按钮 POST 的为准);
             format (str, 默认 "png"): png/exr(控件);
             bit_depth (str, 默认 "8-bit"): 位深(控件);
@@ -191,9 +214,11 @@ class PreviewImageSaveNode:
             dict: {"ui": {"images": [temp 预览记录...]}, "result": (images,)}。
         """
         # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览记录
-        # (temp 文件仍在, 原预览保持显示), 透传 None (下游按无值处理), 不更新「保存」缓存, 不崩溃
+        # (temp 文件仍在, 原预览保持显示); 透传本节点【最近一次预览的图】(下游如四图合成能拿到该面
+        # 之前预览过的图进入合成, 未选中的面不再是黑空格); 从未预览过则透传 None (下游按无值处理);
+        # 不更新「保存」缓存, 不崩溃
         if images is None:
-            return {"ui": {"images": _last_ui.get(id, [])}, "result": (None,)}
+            return {"ui": {"images": _last_ui.get(id, [])}, "result": (self._last_images(id),)}
 
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
         # filename_prefix 一并缓存: 该输入可能被上游连线(如 MDTable 的 ID 列),

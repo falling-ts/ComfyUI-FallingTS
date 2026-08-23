@@ -88,7 +88,7 @@ ComfyUI-FallingTS/
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 |
 | fps | FallingTSFrameRateConvert | 帧率转换 (图像序列按目标帧率抽帧: 步长 = max(1, round(source_fps/target_fps)), 每 stride 帧保留 1 帧, stride=1 原样透传; 目标帧率未连接/None 时原样透传不抽帧; 音频不动, 配合 CreateVideo 的 fps 参数输出) |
 | composite | FallingTSImageComposite | 四图合成 (2×2 带标注 Z 字排列: 4 图 image1..4 (optional, 未连接/None = 该格用底色空白占位, 全空输出 None) + 4 标注 label1..4 (可连线, 默认 前面/右面/后面/左面, None=默认), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 上排 前面(原图)/右面 下排 后面/左面 合成单图; 字号/间距/底色 None=默认 8/6/#000000, 底色非法值回退黑色) |
-| preview-image | PreviewImageSave | 图片预览保存 |
+| preview-image | PreviewImageSave | 图片预览保存 (始终预览 temp, 点「保存」才写 output 同名覆盖无序号; images=None 如扇出未选中分支 → 回放上次预览 + **透传该节点最近一次预览的图**供下游合成, 从未预览则透传 None) |
 | preview-video | PreviewVideo | 视频预览保存 |
 | preview-audio | PreviewAudioSave | 音频预览保存 |
 
@@ -100,7 +100,9 @@ ComfyUI-FallingTS/
 
 - **路由/选择类**(route/switch/fanout/selector):`_split_items`/`_clamp_total`/`_resolve_index` 等助手对 None items/total/selection 回退默认(1 组、第 0 项),未选中分支输出 None 由下游兜底;
 - **数据类**(table/mdtable):`normalize_table`/`normalize_state` 对 None 数据回退空表,不报错;
-- **预览类**(preview-image/preview-video/preview-audio):images/media 为 None → 回放 `_last_cache` 上次预览(无缓存则透传),不清缓存;透传值一律为 **None(透传 `(None,)`/`IO.NodeOutput(None)`),绝不透传空 tuple `()`** —— 空 tuple 会被下游当合法值走 `.shape`/迭代而崩溃;
+- **预览类**(preview-image/preview-video/preview-audio):images/media 为 None → 回放 `_last_cache` 上次预览(保持原预览不清空),不清缓存;**绝不透传空 tuple `()`**(会被下游当合法值走 `.shape`/迭代而崩溃)。细分:
+  - **preview-image**:None 时透传**该节点最近一次预览的图**(`_last_images`,重组为 BxHxWxC 批张量),让下游(如四图合成)拿到该面「之前预览过」的图进入合成、未选中面不再是黑空格;从未预览过则透传 None(下游按无值处理);
+  - **preview-video / preview-audio**:None 时透传 None(`IO.NodeOutput(None)`,下游按无值处理)。
 - **合成类**(composite):image1..4 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → 该格用底色空白占位;四图全无值输出 None(绝不崩溃);font_size/padding/background_color None → 默认 8.0/6/#000000;
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
