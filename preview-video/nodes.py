@@ -62,26 +62,34 @@ class PreviewVideoNode(IO.ComfyNode):
     def execute(cls, video, filename_prefix: str = "video", prompt=None, extra_pnginfo=None) -> IO.NodeOutput:
         """节点执行入口: 把视频编码为 mp4 写入临时目录并在前端播放, 同时缓存供「保存」直接写 output。
 
-        逻辑: 视频为空则报错; 取尺寸生成随机前缀文件名, 经 folder_paths 得到临时目录保存路径,
+        逻辑: 视频为 None (如扇出节点未选中分支输出 = 无值) 跳过预览/缓存, 透传 None;
+        否则取尺寸生成随机前缀文件名, 经 folder_paths 得到临时目录保存路径,
         以 MP4 + AUTO 编码保存, 返回 UI.PreviewVideo 让前端播放临时文件。
         同时把 video/filename_prefix 缓存进 _last_output[unique_id] —— 点「保存」按钮,
         前端 POST 到 /preview-video/save/{node_id}, 后端直接用这份缓存写 output, 【不重跑工作流】。
 
         参数:
-            video (Video): 要预览的视频对象(惰性内存对象)。
+            video (Video|None): 要预览的视频对象(惰性内存对象); None (如扇出未选中分支) 跳过预览/缓存。
             filename_prefix (str, 默认 "video"): 保存文件名前缀(控件; 若被上游连线,
                 widget 只是占位符, 本参数为实际接收值, 保存时以此为准)。
             prompt (dict|None): 工作流 prompt(预留元数据)。
             extra_pnginfo (dict|None): 额外元数据(预留)。
 
         返回:
-            IO.NodeOutput: 视频输出 + UI.PreviewVideo 预览事件(指向 temp 目录文件)。
-
-        异常:
-            ValueError: video 为 None 时抛出。
+            IO.NodeOutput: 视频输出 + UI.PreviewVideo 预览事件(指向 temp 目录文件);
+            video 为 None 时回放上一次预览事件(保持原预览不清空), 透传 None。
         """
+        # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览事件
+        # (temp 文件仍在, 原预览保持), 透传 None, 不更新「保存」缓存
         if video is None:
-            raise ValueError("PreviewVideo: input video is None")
+            nid = getattr(cls.hidden, "unique_id", None)
+            cached = _last_output.get(str(nid)) if nid else None
+            if cached and cached.get("file"):
+                return IO.NodeOutput(
+                    None,
+                    ui=UI.PreviewVideo([UI.SavedResult(cached["file"], cached["subfolder"], IO.FolderType.temp)]),
+                )
+            return IO.NodeOutput(None)
 
         width, height = video.get_dimensions()
         prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
@@ -106,6 +114,8 @@ class PreviewVideoNode(IO.ComfyNode):
                 "video": video,
                 "filename_prefix": filename_prefix,
                 "prompt": prompt,
+                "file": file,
+                "subfolder": subfolder,
             }
 
         return IO.NodeOutput(video, ui=UI.PreviewVideo([UI.SavedResult(file, subfolder, IO.FolderType.temp)]))

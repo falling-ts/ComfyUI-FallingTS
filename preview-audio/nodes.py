@@ -155,7 +155,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                 "as {filename_prefix}.{format} (no sequence suffix, overwrites same name)."
             ),
             inputs=[
-                IO.Audio.Input("audio", tooltip="要预览/保存的音频。"),
+                IO.Audio.Input("audio", tooltip="要预览/保存的音频 (None = 无值, 如扇出未选中分支, 跳过预览)。"),
                 IO.String.Input(
                     "filename_prefix",
                     default="audio",
@@ -185,24 +185,29 @@ class PreviewAudioSaveNode(IO.ComfyNode):
     def execute(cls, audio, filename_prefix: str = "audio", format: dict | None = None) -> IO.NodeOutput:
         """节点执行入口: 生成 temp 预览, 并把最近一次音频数据缓存到后端供「保存」直接写 output。
 
-        逻辑: 音频为空则报错; 返回 UI.PreviewAudio 让前端播放 temp 文件;
+        逻辑: 音频为 None (如扇出节点未选中分支输出 = 无值) 跳过预览/缓存, 透传 None;
+        否则返回 UI.PreviewAudio 让前端播放 temp 文件;
         把 audio/filename_prefix/format 存进 _last_output[id] —— 之后点「保存」按钮,
         前端把 文件名/格式/质量 POST 过来, 后端直接用这份缓存写 output, 【不重跑工作流】。
 
         参数:
-            audio (dict): 音频对象, 含 waveform 与 sample_rate。
+            audio (dict|None): 音频对象, 含 waveform 与 sample_rate; None (如扇出未选中分支) 跳过预览/缓存。
             filename_prefix (str, 默认 "audio"): 输出文件名前缀(控件; 若被上游连线,
                 widget 只是占位符, 本参数为实际接收值, 保存时以此为准)。
             format (dict|None): {format, quality}(控件)。
 
         返回:
-            IO.NodeOutput: 音频输出 + UI.PreviewAudio 预览事件(指向 temp 目录文件)。
-
-        异常:
-            ValueError: audio 为 None 时抛出。
+            IO.NodeOutput: 音频输出 + UI.PreviewAudio 预览事件(指向 temp 目录文件);
+            audio 为 None 时回放上一次预览事件(保持原预览不清空), 透传 None。
         """
+        # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览事件,
+        # 透传 None, 不更新「保存」缓存
         if audio is None:
-            raise ValueError("PreviewAudio: input audio is None (source may have no audio track).")
+            nid = getattr(cls.hidden, "unique_id", None)
+            cached = _last_output.get(str(nid)) if nid else None
+            if cached and cached.get("audio") is not None:
+                return IO.NodeOutput(None, ui=UI.PreviewAudio(cached["audio"], cls=cls))
+            return IO.NodeOutput(None)
 
         # 缓存最近一次预览的音频(供「保存」直接写 output, 无需重跑)
         nid = getattr(cls.hidden, "unique_id", None)

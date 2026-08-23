@@ -31,6 +31,10 @@ from comfy_extras.nodes_images import _encode_image, inject_png_metadata, inject
 # 点「保存」时前端把控件配置 POST 过来, 后端直接用这里的缓存写 output(无需重跑工作流)
 _last_output: dict[str, dict] = {}
 
+# 最近一次预览的 UI 记录缓存: node_id -> ui["images"] 列表(指向 temp 目录文件)
+# 输入为 None (如扇出未选中分支) 时回放此列表, 保持原有预览不被清空
+_last_ui: dict[str, list] = {}
+
 
 class PreviewImageSaveNode:
     """始终预览 + 点「保存」才写 output(同名覆盖, 无序号)。"""
@@ -50,7 +54,7 @@ class PreviewImageSaveNode:
         """
         return {
             "required": {
-                "images": ("IMAGE", {"tooltip": "要预览/保存的图片。"}),
+                "images": ("IMAGE", {"tooltip": "要预览/保存的图片 (None = 无值, 如扇出未选中分支, 跳过预览)。"}),
                 "filename_prefix": (
                     "STRING",
                     {
@@ -174,7 +178,7 @@ class PreviewImageSaveNode:
         (按钮读取它们), 本方法不用于保存。
 
         参数:
-            images (torch.Tensor): BxHxWxC 图片批;
+            images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 透传空批;
             filename_prefix (str, 默认 "preview"): 输出文件名前缀(控件, 保存时以按钮 POST 的为准);
             format (str, 默认 "png"): png/exr(控件);
             bit_depth (str, 默认 "8-bit"): 位深(控件);
@@ -186,6 +190,11 @@ class PreviewImageSaveNode:
         返回:
             dict: {"ui": {"images": [temp 预览记录...]}, "result": (images,)}。
         """
+        # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览记录
+        # (temp 文件仍在, 原预览保持显示), 透传空批, 不更新「保存」缓存, 不崩溃
+        if images is None:
+            return {"ui": {"images": _last_ui.get(id, [])}, "result": ((),)}
+
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
         # filename_prefix 一并缓存: 该输入可能被上游连线(如 MDTable 的 ID 列),
         # 此时 widget 里只是占位符, 实际值在 execute 收到的入参里 —— 保存用它而非占位符。
@@ -200,6 +209,7 @@ class PreviewImageSaveNode:
         for image in images:
             file, subfolder = self._make_temp_preview(image)
             results.append({"filename": file, "subfolder": subfolder, "type": "temp"})
+        _last_ui[id] = results
         return {"ui": {"images": results}, "result": (images,)}
 
 
