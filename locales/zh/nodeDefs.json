@@ -111,11 +111,11 @@
   },
   "FallingTSImageComposite": {
     "display_name": "FallingTS 多图合成 (total 网格带标注)",
-    "description": "N 图网格合成 (total 决定张数, 最少 1 最多 8, 默认 4): total 张图 (IMAGE, 未连接 = 该格底色空格占位) + total 个标注 (STRING, 可连线端口, 未连接 = 默认标注 前面/右面/后面/左面/上面/下面/近处/远处, 空串 = 不画), 统一尺寸, 每张子图左上角中文标注, 网格列数 = ceil(sqrt(total)) 行优先填充, 合成单张图输出。四图全空 -> 输出本节点最近一次合成结果 (sticky), 从未合成则输出 None。",
+    "description": "N 图网格合成 (total 决定张数, 最少 1, 不设上限, 默认 4): total 张图 (IMAGE, 未连接 = 该格底色空格占位) + total 个标注 (STRING, 可连线端口, 未连接 = 默认标注 前面/右面/后面/左面/上面/下面/近处/远处, 空串 = 不画), 统一尺寸, 每张子图左上角中文标注, 网格列数 = ceil(sqrt(total)) 行优先填充, 合成单张图输出。四图全空 -> 输出本节点最近一次合成结果 (sticky), 从未合成则输出 None。",
     "inputs": {
       "total": {
         "name": "张数",
-        "tooltip": "图片张数 (最少 1, 最多 8), 前端按此动态增删 image_i/标注_i 端口"
+        "tooltip": "图片张数 (最少 1, 不设上限), 前端按此动态增删 image_i/标注_i 端口"
       },
       "image1": {
         "name": "图 1",

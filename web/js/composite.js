@@ -5,19 +5,19 @@
 import { app } from "../../scripts/app.js";
 
 const NODE_TYPE = "FallingTSImageComposite";
-const MAX_TOTAL = 8;
+const MAX_SLOTS = 64; // 端口与合成上限 (对齐后端 MAX_TOTAL); total 控件本身不设上限
 const DEFAULT_TOTAL = 4;
 
 /**
- * 读取节点 total widget 的当前张数, 非法值回退默认, 再裁到 [1, MAX_TOTAL]。
- * @param {LGraphNode} node 多图合成节点对象
- * @returns {number} 有效张数 (1 ~ MAX_TOTAL)
+ * 读取当前 total: 以 total widget 值为准; widget 尚未就绪/值非法时回退默认。
+ * 最小 1, 不设上限, 端口数封顶 MAX_SLOTS。
+ * @param {LGraphNode} node
+ * @returns {number} 有效张数 (>= 1, 端口口径 <= MAX_SLOTS)
  */
 function getTotal(node) {
-  const w = node.widgets?.find((w) => w.name === "total");
-  let v = w ? Math.floor(Number(w.value)) : DEFAULT_TOTAL;
-  if (!Number.isFinite(v)) v = DEFAULT_TOTAL;
-  return Math.min(MAX_TOTAL, Math.max(1, v));
+  const w = node.widgets?.find((x) => x.name === "total");
+  const v = w != null ? Math.trunc(Number(w.value)) : NaN;
+  return Math.max(1, Math.min(MAX_SLOTS, Number.isFinite(v) ? v : DEFAULT_TOTAL));
 }
 
 /**
@@ -46,7 +46,7 @@ function syncPorts(node) {
 
 /**
  * 节点高度收回自然高度 (只缩不扩: 用户手动拉高的高度保留)。
- * 后端声明 MAX_TOTAL 组输入端口, 新建节点时构造器先把全部端口加上并把初始高度撑满;
+ * 后端声明 MAX_SLOTS 组输入端口, 新建节点时构造器先把全部端口加上并把初始高度撑满;
  * syncPorts 按 total 删掉多余端口后需把多余高度收回, 否则新建节点异常高大。
  * 仅新建时生效 (onNodeCreated): 加载工作流时 configure 恢复保存的高度, 不受影响。
  * @param {LGraphNode} node 多图合成节点对象
@@ -81,24 +81,14 @@ app.registerExtension({
       const result = onNodeCreated?.apply(this, arguments);
       const node = this;
 
-      const totalWidget = node.widgets?.find((w) => w.name === "total");
-      if (totalWidget) {
-        const cb = totalWidget.callback;
-        /** total widget 回调: 张数变化后重新对齐 image_i/label_i 端口。
-         */
-        totalWidget.callback = function (v) {
-          cb?.call(this, v);
-          syncPorts(node);
-        };
-      }
-
-      // 兜底: 新前端输入可能不走 widget.callback, 用节点级
-      // onWidgetChanged 再同步一次
       const onWidgetChanged = nodeType.prototype.onWidgetChanged;
       /** 节点级 widget 变化钩子: total 变化时同步端口。 */
-      nodeType.prototype.onWidgetChanged = function (widget, value, ...args) {
+      // 调用约定: 新前端 (name, value, oldValue, widget), name 为字符串;
+      // 旧版 (widget, value), 首参为 widget 对象
+      nodeType.prototype.onWidgetChanged = function (name, value, oldValue, widget) {
         const out = onWidgetChanged?.apply(this, arguments);
-        if (widget?.name === "total") {
+        const nm = typeof name === "string" ? name : name?.name;
+        if (nm === "total") {
           syncPorts(this);
         }
         return out;

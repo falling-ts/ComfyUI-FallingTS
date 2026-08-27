@@ -23,7 +23,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageFont
 _FONT_REL = os.path.join("..", "fonts", "Alibaba-PuHuiTi-Heavy.ttf")
 
 # 最多图片张数 (= 前端动态端口上限, 与其它 total 节点一致)
-MAX_TOTAL = 8
+MAX_TOTAL = 64
 
 # total 非法时的默认张数
 DEFAULT_TOTAL = 4
@@ -114,9 +114,9 @@ class FallingTSImageCompositeNode:
                 {
                     "default": DEFAULT_TOTAL,
                     "min": 1,
-                    "max": MAX_TOTAL,
+                    
                     "step": 1,
-                    "tooltip": f"图片张数 (最少 1, 最多 {MAX_TOTAL}), 前端按此动态增删 image_i/label_i 端口",
+                    "tooltip": f"图片张数 (最少 1, 不设上限; 超过 {MAX_TOTAL} 张按 {MAX_TOTAL} 合成), 前端按此动态增删 image_i/label_i 端口",
                 },
             ),
         }
