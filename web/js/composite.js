@@ -2,7 +2,7 @@
 // - total 张数 (最少 1, 最多 8) 决定左侧输入端口: 图1..图8 / 标注1..标注8 (image_i 与 label_i 交错排列);
 // - 未启用的端口被删除, 不进入提交载荷; 标注可连线 (未连接 = 默认标注, 空串 = 不画);
 // - 加载工作流时自动迁移旧版 widgets_values (旧版 7 槽 / 中间版 12 槽 -> 新版 4 槽: total/font_size/padding/bg)。
-import { app } from "../../scripts/app.js";
+import { app } from "../../../scripts/app.js";
 
 const NODE_TYPE = "FallingTSImageComposite";
 const MAX_SLOTS = 64; // 端口与合成上限 (对齐后端 MAX_TOTAL); total 控件本身不设上限
