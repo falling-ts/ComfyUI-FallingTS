@@ -103,10 +103,9 @@ class FallingTSImageCompositeNode:
         返回:
             dict:
             - "required".total: 图片张数 (1~MAX_TOTAL, 前端据此动态增删端口);
-            - "required".label1..labelMAX: 各图标注 (可连线, 默认见 _DEFAULT_LABELS,
-              None = 默认, 空串 = 不画);
             - "required".font_size/padding/background_color;
-            - "optional".image1..imageMAX: 各图 (None/未连接 = 该格底色空格占位);
+            - "optional".image1..imageMAX: 各图 (未连接 = 该格底色空格占位);
+            - "optional".label1..labelMAX: 各图标注 (可与 image_i 交错排列; 未连接 = 默认标注 _DEFAULT_LABELS, 空串 = 不画);
             - "hidden"."id": 节点唯一 ID (合成结果缓存键)。
         """
         required: dict = {
@@ -121,14 +120,6 @@ class FallingTSImageCompositeNode:
                 },
             ),
         }
-        for i in range(1, MAX_TOTAL + 1):
-            required[f"label{i}"] = (
-                "STRING",
-                {
-                    "default": _DEFAULT_LABELS[i - 1] if i <= len(_DEFAULT_LABELS) else "",
-                    "tooltip": f"图 {i} 左上角标注 (可连线; 空 = 不画)",
-                },
-            )
         required["font_size"] = (
             "FLOAT",
             {"default": 8.0, "min": 2.0, "max": 30.0, "step": 0.5, "tooltip": "字号 (子图宽百分比, 8.0 = 8%)"},
@@ -144,6 +135,10 @@ class FallingTSImageCompositeNode:
         optional = {}
         for i in range(1, MAX_TOTAL + 1):
             optional[f"image{i}"] = ("IMAGE", {"tooltip": f"图 {i} (未连接 = 该格底色空格占位)"})
+            optional[f"label{i}"] = (
+                "STRING",
+                {"tooltip": f"标注 {i} (可连线; 未连接 = 默认标注, 空串 = 不画)"},
+            )
         return {"required": required, "optional": optional, "hidden": {"id": "UNIQUE_ID"}}
 
     RETURN_TYPES = ("IMAGE",)
