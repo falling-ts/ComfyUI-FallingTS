@@ -1,12 +1,12 @@
 # FallingTS 多图合成节点。
 #
 # 参考本插件带 total 的节点 (switch/route/fanout/selector):
-# 后端声明 MAX_TOTAL 组 (image_i / label_i), 前端按 total 动态增删,
-# 未启用的端口不进 prompt。
+# 后端声明 MAX_TOTAL 组 (image_i 图端口 / label_i 表单文本框), 前端按 total 动态增删,
+# 未启用的图端口/表单文本框不进 prompt。
 #
 # 行为:
-# - total = 图片张数 (最少 1, 最多 MAX_TOTAL=8);
-# - 输入 total 张图 image1..image_total (optional) + total 个标注 label1..label_total;
+# - total = 图片张数 (最少 1, 不设上限; 超过 MAX_TOTAL 张按 MAX_TOTAL 合成);
+# - 左侧只有 total 张图端口 image1..imageN (标签 图1..图N); 标注是节点内 label1..labelN 表单文本框 (按 total 自动扩充);
 # - 网格列数 = ceil(sqrt(total)): total=4 时 2x2 (与原四图合成一致),
 #   total=6 时 3 列 x 2 行; total=8 时 3 列 x 3 行 (最后一格留空);
 # - 统一尺寸 (取非空图最大高宽), 每张子图左上角 CJK 白字黑描边标注, 拼成单图输出。
@@ -102,10 +102,10 @@ class FallingTSImageCompositeNode:
 
         返回:
             dict:
-            - "required".total: 图片张数 (1~MAX_TOTAL, 前端据此动态增删端口);
+            - "required".total: 图片张数 (最少 1, 不设上限; 超过 MAX_TOTAL 按 MAX_TOTAL 合成, 前端据此增删图端口、扩充标注文本框);
             - "required".font_size/padding/background_color;
-            - "optional".image1..imageMAX: 各图 (未连接 = 该格底色空格占位);
-            - "optional".label1..labelMAX: 各图标注 (可与 image_i 交错排列; 未连接 = 默认标注 _DEFAULT_LABELS, 空串 = 不画);
+            - "required".label1..labelMAX: 各图标注 (节点内表单文本框, 按 total 扩充; 空串 = 不画, None = 默认标注 _DEFAULT_LABELS);
+            - "optional".image1..imageMAX: 各图端口 (左侧; 未连接 = 该格底色空格占位);
             - "hidden"."id": 节点唯一 ID (合成结果缓存键)。
         """
         required: dict = {
@@ -116,7 +116,7 @@ class FallingTSImageCompositeNode:
                     "min": 1,
                     
                     "step": 1,
-                    "tooltip": f"图片张数 (最少 1, 不设上限; 超过 {MAX_TOTAL} 张按 {MAX_TOTAL} 合成), 前端按此动态增删 image_i/label_i 端口",
+                    "tooltip": f"图片张数 (最少 1, 不设上限; 超过 {MAX_TOTAL} 张按 {MAX_TOTAL} 合成), 前端按此增删 image_i 图端口、扩充 label_i 标注表单文本框",
                 },
             ),
         }
@@ -135,9 +135,10 @@ class FallingTSImageCompositeNode:
         optional = {}
         for i in range(1, MAX_TOTAL + 1):
             optional[f"image{i}"] = ("IMAGE", {"tooltip": f"图 {i} (未连接 = 该格底色空格占位)"})
-            optional[f"label{i}"] = (
+        for i in range(1, MAX_TOTAL + 1):
+            required[f"label{i}"] = (
                 "STRING",
-                {"tooltip": f"标注 {i} (可连线; 未连接 = 默认标注, 空串 = 不画)"},
+                {"default": "", "tooltip": f"标注 {i} (表单文本框, 随 total 扩充; 空串 = 不画)"},
             )
         return {"required": required, "optional": optional, "hidden": {"id": "UNIQUE_ID"}}
 

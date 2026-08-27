@@ -42,7 +42,7 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSFrameRateConvertNode 帧率转换 (按目标帧率抽帧, 目标帧率未连接/None 原样透传)
 ├── composite/
 │   ├── __init__.py
-│   └── nodes.py                # FallingTSImageCompositeNode total 驱动 N 图合成 (total 1..64 默认 4, 决定 image1..64/标注1..64 端口; 列数 = ceil(sqrt(N)) 行优先填充, 统一尺寸, 每张子图左上角中文标注, 合成单张图)
+│   └── nodes.py                # FallingTSImageCompositeNode total 驱动 N 图合成 (total 最少 1 不设上限默认 4, 左侧 image1..imageN 图端口 + 节点内 label1..labelN 标注表单文本框; 列数 = ceil(sqrt(N)) 行优先填充, 统一尺寸, 每张子图左上角中文标注, 合成单张图)
 ├── fonts/
 │   └── Alibaba-PuHuiTi-Heavy.ttf  # CJK 字体 (随包, 合成节点标注渲染用)
 ├── preview-image/
@@ -71,7 +71,7 @@ ComfyUI-FallingTS/
         ├── fanout.js                  # 扇出选择(多对一镜像): total=组数=输入端口数(input_i 每组一个) + 输出=组数×组名数(标签=组名) + 选中项下拉选项联动(槽类型 STRING,INT: 可连线接多对一 选中项组名/索引, 索引直接选中所属索引组名) + 选中组分支真正执行 + 旧版 value 遗留输入槽加载时自动清理
         ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
         ├── switch.js                   # 分组开关前端联动
-        ├── composite.js                # 多图合成: total 动态端口 (image1..64/标注1..64 交错排列) + 旧版 7 槽 / 中间版 12 槽 widgets_values 加载时自动迁移
+        ├── composite.js                # 多图合成: total 决定左侧图端口 image1..imageN + 节点内 label1..labelN 标注表单文本框 (按 total 自动扩充) + 旧版 7 槽 / 中间版 12 槽 widgets_values 加载时自动迁移
         ├── table_lookup.js             # 通用表格 Excel 式控件
         └── workflow_reload_button.js   # 刷新工作流按钮
 ```
@@ -88,7 +88,7 @@ ComfyUI-FallingTS/
 | switch | FallingTSSwitch | 分组开关 (total组) |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 (data=None 如未连接 → 输出本节点最近一次输出(sticky), 从未输出则回退默认状态) |
 | fps | FallingTSFrameRateConvert | 帧率转换 (图像序列按目标帧率抽帧: 步长 = max(1, round(source_fps/target_fps)), 每 stride 帧保留 1 帧, stride=1 原样透传; 目标帧率未连接/None 时原样透传不抽帧; **images=None → 输出本节点最近一次抽帧结果(sticky), 从未处理则透传 None**; 音频不动, 配合 CreateVideo 的 fps 参数输出) |
-| composite | FallingTSImageComposite | 多图合成 (total 驱动: total 1..64 默认 4, 决定左侧 image1..64/标注1..64 端口, **前端按 total 动态增删 image_i/标注_i 端口 (未启用端口不进提交载荷)**, 与 switch/route/fanout/selector 同套机制; 图 image1..64 (optional, 未连接/None = 该格用底色空白占位, **total 图全空 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**) + 标注1..64 (可连线端口, 未连接 = 默认标注 前面/右面/后面/左面/上面/下面/近处/远处, 空串 = 不画); 网格列数 = ceil(sqrt(total)) 行优先填充 (total=4 → 2×2, 与旧版布局一致), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 合成单张图; 字号/间距/底色 None=默认 8/6/#000000, 底色非法值回退黑色) |
+| composite | FallingTSImageComposite | 多图合成 (total 驱动: total 最少 1 不设上限 默认 4 (端口口径 64), 左侧只有 image1..imageN 图端口, 标注是节点内 label1..labelN 表单文本框 (按 total 自动扩充), **前端按 total 动态增删 image_i 图端口、扩充 label_i 标注表单文本框 (未启用的图端口/文本框不进提交载荷)**, 与 switch/route/fanout/selector 同套机制; 图 image1..64 (optional, 未连接/None = 该格用底色空白占位, **total 图全空 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**) + label1..64 (节点内表单文本框, widget 默认空串 = 不画, 值为 None 时才回退默认标注 前面/右面/后面/左面/上面/下面/近处/远处); 网格列数 = ceil(sqrt(total)) 行优先填充 (total=4 → 2×2, 与旧版布局一致), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 合成单张图; 字号/间距/底色 None=默认 8/6/#000000, 底色非法值回退黑色) |
 | preview-image | PreviewImageSave | 图片预览保存 (始终预览 temp, 点「保存」才写 output 同名覆盖无序号; images=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的图**(sticky)供下游合成, 从未预览则输出 None) |
 | preview-video | PreviewVideo | 视频预览保存 (video=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的视频**(sticky), 从未预览则输出 None) |
 | preview-audio | PreviewAudioSave | 音频预览保存 (audio=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的音频**(sticky), 从未预览则输出 None) |
@@ -106,7 +106,7 @@ ComfyUI-FallingTS/
 - **控制/路由类**(route/switch/fanout/selector)——**保持纯路由, 不做 None→last**:`_split_items`/`_clamp_total`/`_resolve_index` 等助手对 None items/total/selection 回退默认(1 组、第 0 项);未选中分支**输出 None**(由下游数据类节点用 sticky 兜底),选中分支输出真实值。这是路由的语义(未选中 = 无值),不缓存、不透传 last;
 - **数据类 —— 预览**(preview-image/preview-video/preview-audio):media 为 None → 回放 `_last_output` 上次预览事件(保持原预览不清空, 不更新「保存」缓存) + **输出该节点最近一次预览的媒体**(preview-image 重组为 BxHxWxC 批张量; video/audio 直接输出缓存对象),让下游(如四图合成)拿到该面「之前预览过」的媒体;从未预览过则输出 None。**绝不透传空 tuple `()`**(会被下游当合法值走 `.shape`/迭代而崩溃);
 - **数据类 —— 帧率**(fps):images 为 None → 输出本节点最近一次抽帧结果(sticky),从未处理则透传 None;source_fps/target_fps 任一 None 时无法算帧率比,按原样透传(stride=1);
-- **数据类 —— 合成**(composite):total 驱动张数(None → 默认 4, clamp 1..64);image1..64 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → **该格用底色空白占位**(部分有值时正常合成, 缺格用底色占位);**total 张图全无值 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**(绝不崩溃);label1..64 未连接(None) → 各自默认标注(空串 = 不画);font_size/padding/background_color None → 默认 8.0/6/#000000;
+- **数据类 —— 合成**(composite):total 驱动张数(None → 默认 4, clamp 1..64);image1..64 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → **该格用底色空白占位**(部分有值时正常合成, 缺格用底色占位);**total 张图全无值 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**(绝不崩溃);label1..64 (节点内表单文本框, 空串 = 不画; None → 各自默认标注);font_size/padding/background_color None → 默认 8.0/6/#000000;
 - **数据类 —— 表格**(table/mdtable):rows/data 为 None → 输出本节点最近一次输出(sticky),从未输出则回退默认表/默认状态;`normalize_table`/`normalize_state` 对 None 回退空表不报错。mdtable 有 `IS_CHANGED(cls, data, **kwargs)` classmethod —— 加隐藏 `id` 输入后引擎会向 `IS_CHANGED` 传入 `id`, 故签名须含 `**kwargs` 吸收(否则崩);
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 

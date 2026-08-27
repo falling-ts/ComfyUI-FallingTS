@@ -1,18 +1,22 @@
 // FallingTS 多图合成前端联动 (参照 switch.js / fanout.js 的 total 驱动机制):
-// - total 张数 (最少 1, 最多 8) 决定左侧输入端口: 图1..图8 / 标注1..标注8 (image_i 与 label_i 交错排列);
-// - 未启用的端口被删除, 不进入提交载荷; 标注可连线 (未连接 = 默认标注, 空串 = 不画);
-// - 加载工作流时自动迁移旧版 widgets_values (旧版 7 槽 / 中间版 12 槽 -> 新版 4 槽: total/font_size/padding/bg)。
+// - total 张数 (最少 1, 不设上限, 端口口径封顶 MAX_SLOTS=64) 决定左侧图端口 图1..图N (内部名 image1..imageN);
+// - 标注是节点内 label1..labelN 表单文本框 (后端 required 文本控件), 按 total 自动扩充/收缩:
+//   超出 total 的文本框被移除 (不进入提交载荷), 新增加自动补齐 (默认空串 = 不画);
+// - 左侧未连接的图端口 = 该格底色空格占位; 标注文本框空串 = 不画;
+// - 加载工作流时自动迁移旧版 widgets_values (旧版 7 槽 / 中间版 12 槽 -> 新版基础 4 槽首部,
+//   标注文本框紧跟基础槽之后, 前缀序对齐无需特殊处理)。
 import { app } from "../../../scripts/app.js";
 
 const NODE_TYPE = "FallingTSImageComposite";
-const MAX_SLOTS = 64; // 端口与合成上限 (对齐后端 MAX_TOTAL); total 控件本身不设上限
+// 图端口/标注文本框数量上限 (对齐后端 MAX_TOTAL); total 控件本身不设上限
+const MAX_SLOTS = 64;
 const DEFAULT_TOTAL = 4;
 
 /**
  * 读取当前 total: 以 total widget 值为准; widget 尚未就绪/值非法时回退默认。
- * 最小 1, 不设上限, 端口数封顶 MAX_SLOTS。
+ * 最小 1, 不设上限, 端口与文本框口径封顶 MAX_SLOTS。
  * @param {LGraphNode} node
- * @returns {number} 有效张数 (>= 1, 端口口径 <= MAX_SLOTS)
+ * @returns {number} 有效张数 (>= 1, <= MAX_SLOTS)
  */
 function getTotal(node) {
   const w = node.widgets?.find((x) => x.name === "total");
@@ -21,41 +25,106 @@ function getTotal(node) {
 }
 
 /**
- * 按 total 对齐节点输入端口: image_i/label_i 成对增减 (未使用的端口被删除, 不进入提交载荷), 并按序刷新中文标签。
- * @param {LGraphNode} node 多图合成节点对象
- * @returns {void}
+ * 判断输入槽是否为动态图端口 (image1..image64; 排除控件转化的槽)。
+ * @param {object} input 输入槽
+ * @returns {boolean} 是否图端口
  */
-function syncPorts(node) {
+function isImageInput(input) {
+  return !input.widget && /^image\d+$/.test(input.name ?? "");
+}
+
+/** 判断 widget 是否为动态标注文本框 (label1..label64)。 */
+function isLabelWidget(widget) {
+  return /^label\d+$/.test(widget.name ?? "");
+}
+
+/** 收集当前动态图端口 (升序)。 */
+function imageInputsOf(node) {
+  return (node.inputs ?? []).filter(isImageInput);
+}
+
+/** 收集当前标注文本框 (数组序)。 */
+function labelWidgetsOf(node) {
+  return (node.widgets ?? []).filter(isLabelWidget);
+}
+
+/**
+ * 补一个标注文本框 (type/options 抄现有标注框保持一致; 无模板时用默认 string 控件),
+ * 追加到 widgets 尾部并挂中文标题。
+ * @param {LGraphNode} node
+ * @param {number} k 组号 (1 起)
+ */
+function addLabelWidget(node, k) {
+  const tmpl = labelWidgetsOf(node)[0];
+  const options = tmpl?.options ? { ...tmpl.options } : {};
+  const w = node.addWidget("string", "label" + k, "", () => {}, options);
+  w.label = "标注 " + k;
+  return w;
+}
+
+/** 移除指定 widget (优先官方 ensureWidgetRemoved, 退回手动 splice)。 */
+function dropWidget(node, w) {
+  const i = node.widgets.indexOf(w);
+  if (i === -1) return;
+  if (typeof node.ensureWidgetRemoved === "function") {
+    node.ensureWidgetRemoved(w);
+  } else {
+    w.onRemove?.();
+    node.widgets.splice(i, 1);
+    node._widgetSlotsDirty = true;
+  }
+}
+
+/**
+ * 按 total 对齐节点形态:
+ * - 左侧只保留 image1..imageN 图端口 (超出的从尾部删除, 不足的从尾部补齐, 中文标签 图1..图N);
+ * - 标注表单文本框只保留 label1..labelN (超出 total 的被移除而不进提交载荷, 不足的新增补齐),
+ *   标题 标注1..标注N;
+ * 不变量: widgets 序恒为 [total, font_size, padding, background_color, label1..labelN] 前缀序,
+ * 保证保存的 widgets_values 按位置套用仍然对齐。
+ * @param {LGraphNode} node
+ */
+function syncNode(node) {
   const total = getTotal(node);
-  const want = total * 2;
-  while ((node.inputs?.length ?? 0) > want) {
-    node.removeInput(node.inputs.length - 1);
+
+  // 1) 左侧图端口: image1..imageN (尾部多余的逐个移除, 不足的从尾部补齐)
+  while (imageInputsOf(node).length > total) {
+    const tail = node.inputs[node.inputs.length - 1];
+    const idx = isImageInput(tail)
+      ? node.inputs.length - 1
+      : [...node.inputs].map((x, i) => (isImageInput(x) ? i : -1)).filter((i) => i !== -1).pop();
+    node.removeInput(idx);
   }
-  while ((node.inputs?.length ?? 0) < want) {
-    const k = Math.floor(node.inputs.length / 2) + 1;
-    node.addInput(`image${k}`, "IMAGE");
-    node.addInput(`label${k}`, "STRING");
+  while (imageInputsOf(node).length < total) {
+    const k = imageInputsOf(node).length + 1;
+    node.addInput("image" + k, "IMAGE");
   }
-  for (let i = 0; i < want; i += 2) {
-    const k = i / 2 + 1;
-    node.inputs[i].localized_name = "图 " + k;
-    node.inputs[i + 1].localized_name = "标注 " + k;
+  imageInputsOf(node).forEach((inp, i) => { inp.localized_name = "图 " + (i + 1); });
+
+  // 2) 标注表单文本框: label1..labelN (尾部多余移除, 尾部不足补齐)
+  let lw = labelWidgetsOf(node);
+  while (lw.length > total) {
+    dropWidget(node, lw[lw.length - 1]);
+    lw = labelWidgetsOf(node);
   }
+  while (labelWidgetsOf(node).length < total) {
+    addLabelWidget(node, labelWidgetsOf(node).length + 1);
+  }
+  labelWidgetsOf(node).forEach((w, i) => { w.label = "标注 " + (i + 1); });
+
   node.setDirtyCanvas?.(true, true);
 }
 
 /**
- * 节点高度收回自然高度 (只缩不扩: 用户手动拉高的高度保留)。
- * 后端声明 MAX_SLOTS 组输入端口, 新建节点时构造器先把全部端口加上并把初始高度撑满;
- * syncPorts 按 total 删掉多余端口后需把多余高度收回, 否则新建节点异常高大。
- * 仅新建时生效 (onNodeCreated): 加载工作流时 configure 恢复保存的高度, 不受影响。
- * @param {LGraphNode} node 多图合成节点对象
- * @returns {void}
+ * 高度收回/扩展到自然高度 (宽度保留用户设置)。
+ * 后端声明全部 64 组端口/文本框, 构造器会把初始尺寸撑满, 同步裁剪后需收回多余高度;
+ * total 增大补控件时同样需要扩展到位。
+ * @param {LGraphNode} node
  */
 function fitHeight(node) {
   const natural = node.computeSize?.();
   if (!natural || !node.size) return;
-  if (node.size[1] > natural[1]) {
+  if (Math.abs(node.size[1] - natural[1]) > 1) {
     node.setSize([node.size[0], natural[1]]);
   }
 }
@@ -64,24 +133,23 @@ app.registerExtension({
   name: "FallingTS.Composite",
 
   /**
-   * 节点定义注册前钩子: 给 FallingTSImageComposite 绑定 total -> 图/标注端口增删联动。
+   * 节点定义注册前钩子: 给 FallingTSImageComposite 绑定 total -> 图端口/标注文本框增删联动。
    * @param {Function} nodeType 节点类型构造函数 (原型上挂方法)
    * @param {object} nodeData 节点定义数据 (来自 /object_info)
-   * @returns {void}
    */
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_TYPE) return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     /**
-     * 节点创建钩子: total 变化时同步 image_i/label_i 端口; 加载工作流时按保存的值对齐。
+     * 节点创建钩子: total 变化时同步图端口与标注文本框; 加载工作流时按保存的值对齐。
      * @returns {*} 原 onNodeCreated 的返回值
      */
     nodeType.prototype.onNodeCreated = function () {
       const result = onNodeCreated?.apply(this, arguments);
       const node = this;
 
-      // 主链路: 新旧前端 widget 值变化(拖 spinner/输入/程序赋值)都会触发 widget.callback
+      // 主链路: widget 值变化 (拖 spinner/输入/程序赋值) 都会经过 widget.callback
       const bindTotalWidget = () => {
         const tw = node.widgets?.find((w) => w.name === "total");
         if (!tw || tw.__ftsBound) return;
@@ -89,7 +157,7 @@ app.registerExtension({
         const origCb = tw.callback;
         tw.callback = function (...cbArgs) {
           const cbOut = origCb?.apply(this, cbArgs);
-          syncPorts(node);
+          syncNode(node);
           fitHeight(node);
           return cbOut;
         };
@@ -97,14 +165,14 @@ app.registerExtension({
       bindTotalWidget();
 
       const onWidgetChanged = nodeType.prototype.onWidgetChanged;
-      /** 节点级 widget 变化钩子: total 变化时同步端口。 */
-      // 调用约定: 新前端 (name, value, oldValue, widget), name 为字符串;
-      // 旧版 (widget, value), 首参为 widget 对象
+      /** 节点级 widget 变化钩子: total 变化时同步端口/文本框 (双调用约定兼容)。 */
+      // 新前端: (name, value, oldValue, widget); 旧版: (widget, value)
       nodeType.prototype.onWidgetChanged = function (name, value, oldValue, widget) {
         const out = onWidgetChanged?.apply(this, arguments);
         const nm = typeof name === "string" ? name : name?.name;
         if (nm === "total") {
-          syncPorts(this);
+          syncNode(this);
+          fitHeight(this);
         }
         return out;
       };
@@ -112,11 +180,11 @@ app.registerExtension({
       // 加载/还原工作流: configure 前先做旧格式迁移, 末尾按保存的 total 再对齐一次
       const prevOnConfigure = node.onConfigure;
       /**
-       * configure 钩子: 兼容历史两种旧版 widgets_values 格式:
-       * - 旧版 7 槽 (label1..4/font_size/padding/bg): 新版首部为 total, 标注成为可连线端口,
-       *   取尾部三槽并在首部插入 total=4 (旧标注文案舍弃, 标注端口未连接 = 默认标注);
-       * - 中间版 12 槽 (total + label1..8 + font/padding/bg): 取 total 与尾部三槽。
-       * 之后由基类按新顺序套用 (total/font_size/padding/background_color, 共 4 槽)。
+       * configure 钩子: 兼容两种历史 widgets_values 格式:
+       * - 旧版 7 槽 (label1..4/font_size/padding/bg): 标注成为表单文本框, 取尾部三槽并在首部插入 total=4
+       *   (旧标注文案舍弃: 未填写 = 不画);
+       * - 中间版 12 槽 (total + 旧 label1..8 + font/padding/bg): 取首部 total 与尾部三槽。
+       * 其余格式 (新版基础 4 槽 / 基础 4 槽 + N 个标注文本框, 前缀序) 按位置直接套用, 无需迁移。
        */
       node.onConfigure = function (info) {
         const wv = info?.widgets_values;
@@ -128,16 +196,16 @@ app.registerExtension({
           info.widgets_values = [tt ?? DEFAULT_TOTAL, fs, pd, bg];
         }
         prevOnConfigure?.call(this, info);
-        syncPorts(this);
+        syncNode(this);
         fitHeight(this);
       };
 
-      syncPorts(node);
+      syncNode(node);
       fitHeight(node);
-      // 节点刚创建时 widgetValue store 可能还没注册完成, 下一 tick 再同步一次
+      // 刚创建时 widget store 可能还没注册完成, 下一 tick 再绑定并对齐一次
       setTimeout(() => {
         bindTotalWidget();
-        syncPorts(node);
+        syncNode(node);
         fitHeight(node);
       }, 0);
       return result;
