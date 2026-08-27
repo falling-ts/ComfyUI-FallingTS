@@ -1,40 +1,57 @@
-# composite/nodes.py
-"""FallingTS 四图合成 (2×2 带标注, Z 字排列):
-
-4 个 IMAGE 输入 (image1..image4) + 4 个 STRING 标注 (label1..label4, 可连线, 默认 前面/右面/后面/左面)。
-行为:
-- 统一尺寸: 取 4 图最大高/最大宽, 较小的图 Lanczos 放大对齐 (三张生成图通常同尺寸, 原图尺寸不同时对齐到最大);
-- 每张子图左上角标注文字: CJK 字体 (随包 fonts/Alibaba-PuHuiTi-Heavy.ttf), 白字黑描边, 字号 = 子图宽 × font_size%;
-  标注为空则不画;
-- Z 字排列 2×2: 上排 image1(默认 前面)/image2(默认 右面), 下排 image3(默认 后面)/image4(默认 左面)
-  (前面→右面→后面→左面 的阅读顺序即 Z 形);
-- 输出 1 张 IMAGE (2×2 + 间距, 间距与外边距 = padding 像素, 底色 = background_color)。
-
-典型用法: 场景旋镜 原图 (前面) + 右面/后面/左面 生成图 (LoadImage 载入 output 已存文件) → 单张四向标注图。
-
-None 容忍: 四图 input 均为可选 (未连接/上游无值 = None → 该格渲染为底色空格, 四图全空输出 None);
-上游透传的非标准形态 (空 tuple / 列表包装 / 零批张量) 同样按无值处理 (该格空格), 绝不崩溃;
-font_size/padding/background_color None → 回退默认 (8.0 / 6 / #000000)。
-"""
+# FallingTS 多图合成节点。
+#
+# 参考本插件带 total 的节点 (switch/route/fanout/selector):
+# 后端声明 MAX_TOTAL 组 (image_i / label_i), 前端按 total 动态增删,
+# 未启用的端口不进 prompt。
+#
+# 行为:
+# - total = 图片张数 (最少 1, 最多 MAX_TOTAL=8);
+# - 输入 total 张图 image1..image_total (optional) + total 个标注 label1..label_total;
+# - 网格列数 = ceil(sqrt(total)): total=4 时 2x2 (与原四图合成一致),
+#   total=6 时 3 列 x 2 行; total=8 时 3 列 x 3 行 (最后一格留空);
+# - 统一尺寸 (取非空图最大高宽), 每张子图左上角 CJK 白字黑描边标注, 拼成单图输出。
 
 from __future__ import annotations
 
+import math
 import os
 
 import numpy as np
 import torch
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
-# 随包 CJK 字体 (相对本文件): 标注渲染用
 _FONT_REL = os.path.join("..", "fonts", "Alibaba-PuHuiTi-Heavy.ttf")
 
-# 最近一次合成结果缓存: node_id -> 合成单图张量 (BxHxWxC)
-# 四图全 None (未连接/上游无值) 时输出本节点最近一次合成结果 (sticky), 让下游不丢数据; 从未合成则透传 (None,)
-_last_output: dict = {}
+# 最多图片张数 (= 前端动态端口上限, 与其它 total 节点一致)
+MAX_TOTAL = 8
+
+# total 非法时的默认张数
+DEFAULT_TOTAL = 4
+
+# 默认标注 (按图序): 前 4 图为方位, 后 4 图为补充
+_DEFAULT_LABELS = ("前面", "右面", "后面", "左面", "上面", "下面", "近处", "远处")
+
+# 最近一次合成结果缓存: 键 = 节点唯一 ID (字符串), 值 = 合成输出张量
+_last_output: dict[str, torch.Tensor] = {}
+
+
+def _grid_dims(total: int) -> tuple[int, int]:
+    """网格维度: cols = ceil(sqrt(total)), rows = ceil(total / cols)。
+
+    参数:
+        total (int): 已钳位的张数 (>= 1)。
+
+    返回:
+        tuple[int, int]: (cols, rows)。
+    """
+    n = max(1, int(total))
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    return cols, rows
 
 
 def _load_font(size: int) -> ImageFont.ImageFont:
-    """加载随包 CJK 字体; 缺失时退回 PIL 默认字体 (非 CJK 字符会缺字)。"""
+    """CJK 字体 (随包); 缺失时回退 PIL 默认字体 (不崩溃)。"""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), _FONT_REL)
     if os.path.exists(path):
         return ImageFont.truetype(path, size)
@@ -42,21 +59,24 @@ def _load_font(size: int) -> ImageFont.ImageFont:
 
 
 def _bg_rgb(color) -> tuple[int, int, int]:
-    """底色 → RGB; None/非法色值回退黑色 (不崩溃)。"""
+    """底色转 RGB; None/非法色值回退黑色 (不崩溃)。"""
     try:
         return ImageColor.getrgb("#000000" if color is None else str(color))
     except (ValueError, TypeError):
         return (0, 0, 0)
 
 
-def _first_frame(img) -> torch.Tensor | None:
-    """IMAGE 值 → 单帧 HxWxC 张量; None/空批/非张量 (含 tuple/list 包装) → None (安全兜底, 不崩溃)。
+def _first_frame(img) -> "torch.Tensor | None":
+    """取输入的第一帧, 归一化为 HxWxC 0..1 张量; 无值输入一律 None。
 
-    容忍上游任意形态: IMAGE 标准 [B,H,W,C] 批张量取首帧; [H,W,C] 单帧直接用;
-    tuple/list (如预览节点透传的空批) 取其中第一个张量元素; 其余一律 None (该格按空格处理)。
+    参数:
+        img: IMAGE 输入 (任意形态: 单帧/批次/list/tuple/非张量)。
+
+    返回:
+        torch.Tensor | None: HxWxC 0..1; None = 无值 (None/空 tuple/list/零批/非张量)。
     """
-    if isinstance(img, (tuple, list)):
-        img = next((x for x in img if isinstance(x, torch.Tensor)), None)
+    if img is None or (isinstance(img, (tuple, list)) and len(img) == 0):
+        return None
     if not isinstance(img, torch.Tensor) or img.dim() < 2:
         return None
     if img.dim() == 4 and img.shape[0] == 0:
@@ -64,8 +84,8 @@ def _first_frame(img) -> torch.Tensor | None:
     return img[0] if img.dim() == 4 else img
 
 
-def _to_pil(img_hwc, width: int, height: int) -> Image.Image:
-    """单帧 HxWxC 0..1 张量 → PIL RGB (必要时 Lanczos 缩放到 width×height)。"""
+def _to_pil(img_hwc: torch.Tensor, width: int, height: int) -> Image.Image:
+    """单帧 HxWxC 0..1 转 PIL 图, 缩放到 (width, height)。"""
     arr = img_hwc.float().clamp(0.0, 1.0).cpu().numpy()
     im = Image.fromarray((arr * 255).astype(np.uint8))
     if im.size != (width, height):
@@ -74,7 +94,7 @@ def _to_pil(img_hwc, width: int, height: int) -> Image.Image:
 
 
 class FallingTSImageCompositeNode:
-    """四图 2×2 Z 字合成为单张带标注图: 4 图 + 4 标注 → 统一尺寸 → 左上角标注 → 2×2 排列输出。"""
+    """N 图网格合成 单张图 (total 决定张数, 默认标注见 _DEFAULT_LABELS)。"""
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
@@ -82,56 +102,90 @@ class FallingTSImageCompositeNode:
 
         返回:
             dict:
-            - "optional".image1..image4: 四个子图 (IMAGE, 可选; 未连接/None = 该格渲染为底色空格,
-              四图全空时输出 None);
-            - "required".label1..label4: 四个标注文字 (STRING, 可连线, 默认 前面/右面/后面/左面, 空 = 不画);
-            - "required".font_size: 字号 (子图宽百分比, 默认 8.0);
-            - "required".padding: 图间距与外边距 (像素, 默认 6);
-            - "required".background_color: 间距底色 (十六进制, 默认 #000000)。
+            - "required".total: 图片张数 (1~MAX_TOTAL, 前端据此动态增删端口);
+            - "required".label1..labelMAX: 各图标注 (可连线, 默认见 _DEFAULT_LABELS,
+              None = 默认, 空串 = 不画);
+            - "required".font_size/padding/background_color;
+            - "optional".image1..imageMAX: 各图 (None/未连接 = 该格底色空格占位);
+            - "hidden"."id": 节点唯一 ID (合成结果缓存键)。
         """
-        return {
-            "required": {
-                "label1": ("STRING", {"default": "前面", "multiline": False, "tooltip": "左上标注 (空 = 不画)"}),
-                "label2": ("STRING", {"default": "右面", "multiline": False, "tooltip": "右上标注 (空 = 不画)"}),
-                "label3": ("STRING", {"default": "后面", "multiline": False, "tooltip": "左下标注 (空 = 不画)"}),
-                "label4": ("STRING", {"default": "左面", "multiline": False, "tooltip": "右下标注 (空 = 不画)"}),
-                "font_size": ("FLOAT", {"default": 8.0, "min": 2.0, "max": 30.0, "step": 0.5, "tooltip": "字号 (子图宽百分比, 8.0 = 8%)"}),
-                "padding": ("INT", {"default": 6, "min": 0, "max": 60, "step": 1, "tooltip": "图间距与外边距 (像素)"}),
-                "background_color": ("STRING", {"default": "#000000", "multiline": False, "tooltip": "间距底色 (十六进制, 如 #000000)"}),
-            },
-            "optional": {
-                "image1": ("IMAGE", {"tooltip": "左上 (默认标注 前面, 通常接原图; 未连接/None = 空格)"}),
-                "image2": ("IMAGE", {"tooltip": "右上 (默认标注 右面; 未连接/None = 空格)"}),
-                "image3": ("IMAGE", {"tooltip": "左下 (默认标注 后面; 未连接/None = 空格)"}),
-                "image4": ("IMAGE", {"tooltip": "右下 (默认标注 左面; 未连接/None = 空格)"}),
-            },
-            "hidden": {"id": "UNIQUE_ID"},
+        required: dict = {
+            "total": (
+                "INT",
+                {
+                    "default": DEFAULT_TOTAL,
+                    "min": 1,
+                    "max": MAX_TOTAL,
+                    "step": 1,
+                    "tooltip": f"图片张数 (最少 1, 最多 {MAX_TOTAL}), 前端按此动态增删 image_i/label_i 端口",
+                },
+            ),
         }
+        for i in range(1, MAX_TOTAL + 1):
+            required[f"label{i}"] = (
+                "STRING",
+                {
+                    "default": _DEFAULT_LABELS[i - 1] if i <= len(_DEFAULT_LABELS) else "",
+                    "tooltip": f"图 {i} 左上角标注 (可连线; 空 = 不画)",
+                },
+            )
+        required["font_size"] = (
+            "FLOAT",
+            {"default": 8.0, "min": 2.0, "max": 30.0, "step": 0.5, "tooltip": "字号 (子图宽百分比, 8.0 = 8%)"},
+        )
+        required["padding"] = (
+            "INT",
+            {"default": 6, "min": 0, "max": 60, "step": 1, "tooltip": "格子间距 (像素)"},
+        )
+        required["background_color"] = (
+            "STRING",
+            {"default": "#000000", "multiline": False, "tooltip": "间距底色 (十六进制, 如 #000000)"},
+        )
+        optional = {}
+        for i in range(1, MAX_TOTAL + 1):
+            optional[f"image{i}"] = ("IMAGE", {"tooltip": f"图 {i} (未连接 = 该格底色空格占位)"})
+        return {"required": required, "optional": optional, "hidden": {"id": "UNIQUE_ID"}}
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "composite"
     CATEGORY = "FallingTS/工具"
 
-    def composite(self, image1=None, image2=None, image3=None, image4=None,
-                  label1="前面", label2="右面", label3="后面", label4="左面",
-                  font_size=8.0, padding=6, background_color="#000000", id=None):
-        """统一尺寸 + 左上角标注 → 2×2 Z 字合成为单张图。
+    @staticmethod
+    def _clamp_total(total) -> int:
+        """张数钳位到 [1, MAX_TOTAL]; None/非法值回退默认 4。"""
+        try:
+            t = int(total)
+        except (TypeError, ValueError):
+            return DEFAULT_TOTAL
+        return min(MAX_TOTAL, max(1, t))
+
+    def composite(self, total=DEFAULT_TOTAL, font_size=8.0, padding=6, background_color="#000000", id=None, **kwargs):
+        """统一尺寸 + 左上角标注, N 图网格合成为单张图。
 
         None 容忍 (输入一律安全降级, 不崩溃):
-        - 某图 None (未连接/上游无值) 或 空批/非张量 (如扇出未选中分支经预览节点透传的 () 空 tuple)
-          → 该格渲染为底色空格 (不画标注), 布局不变;
-        - 四图全 None/空 → 输出本节点最近一次合成结果 (sticky, 下游不丢数据); 从未合成过则输出 None (透传);
-        - font_size None → 8.0; padding None → 6; background_color None → #000000; label None → 不画。
+        - 某图 None/空 tuple/非张量 -> 该格渲染为底色空格 (不画标注), 布局不变;
+        - 全部图 None/空 -> 本节点曾合成过则输出最近一次结果 (sticky, 让下游不丢数据),
+          从未合成过则透传 (None,);
+        - total None -> DEFAULT_TOTAL; 各 label None -> 默认标注 (图 1~4 为 前面/右面/
+          后面/左面, 图 5~8 为 上面/下面/近处/远处), 空串 = 不画;
+        - font_size None -> 8.0; padding None -> 6; background_color None -> #000000。
 
         参数 id: 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点合成结果缓存键。
         """
-        # 统一归一化: 每个输入 → 单帧 HxWxC 张量, 或 None (None/空 tuple/非张量 一律 None, 该格按空格处理)
-        frames = [_first_frame(img) for img in (image1, image2, image3, image4)]
-        labels = (label1, label2, label3, label4)
+        n = self._clamp_total(total)
+        # 逐格归一化 (无值输入 -> None, 该格占位)
+        frames = [_first_frame(kwargs.get(f"image{i}")) for i in range(1, n + 1)]
+        labels = []
+        for i in range(1, n + 1):
+            raw = kwargs.get(f"label{i}")
+            if raw is None:
+                labels.append(_DEFAULT_LABELS[i - 1] if i <= len(_DEFAULT_LABELS) else "")
+            else:
+                labels.append(raw)
         present = [f for f in frames if f is not None]
         if not present:
-            # 四图全 None (未连接/上游无值): 不报错 —— 若本节点曾合成过, 输出最近一次合成结果 (sticky),
-            # 让下游不丢数据; 从未合成过则透传 (None,)
+            # 全部无值 (未连接/上游无值/扇出未选中分支): 曾合成过 -> 回放最近一次结果;
+            # 从未合成过 -> 透传 None
             if id is not None and str(id) in _last_output:
                 return (_last_output[str(id)],)
             return (None,)
@@ -148,6 +202,7 @@ class FallingTSImageCompositeNode:
             font_ratio = 8.0
         bg = _bg_rgb(background_color)
         margin = max(8, int(width * 0.02))
+        # 逐格贴图: 有图画图+标注, 无图底色占位 (布局不变)
         tiles = []
         for frame, label in zip(frames, labels):
             if frame is None:
@@ -167,12 +222,12 @@ class FallingTSImageCompositeNode:
                     stroke_fill=(0, 0, 0, 255),
                 )
             tiles.append(tile)
-        # Z 字排列: 上排 image1(前面)/image2(右面), 下排 image3(后面)/image4(左面)
-        canvas = Image.new("RGB", (width * 2 + gap * 3, height * 2 + gap * 3), bg)
-        canvas.paste(tiles[0], (gap, gap))
-        canvas.paste(tiles[1], (gap * 2 + width, gap))
-        canvas.paste(tiles[2], (gap, gap * 2 + height))
-        canvas.paste(tiles[3], (gap * 2 + width, gap * 2 + height))
+        # 网格排列: cols = ceil(sqrt(total)), 行优先填充
+        cols, rows = _grid_dims(n)
+        canvas = Image.new("RGB", (width * cols + gap * (cols + 1), height * rows + gap * (rows + 1)), bg)
+        for idx, tile in enumerate(tiles):
+            row, col = divmod(idx, cols)
+            canvas.paste(tile, (gap * (col + 1) + col * width, gap * (row + 1) + row * height))
         arr = np.asarray(canvas).astype(np.float32) / 255.0
         out = torch.from_numpy(arr[np.newaxis, ...])
         if id is not None:
@@ -185,5 +240,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FallingTSImageComposite": "FallingTS 四图合成 (2×2 带标注)",
+    "FallingTSImageComposite": "FallingTS 多图合成 (total 网格带标注)",
 }
