@@ -81,6 +81,21 @@ app.registerExtension({
       const result = onNodeCreated?.apply(this, arguments);
       const node = this;
 
+      // 主链路: 新旧前端 widget 值变化(拖 spinner/输入/程序赋值)都会触发 widget.callback
+      const bindTotalWidget = () => {
+        const tw = node.widgets?.find((w) => w.name === "total");
+        if (!tw || tw.__ftsBound) return;
+        tw.__ftsBound = true;
+        const origCb = tw.callback;
+        tw.callback = function (...cbArgs) {
+          const cbOut = origCb?.apply(this, cbArgs);
+          syncPorts(node);
+          fitHeight(node);
+          return cbOut;
+        };
+      };
+      bindTotalWidget();
+
       const onWidgetChanged = nodeType.prototype.onWidgetChanged;
       /** 节点级 widget 变化钩子: total 变化时同步端口。 */
       // 调用约定: 新前端 (name, value, oldValue, widget), name 为字符串;
@@ -121,6 +136,7 @@ app.registerExtension({
       fitHeight(node);
       // 节点刚创建时 widgetValue store 可能还没注册完成, 下一 tick 再同步一次
       setTimeout(() => {
+        bindTotalWidget();
         syncPorts(node);
         fitHeight(node);
       }, 0);
