@@ -85,7 +85,17 @@ function dropWidget(node, w) {
  * @param {LGraphNode} node
  */
 function syncNode(node) {
-  const total = getTotal(node);
+  ensureNodeShape(node, getTotal(node));
+}
+
+/**
+ * 按给定 total 对齐图端口与标注文本框 (syncNode 与加载期预对齐共用内部实现)。
+ * 契约: 端口/控件维持 [image1..imageN | total, font_size, padding, background_color, label1..labelN] 顺序,
+ * 与保存的 widgets_values 逐位对应, 保证按位置套用值时每一格都能命中已有控件。
+ * @param {LGraphNode} node
+ * @param {number} total 目标数量 (调用方已夹到 1..MAX_SLOTS)
+ */
+function ensureNodeShape(node, total) {
 
   // 1) 左侧图端口: image1..imageN (尾部多余的逐个移除, 不足的从尾部补齐)
   while (imageInputsOf(node).length > total) {
@@ -195,8 +205,26 @@ app.registerExtension({
           const [tt, , , , , , , , , fs, pd, bg] = wv;
           info.widgets_values = [tt ?? DEFAULT_TOTAL, fs, pd, bg];
         }
+        // 关键时序: 先按保存的 total 预对齐端口/标注文本框, 再由 prevOnConfigure 套值——
+        // 创建时构造器已把控件裁到默认 total (4), 若直接按位置套用 widgets_values,
+        // 超出默认数量的标注值会因没有对应文本框而被丢弃, 且 image5..imageN 图端口尚不存在,
+        // 引用高编号端口的连线无法挂接 (表现为输入连线缺失、标注文本缺失)。
+        const savedHead = Array.isArray(info?.widgets_values) ? info.widgets_values[0] : Number.NaN;
+        const savedTotal = Math.trunc(Number(savedHead));
+        if (Number.isFinite(savedTotal) && savedTotal >= 1) {
+          ensureNodeShape(this, Math.max(1, Math.min(MAX_SLOTS, savedTotal)));
+        }
         prevOnConfigure?.call(this, info);
         syncNode(this);
+        // 新版前端在调用 onConfigure 之前就已按位置套完 widgets_values, 彼时形状仍是默认裁减态,
+        // 超出默认数量的标注值已被丢弃; 形状对齐后再按位置重套一次, 确保 label5..labelN 命中控件。
+        const wvFinal = Array.isArray(info?.widgets_values) ? info.widgets_values : [];
+        if (wvFinal.length) {
+          const ws = (this.widgets ?? []).filter((w) => w && w.serialize !== false);
+          ws.forEach((w, i) => {
+            if (i < wvFinal.length && wvFinal[i] !== undefined) w.value = wvFinal[i];
+          });
+        }
         fitHeight(this);
       };
 

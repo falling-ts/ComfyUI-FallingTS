@@ -104,7 +104,7 @@ class FallingTSImageCompositeNode:
             dict:
             - "required".total: 图片张数 (最少 1, 不设上限; 超过 MAX_TOTAL 按 MAX_TOTAL 合成, 前端据此增删图端口、扩充标注文本框);
             - "required".font_size/padding/background_color;
-            - "required".label1..labelMAX: 各图标注 (节点内表单文本框, 按 total 扩充; 空串 = 不画, None = 默认标注 _DEFAULT_LABELS);
+            - "optional".label1..labelMAX (widget 随 total 进/出提交载荷, 缺省 = 回退默认标注): 各图标注 (节点内表单文本框, 按 total 扩充; 空串 = 不画, None = 默认标注 _DEFAULT_LABELS);
             - "optional".image1..imageMAX: 各图端口 (左侧; 未连接 = 该格底色空格占位);
             - "hidden"."id": 节点唯一 ID (合成结果缓存键)。
         """
@@ -136,7 +136,7 @@ class FallingTSImageCompositeNode:
         for i in range(1, MAX_TOTAL + 1):
             optional[f"image{i}"] = ("IMAGE", {"tooltip": f"图 {i} (未连接 = 该格底色空格占位)"})
         for i in range(1, MAX_TOTAL + 1):
-            required[f"label{i}"] = (
+            optional[f"label{i}"] = (
                 "STRING",
                 {"default": "", "tooltip": f"标注 {i} (表单文本框, 随 total 扩充; 空串 = 不画)"},
             )
