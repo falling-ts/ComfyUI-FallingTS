@@ -84,6 +84,27 @@ def _first_frame(img) -> "torch.Tensor | None":
     return img[0] if img.dim() == 4 else img
 
 
+def _batch_frames(images) -> "list[torch.Tensor] | None":
+    """帧批次直入: 批次 (BxHxWxC) 逐帧拆为 HxWxC 单帧列表。
+
+    参数:
+        images: IMAGE 批次输入 (或单帧/无值)。
+
+    返回:
+        list[torch.Tensor] | None: 每帧 HxWxC 0..1; 无值/非张量/零批 -> None。
+    """
+    if images is None or (isinstance(images, (tuple, list)) and len(images) == 0):
+        return None
+    if not isinstance(images, torch.Tensor) or images.dim() < 3:
+        return None
+    if images.dim() == 3:
+        # 单帧输入按 1 帧处理
+        return [images]
+    if images.shape[0] == 0:
+        return None
+    return [images[i] for i in range(images.shape[0])]
+
+
 def _to_pil(img_hwc: torch.Tensor, width: int, height: int) -> Image.Image:
     """单帧 HxWxC 0..1 转 PIL 图, 缩放到 (width, height)。"""
     arr = img_hwc.float().clamp(0.0, 1.0).cpu().numpy()
@@ -132,7 +153,12 @@ class FallingTSImageCompositeNode:
             "STRING",
             {"default": "#000000", "multiline": False, "tooltip": "间距底色 (十六进制, 如 #000000)"},
         )
-        optional = {}
+        optional: dict = {
+            "images": (
+                "IMAGE",
+                {"tooltip": f"帧批次直入 (可选): 连接后按批次帧序逐格合成 (每帧一格, 最多 {MAX_TOTAL} 帧), 忽略 total/逐格图端口; 未连接 = 走逐格模式"},
+            ),
+        }
         for i in range(1, MAX_TOTAL + 1):
             optional[f"image{i}"] = ("IMAGE", {"tooltip": f"图 {i} (未连接 = 该格底色空格占位)"})
         for i in range(1, MAX_TOTAL + 1):
@@ -155,27 +181,44 @@ class FallingTSImageCompositeNode:
             return DEFAULT_TOTAL
         return min(MAX_TOTAL, max(1, t))
 
-    def composite(self, total=DEFAULT_TOTAL, font_size=8.0, padding=6, background_color="#000000", id=None, **kwargs):
+    def composite(self, total=DEFAULT_TOTAL, font_size=8.0, padding=6, background_color="#000000", id=None, images=None, **kwargs):
         """统一尺寸 + 左上角标注, N 图网格合成为单张图。
+
+        两种输入模式 (二选一, 批次直入优先):
+        - 逐格模式 (images 未连接): total 决定张数, image1..imageN 逐格输入;
+        - 批次直入 (images 已连接): 按批次帧序逐帧一格, 张数 = min(批次帧数, MAX_TOTAL),
+          total/逐格图端口忽略 (空白标注默认改为 帧1..帧N, 便于截帧合成辨序)。
 
         None 容忍 (输入一律安全降级, 不崩溃):
         - 某图 None/空 tuple/非张量 -> 该格渲染为底色空格 (不画标注), 布局不变;
         - 全部图 None/空 -> 本节点曾合成过则输出最近一次结果 (sticky, 让下游不丢数据),
           从未合成过则透传 (None,);
         - total None -> DEFAULT_TOTAL; 各 label None -> 默认标注 (图 1~4 为 前面/右面/
-          后面/左面, 图 5~8 为 上面/下面/近处/远处), 空串 = 不画;
+          后面/左面, 图 5~8 为 上面/下面/近处/远处; 批次直入则默认 帧1..帧N),
+          空串 = 不画;
         - font_size None -> 8.0; padding None -> 6; background_color None -> #000000。
 
         参数 id: 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点合成结果缓存键。
         """
         n = self._clamp_total(total)
-        # 逐格归一化 (无值输入 -> None, 该格占位)
-        frames = [_first_frame(kwargs.get(f"image{i}")) for i in range(1, n + 1)]
+        batch = _batch_frames(images)
+        if batch is not None:
+            # 批次直入: 每帧一格, 上限 MAX_TOTAL; 忽略 total 与逐格图端口
+            n = min(len(batch), MAX_TOTAL)
+            frames = batch[:n]
+            default_labels = [f"帧 {i}" for i in range(1, max(n, 8) + 1)]
+        else:
+            # 逐格模式: 逐格归一化 (无值输入 -> None, 该格占位)
+            frames = [_first_frame(kwargs.get(f"image{i}")) for i in range(1, n + 1)]
+            default_labels = _DEFAULT_LABELS
         labels = []
         for i in range(1, n + 1):
             raw = kwargs.get(f"label{i}")
             if raw is None:
-                labels.append(_DEFAULT_LABELS[i - 1] if i <= len(_DEFAULT_LABELS) else "")
+                labels.append(default_labels[i - 1] if i <= len(default_labels) else "")
+            elif raw == "" and batch is not None:
+                # 批次直入: 空串 = 未设置, 回退默认帧号标注 (逐格模式空串仍 = 不画)
+                labels.append(default_labels[i - 1] if i <= len(default_labels) else "")
             else:
                 labels.append(raw)
         present = [f for f in frames if f is not None]
