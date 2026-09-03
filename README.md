@@ -19,10 +19,11 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | Image preview save | `PreviewImageSave` | `FallingTS/Utility` | Always previews (temp, does not write to output); clicking **Save** writes to output per filename/format/bit depth/color space, **same name overwritten, no sequence number** |
 | Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
 
-### Web frontend enhancements (13, ready to use on install, no configuration)
+### Web frontend enhancements (14, ready to use on install, no configuration)
 
 | File | Function |
 |------|------|
+| `web/js/task_notify.js` | Browser task-complete/fail notification tones (Web Audio, no system sound): success on `execution_success`, fail on `execution_error`/`execution_interrupted`; per-status volume/frequency/decay settings + a Win11-style toast; configured under **Settings → FallingTS → 任务提示音** |
 | `web/js/proceed.js` | Continue node button + segmented execution logic |
 | `web/js/route.js` | Route node: dynamically add/remove each group's ports by `total` + actually execute the false branch: on a partial submit, merge the output nodes downstream of each switch=false group's output into targets, save this segment and stop |
 | `web/js/preview-image.js` | Preview-save node "Save" button + format-linked bit depth/color space |
