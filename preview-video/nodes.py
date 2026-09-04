@@ -564,3 +564,4 @@ PromptServer.instance.routes.post("/preview-video/frame/{node_id}")(_handle_fram
 PromptServer.instance.routes.post("/preview-video/frame-remove/{node_id}")(_handle_frame_remove)
 PromptServer.instance.routes.post("/preview-video/done/{node_id}")(_handle_done)
 PromptServer.instance.routes.post("/preview-video/reset")(_handle_reset)
+PromptServer.instance.routes.post("/preview-video/clear")(_handle_clear)
