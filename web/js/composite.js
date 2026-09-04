@@ -111,6 +111,16 @@ function ensureNodeShape(node, total) {
   }
   imageInputsOf(node).forEach((inp, i) => { inp.localized_name = "图 " + (i + 1); });
 
+  // 0) 清理旧版「images 批量输入」残留槽 (后端已只支持逐格 image1..imageN):
+  //    无链接的任意阶段直接移除; 有链接的留给宏任务(syncNode)经 removeInput 安全断开。
+  //    先收集(倒序遍历移除, 避免索引错乱), 再统一 removeInput。
+  const legacyImages = [];
+  for (let i = (node.inputs ?? []).length - 1; i >= 0; i--) {
+    const inp = node.inputs[i];
+    if (inp && inp.name === "images" && !inp.widget && (inp.link ?? null) === null) legacyImages.push(i);
+  }
+  for (const idx of legacyImages) node.removeInput(idx);
+
   // 2) 标注表单文本框: label1..labelN (尾部多余移除, 尾部不足补齐)
   let lw = labelWidgetsOf(node);
   while (lw.length > total) {
