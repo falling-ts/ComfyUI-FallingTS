@@ -731,7 +731,7 @@ app.registerExtension({
         const prefixLinked =
           node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
         // filename_suffix 同前缀: 连线时用 execute 实际接收值, 手动输入用 widget 值
-        // (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, ?? "" 兜底)
+        // (旧工作流由 onConfigure 按旧形状迁移, suffix 恒有值; ?? "" 兜底)
         const suffixWidget = node.widgets?.find((w) => w.name === "filename_suffix");
         const suffixLinked =
           node.inputs?.find((i) => i.name === "filename_suffix")?.link != null;
@@ -899,17 +899,29 @@ app.registerExtension({
         prevOnConfigure?.call(this, info);
         if (node._fallingtsFrameList) {
           // ── 旧版 widgets_values 迁移 ──
-          // 旧结构(含「重新截帧」按钮): [filename, 保存, 截帧, 完成, 重新截帧, 输出帧数, frame_list]
-          // 新结构:                      [filename, 保存, 截帧, 完成,      输出帧数, frame_list]
-          // 删除「重新截帧」按钮后按位置恢复会错位(输出帧数吃 None / frame_list 吃数字),
-          // 此处按旧结构特征(7 项且第 6/7 位为 number + {frames})显式迁移。
+          // 当前结构: [filename, suffix, 保存, 截帧, 完成, 输出帧数, frame_list] (7 槽, suffix 紧挨前缀)
+          // 旧结构 A(含「重新截帧」按钮): [filename, 保存, 截帧, 完成, 重新截帧, 输出帧数, frame_list]
+          // 旧结构 B(删「重新截帧」、加 suffix 前): [filename, 保存, 截帧, 完成, 输出帧数, frame_list]
+          // 旧结构 C(最早, 仅保存按钮): [filename, 保存]
+          // 新版前端保存的文件带 widgets_values_named(含 filename_suffix 键) → 位置已是新序, 跳过;
+          // 其余按旧形状检测: A 按位置恰好对齐只需清帧; B 输出帧数槽吃到旧 frame_list 对象, 按名修正;
+          // 各旧结构 suffix 槽落到旧按钮值 null → 统一空串; 帧列表刷新即清空, 一并清出序列化载荷。
+          const named = info?.widgets_values_named;
+          const isNewFormat = named && typeof named === "object" && "filename_suffix" in named;
           const wv = info?.widgets_values;
-          if (Array.isArray(wv) && wv.length === 7 && typeof wv[5] === "number" && wv[6] && Array.isArray(wv[6].frames)) {
+          if (!isNewFormat && Array.isArray(wv)) {
             const tw = node._fallingtsTotalWidget;
-            // 无条件修正 total(ComfyUI 已按位置恢复过, 错位后 tw.value 可能不是合法值)
-            if (tw) tw.value = wv[5];
-            // 刷新即清空: 帧列表不再还原, 序列化载荷里的旧帧一并清掉, 保存时即为干净格式
-            info.widgets_values = [wv[0], wv[1], wv[2], wv[3], wv[5], { frames: [] }];
+            if (wv.length === 7 && typeof wv[5] === "number" && wv[6] && Array.isArray(wv[6].frames)) {
+              // 旧结构 A: 位置恢复后各槽恰好对齐(重新截帧 null 落完成槽), 修正 total + 清帧
+              if (tw) tw.value = wv[5];
+              info.widgets_values = [wv[0], "", wv[1], wv[2], wv[3], wv[5], { frames: [] }];
+            } else if (wv.length === 6 && typeof wv[4] === "number") {
+              // 旧结构 B: 输出帧数槽吃到旧 frame_list 对象, 按名修正 total
+              if (tw) tw.value = wv[4];
+              info.widgets_values = [wv[0], "", wv[1], wv[2], wv[3], wv[4], { frames: [] }];
+            }
+            const sw = node.widgets?.find((w) => w.name === "filename_suffix");
+            if (sw && sw.value == null) sw.value = "";
           }
           // 同步裁剪到 1+total: configure 是同步的, 渲染发生在 configure 完成后,
           // 因此不会出现"先显示全部 64 端口再隐藏"的闪烁 —— 一次成型。

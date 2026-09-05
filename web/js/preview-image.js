@@ -1,8 +1,9 @@
 /**
  * PreviewImageSave 前端: 底部控件(文件名/格式/位深/色彩空间) + 「保存」按钮。
  *
- * 布局(自上而下): 图片展示区域(节点本体) → filename_prefix/format/bit_depth/input_color_space
- * 四个控件(INPUT_TYPES 声明的普通 widget) + filename_suffix(末尾追加的文本框) → 「保存」按钮(addWidget 追加)。
+ * 布局(自上而下): 图片展示区域(节点本体) → filename_prefix → filename_suffix(文本框, 紧挨前缀)
+ * → format/bit_depth/input_color_space 三个控件(INPUT_TYPES 声明的普通 widget) → 「保存」按钮(addWidget 追加)。
+ * 旧工作流 widgets_values 为 5 槽(无 suffix), 加载时 onConfigure 按旧形状检测并自动迁移(见 onNodeCreated)。
  *
  * 行为:
  * - format 变化时按格式联动 bit_depth / input_color_space 的合法选项(png→8/16bit+sRGB,
@@ -277,7 +278,7 @@ app.registerExtension({
         const prefixLinked =
           node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
         // filename_suffix 同前缀: 连线时用 execute 实际接收值, 手动输入用 widget 值
-        // (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, ?? "" 兜底)
+        // (旧工作流由 onConfigure 按旧形状迁移, suffix 恒有值; ?? "" 兜底)
         const suffixLinked =
           node.inputs?.find((i) => i.name === "filename_suffix")?.link != null;
         try {
@@ -308,6 +309,39 @@ app.registerExtension({
 
       syncFormatDependentWidgets(node);
       styleSaveButton(node);
+
+      // ── 旧版 widgets_values 迁移 ──
+      // 旧结构: [前缀, 格式, 位深, 色彩空间, 保存按钮] (5 槽, 无 suffix);
+      // 新结构: [前缀, suffix, 格式, 位深, 色彩空间, 保存按钮] (6 槽, suffix 紧挨前缀)。
+      // suffix 插入到第 2 位后, 按位置恢复会整体错位(suffix 吃格式、格式吃位深...)。
+      // 新版前端保存的文件带 widgets_values_named(含 filename_suffix 键) → 位置已是新序, 跳过;
+      // 其余按旧形状(5 槽)检测, 逐项按名还原, 并重写 info.widgets_values 保持序列化一致。
+      const prevOnConfigure = node.onConfigure;
+      /**
+       * 加载迁移钩子: 旧 5 槽 widgets_values 按名还原到新 6 槽结构。
+       * @param {object} info 节点序列化数据
+       * @returns {*} 原 onConfigure 的返回值
+       */
+      node.onConfigure = function (info) {
+        prevOnConfigure?.call(this, info);
+        const named = info?.widgets_values_named;
+        const isNewFormat = named && typeof named === "object" && "filename_suffix" in named;
+        if (isNewFormat) return;
+        const wv = info?.widgets_values;
+        if (!Array.isArray(wv) || wv.length !== 5) return;
+        const set = (name, value) => {
+          const w = node.widgets?.find((x) => x.name === name);
+          if (w) w.value = value;
+        };
+        set("filename_prefix", wv[0]);
+        set("filename_suffix", "");
+        set("format", wv[1]);
+        set("bit_depth", wv[2]);
+        set("input_color_space", wv[3]);
+        // 触发 format 回调按恢复值联动位深/色彩空间选项(旧 exr 文件需 32-bit float 等选项就位)
+        node.widgets?.find((x) => x.name === "format")?.callback?.(wv[1]);
+        info.widgets_values = [wv[0], "", wv[1], wv[2], wv[3], wv[4]];
+      };
     };
   },
 });

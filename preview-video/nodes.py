@@ -116,8 +116,8 @@ class PreviewVideoNode(IO.ComfyNode):
                     multiline=False,
                     tooltip="保存到 output 的文件名(不含扩展名); 同名直接覆盖, 无序号",
                 ),
-                # 放在末尾: 旧工作流 widgets_values 按位置对齐([前缀, 按钮null]),
-                # 新输入追加在尾部, 旧工作流加载时 suffix 槽落到空串, 不打乱既有控件
+                # 紧随 filename_prefix(控件紧挨前缀显示); 旧工作流 widgets_values 按位置对齐,
+                # 插入槽位由前端 onConfigure 按旧形状检测并自动迁移, 见 web/js/preview-video.js
                 IO.String.Input(
                     "filename_suffix",
                     default="",

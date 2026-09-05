@@ -48,7 +48,7 @@ class PreviewImageSaveNode:
             dict:
             - "required".images: 要预览/保存的图片;
             - "required".filename_prefix: 保存文件名(不含扩展名, 同名覆盖);
-            - "required".filename_suffix: 文件名后缀(不含扩展名, 默认空, 拼接在 filename_prefix 之后);
+            - "required".filename_suffix: 文件名后缀(紧跟 filename_prefix; 不含扩展名, 默认空, 拼接在 filename_prefix 之后);
             - "required".format: png/exr;
             - "required".bit_depth: 位深(png→8/16bit, exr→32bit float);
             - "required".input_color_space: 输入色彩空间(png→sRGB, exr→sRGB/HDR/linear);
@@ -63,6 +63,16 @@ class PreviewImageSaveNode:
                         "default": "preview",
                         "multiline": False,
                         "tooltip": "保存到 output 的文件名(不含扩展名); 同名文件直接覆盖, 无序号",
+                    },
+                ),
+                # 紧随 filename_prefix(控件紧挨前缀显示); 旧工作流 widgets_values 按位置对齐,
+                # 插入槽位由前端 onConfigure 按旧形状(5 槽)检测并自动迁移, 见 web/js/preview-image.js
+                "filename_suffix": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "tooltip": "文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.{format}",
                     },
                 ),
                 "format": (
@@ -84,16 +94,6 @@ class PreviewImageSaveNode:
                     {
                         "default": "sRGB",
                         "tooltip": "输入色彩空间: png → sRGB; exr → sRGB/HDR/linear",
-                    },
-                ),
-                # 放在末尾: 旧工作流 widgets_values 按位置对齐(前 4 项 + 按钮 null),
-                # 新输入追加在尾部, 旧工作流加载时 suffix 槽落到默认空串, 不打乱既有控件
-                "filename_suffix": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "multiline": False,
-                        "tooltip": "文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.{format}",
                     },
                 ),
             },
@@ -197,10 +197,10 @@ class PreviewImageSaveNode:
         self,
         images,
         filename_prefix: str = "preview",
+        filename_suffix: str = "",
         format: str = "png",
         bit_depth: str = "8-bit",
         input_color_space: str = "sRGB",
-        filename_suffix: str = "",
         prompt=None,
         extra_pnginfo=None,
         id: str | None = None,
@@ -215,10 +215,10 @@ class PreviewImageSaveNode:
         参数:
             images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 并透传本节点最近一次预览的图(下游可拿到该面之前预览的图进入合成; 从未预览过则透传 None, 下游按无值处理);
             filename_prefix (str, 默认 "preview"): 输出文件名前缀(控件, 保存时以按钮 POST 的为准);
+            filename_suffix (str, 默认 ""): 文件名后缀(控件, 紧跟前缀, 保存时以按钮 POST 的为准);
             format (str, 默认 "png"): png/exr(控件);
             bit_depth (str, 默认 "8-bit"): 位深(控件);
             input_color_space (str, 默认 "sRGB"): 输入色彩空间(控件);
-            filename_suffix (str, 默认 ""): 文件名后缀(控件, 保存时以按钮 POST 的为准);
             prompt (dict|None): 工作流 prompt(缓存, 供保存时注入元数据);
             extra_pnginfo (dict|None): 额外元数据(同上);
             id (str | None, 默认 None): 节点唯一 ID, 用作缓存键。

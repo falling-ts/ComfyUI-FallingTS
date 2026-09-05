@@ -162,6 +162,13 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                     multiline=False,
                     tooltip="保存到 output 的文件名(不含扩展名); 同名直接覆盖, 无序号",
                 ),
+                # 紧随 filename_prefix(控件紧挨前缀显示); 无旧工作流引用本节点, 无兼容约束
+                IO.String.Input(
+                    "filename_suffix",
+                    default="",
+                    multiline=False,
+                    tooltip="文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.{format}",
+                ),
                 IO.DynamicCombo.Input(
                     "format",
                     options=[
@@ -174,14 +181,6 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                         ]),
                     ],
                     tooltip="保存的文件格式与质量(flac / mp3 / opus)。",
-                ),
-                # 放在末尾: 旧工作流 widgets_values 按位置对齐, 新输入追加在尾部,
-                # 旧工作流加载时 suffix 槽落到默认空串, 不打乱既有控件
-                IO.String.Input(
-                    "filename_suffix",
-                    default="",
-                    multiline=False,
-                    tooltip="文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.{format}",
                 ),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],

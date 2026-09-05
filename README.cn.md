@@ -187,7 +187,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 - 走 `IO.ComfyNode` V3 规范;
 - 输入 `audio` → 原生 `UI.PreviewAudio` 写 **temp 目录 flac** 供前端播放;
-- 输入 `filename_prefix`(默认 `audio`) + `format`(flac/mp3/opus,含质量) + `filename_suffix`(默认空,拼接在前缀之后)→ 点「保存」按钮,后端用 execute 缓存的音频直接写 output(`{filename_prefix}{filename_suffix}.{format}`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
+- 输入 `filename_prefix`(默认 `audio`) + `filename_suffix`(默认空,拼接在前缀之后) + `format`(flac/mp3/opus,含质量)→ 点「保存」按钮,后端用 execute 缓存的音频直接写 output(`{filename_prefix}{filename_suffix}.{format}`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
 - 多段波形时 `{prefix}{suffix}_{i}`(仍无 5 位补零序号),`%batch_num%` 可替换;
 - HTTP 路由:`POST /preview-audio/save/{node_id}`(body: `filename_prefix`/`filename_suffix`/`filename_prefix_linked`/`filename_suffix_linked`/`format`/`quality`);
 - 前端 `web/js/preview-audio.js` 追加「保存」按钮。

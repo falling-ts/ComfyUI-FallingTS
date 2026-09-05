@@ -188,7 +188,7 @@ The mirror of many-to-one selection: many-to-one is "multi-group multi-input →
 
 - Follows the `IO.ComfyNode` V3 spec;
 - Input `audio` → native `UI.PreviewAudio` writes a **flac to the temp directory** for the frontend to play;
-- Inputs `filename_prefix` (default `audio`) + `format` (flac/mp3/opus, with quality) + `filename_suffix` (default empty, appended after the prefix) → clicking the "Save" button, the backend writes directly to output from the audio cached by execute (`{filename_prefix}{filename_suffix}.{format}`, same name overwritten, no `_sequence` suffix), **without re-running the workflow**;
+- Inputs `filename_prefix` (default `audio`) + `filename_suffix` (default empty, appended after the prefix) + `format` (flac/mp3/opus, with quality) → clicking the "Save" button, the backend writes directly to output from the audio cached by execute (`{filename_prefix}{filename_suffix}.{format}`, same name overwritten, no `_sequence` suffix), **without re-running the workflow**;
 - For multi-segment waveforms, `{prefix}{suffix}_{i}` (still no 5-digit zero-padded sequence number); `%batch_num%` can be substituted;
 - HTTP route: `POST /preview-audio/save/{node_id}` (body: `filename_prefix`/`filename_suffix`/`filename_prefix_linked`/`filename_suffix_linked`/`format`/`quality`);
 - The frontend `web/js/preview-audio.js` appends a "Save" button.
