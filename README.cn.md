@@ -15,9 +15,9 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 多对一选择 | `FallingTSSelector` | `FallingTS/工具` | 通用 ANY 节点:items 逗号分隔组名,total 组数(最少 1),左侧输入 = 组数 × 组名数量(第 1 组在前第 2 组在后,标签为组名),下拉选一个组名,右侧各组 选中值 输出各自该组名的输入值(未选中的 None 且 lazy 不执行);顶部固定输出 选中项(组名文本) + 索引(0 起) |
 | 扇出选择 | `FallingTSFanout` | `FallingTS/工具` | 多对一选择的镜像:`items` 逗号分隔组名(与多对一同源),`total` 组数(最少 1,最多 50)= 左侧输入端口数(每组一个 `input_i`),右侧输出 = 组数 × 组名数量(每组每个组名一个,标签=组名),`selection` **选中项**(下拉框,选项=组名,可连线直接接多对一 选中项)选中第 k 个组名 → 每组 `input_i` 路由到该组该组名对应的输出,其余 None,未连线时各组 None;partial 提交时每组选中组名输出下游输出节点真正执行(前端增强) |
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
-| 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix` 写 output(`.mp4`,同名覆盖,无序号) |
-| 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
-| 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
+| 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix`+`filename_suffix` 写 output(`.mp4`,同名覆盖,无序号) |
+| 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名前缀/后缀/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
+| 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+`filename_suffix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
 
 ### Web 前端增强(13 个,安装即用,无需配置)
 
@@ -179,17 +179,17 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 - 走 `IO.ComfyNode` V3 规范;
 - 输入 `video` → 编码为 mp4 写入 **temp 临时目录**(非 output)→ 前端播放;
-- 输入 `filename_prefix`(默认 `video`)→ 点「保存」按钮,后端用 execute 缓存的视频直接写 output(`{filename_prefix}.mp4`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
-- HTTP 路由:`POST /preview-video/save/{node_id}`(body: `filename_prefix` + `filename_prefix_linked`);
-- 前端 `web/js/preview-video.js` 追加「保存」按钮;`filename_prefix` 可被上游连线(如 MDTable 的 ID 列),保存时用 execute 实际接收到的值。
+- 输入 `filename_prefix`(默认 `video`)+ `filename_suffix`(默认空,拼接在前缀之后)→ 点「保存」按钮,后端用 execute 缓存的视频直接写 output(`{filename_prefix}{filename_suffix}.mp4`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
+- HTTP 路由:`POST /preview-video/save/{node_id}`(body: `filename_prefix`/`filename_suffix` + `filename_prefix_linked`/`filename_suffix_linked`);
+- 前端 `web/js/preview-video.js` 追加「保存」按钮;`filename_prefix`/`filename_suffix` 可被上游连线(如 MDTable 的 ID 列),保存时用 execute 实际接收到的值。
 
 ### 6. 音频预览 `PreviewAudioSave`(V3,带保存)
 
 - 走 `IO.ComfyNode` V3 规范;
 - 输入 `audio` → 原生 `UI.PreviewAudio` 写 **temp 目录 flac** 供前端播放;
-- 输入 `filename_prefix`(默认 `audio`) + `format`(flac/mp3/opus,含质量)→ 点「保存」按钮,后端用 execute 缓存的音频直接写 output(`{filename_prefix}.{format}`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
-- 多段波形时 `{prefix}_{i}`(仍无 5 位补零序号),`%batch_num%` 可替换;
-- HTTP 路由:`POST /preview-audio/save/{node_id}`(body: `filename_prefix`/`filename_prefix_linked`/`format`/`quality`);
+- 输入 `filename_prefix`(默认 `audio`) + `format`(flac/mp3/opus,含质量) + `filename_suffix`(默认空,拼接在前缀之后)→ 点「保存」按钮,后端用 execute 缓存的音频直接写 output(`{filename_prefix}{filename_suffix}.{format}`,同名覆盖、无 `_序号` 后缀),**不重跑工作流**;
+- 多段波形时 `{prefix}{suffix}_{i}`(仍无 5 位补零序号),`%batch_num%` 可替换;
+- HTTP 路由:`POST /preview-audio/save/{node_id}`(body: `filename_prefix`/`filename_suffix`/`filename_prefix_linked`/`filename_suffix_linked`/`format`/`quality`);
 - 前端 `web/js/preview-audio.js` 追加「保存」按钮。
 
 ---

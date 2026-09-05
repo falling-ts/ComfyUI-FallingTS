@@ -730,6 +730,11 @@ app.registerExtension({
         const prefixWidget = node.widgets?.find((w) => w.name === "filename_prefix");
         const prefixLinked =
           node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
+        // filename_suffix 同前缀: 连线时用 execute 实际接收值, 手动输入用 widget 值
+        // (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, ?? "" 兜底)
+        const suffixWidget = node.widgets?.find((w) => w.name === "filename_suffix");
+        const suffixLinked =
+          node.inputs?.find((i) => i.name === "filename_suffix")?.link != null;
         try {
           const resp = await fetch(`/preview-video/save/${node.id}`, {
             method: "POST",
@@ -737,6 +742,8 @@ app.registerExtension({
             body: JSON.stringify({
               filename_prefix: prefixWidget?.value ?? "video",
               filename_prefix_linked: prefixLinked,
+              filename_suffix: suffixWidget?.value ?? "",
+              filename_suffix_linked: suffixLinked,
             }),
           });
           const data = await resp.json().catch(() => null);

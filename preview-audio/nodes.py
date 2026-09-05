@@ -4,8 +4,8 @@
 参照:
 - 预览部分照原生 PreviewAudio(nodes_audio.py): UI.PreviewAudio → AudioSaveHelper.save_audio 写 temp flac;
 - 保存部分照原生 SaveAudioAdvanced + AudioSaveHelper.save_audio: 支持 flac/mp3/opus(+quality) 编码;
-- 差异: 保存用 {filename_prefix}.{format} 直接写 output, 同名覆盖, 不带 _序号 后缀
-  (不走 get_save_image_path 的 counter);
+- 差异: 保存用 {filename_prefix}{filename_suffix}.{format} 直接写 output, 同名覆盖, 不带 _序号 后缀
+  (不走 get_save_image_path 的 counter); filename_suffix 默认空串, 可手动输入或上游连线。
 - 关键: 点「保存」【不重跑工作流】—— execute 时把最近一次预览的音频数据缓存到后端,
   点按钮时前端把 文件名/格式/质量 POST 到 /preview-audio/save/{id}, 后端直接用缓存写 output。
 """
@@ -142,7 +142,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
         """定义节点 schema(V3 规范)。
 
         返回:
-            IO.Schema: 输入 audio + filename_prefix + format(flac/mp3/opus 及质量),
+            IO.Schema: 输入 audio + filename_prefix + format(flac/mp3/opus 及质量) + filename_suffix,
             输出 audio, hidden 含 prompt/extra_pnginfo/unique_id, is_output_node=True。
         """
         return IO.Schema(
@@ -152,7 +152,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             category="audio",
             description=(
                 "Preview the audio (temp folder) and click 保存 to write it to output "
-                "as {filename_prefix}.{format} (no sequence suffix, overwrites same name)."
+                "as {filename_prefix}{filename_suffix}.{format} (no sequence suffix, overwrites same name)."
             ),
             inputs=[
                 IO.Audio.Input("audio", tooltip="要预览/保存的音频 (None = 无值, 如扇出未选中分支, 跳过预览, 输出该节点最近一次预览的音频供下游)。"),
@@ -175,6 +175,14 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                     ],
                     tooltip="保存的文件格式与质量(flac / mp3 / opus)。",
                 ),
+                # 放在末尾: 旧工作流 widgets_values 按位置对齐, 新输入追加在尾部,
+                # 旧工作流加载时 suffix 槽落到默认空串, 不打乱既有控件
+                IO.String.Input(
+                    "filename_suffix",
+                    default="",
+                    multiline=False,
+                    tooltip="文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.{format}",
+                ),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],
             is_output_node=True,
@@ -182,7 +190,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, audio, filename_prefix: str = "audio", format: dict | None = None) -> IO.NodeOutput:
+    def execute(cls, audio, filename_prefix: str = "audio", filename_suffix: str = "", format: dict | None = None) -> IO.NodeOutput:
         """节点执行入口: 生成 temp 预览, 并把最近一次音频数据缓存到后端供「保存」直接写 output。
 
         逻辑: 音频为 None (如扇出节点未选中分支输出 = 无值) 跳过预览/缓存, 输出本节点最近一次预览的音频(从未预览过则 None);
@@ -194,6 +202,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             audio (dict|None): 音频对象, 含 waveform 与 sample_rate; None (如扇出未选中分支) 跳过预览/缓存, 输出本节点最近一次预览的音频(从未预览过则 None)。
             filename_prefix (str, 默认 "audio"): 输出文件名前缀(控件; 若被上游连线,
                 widget 只是占位符, 本参数为实际接收值, 保存时以此为准)。
+            filename_suffix (str, 默认 ""): 文件名后缀(控件, 保存时拼接在前缀之后; 连线时本参数为实际接收值)。
             format (dict|None): {format, quality}(控件)。
 
         返回:
@@ -217,6 +226,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             _last_output[str(nid)] = {
                 "audio": audio,
                 "filename_prefix": filename_prefix,
+                "filename_suffix": filename_suffix,
                 "format": format,
             }
 
@@ -232,7 +242,8 @@ async def _handle_save(request: web.Request) -> web.Response:
 
     参数:
         request (web.Request): POST /preview-audio/save/{node_id}, body 为 JSON
-            {filename_prefix, filename_prefix_linked, format, quality}。
+            {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked,
+             format, quality}。
 
     返回:
         web.Response:
@@ -256,12 +267,19 @@ async def _handle_save(request: web.Request) -> web.Response:
     # 用 execute 时实际接收到的值 (前端已标记 filename_prefix_linked)
     if data.get("filename_prefix_linked") and cache.get("filename_prefix"):
         filename_prefix = str(cache["filename_prefix"])
+    # 后缀同前缀: 手动输入或上游连线(连线时用 execute 实际接收值); 空串 = 不拼后缀
+    # (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, 此处 or "" 兜底)
+    filename_suffix = str(data.get("filename_suffix") or "")
+    if data.get("filename_suffix_linked") and cache.get("filename_suffix") is not None:
+        filename_suffix = str(cache["filename_suffix"])
+    # 文件名 = 前缀 + 后缀 (拼接后整体可含 %batch_num%)
+    name = filename_prefix + filename_suffix
 
     file_format = str(data.get("format") or "flac")
     quality = str(data.get("quality") or "128k")
 
     try:
-        saved = _save_audio_no_counter(cache["audio"], filename_prefix, file_format, quality)
+        saved = _save_audio_no_counter(cache["audio"], name, file_format, quality)
     except ValueError as e:
         return web.json_response({"status": "error", "message": str(e)}, status=400)
 

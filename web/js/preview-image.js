@@ -2,7 +2,7 @@
  * PreviewImageSave 前端: 底部控件(文件名/格式/位深/色彩空间) + 「保存」按钮。
  *
  * 布局(自上而下): 图片展示区域(节点本体) → filename_prefix/format/bit_depth/input_color_space
- * 四个控件(INPUT_TYPES 声明的普通 widget) → 「保存」按钮(addWidget 追加)。
+ * 四个控件(INPUT_TYPES 声明的普通 widget) + filename_suffix(末尾追加的文本框) → 「保存」按钮(addWidget 追加)。
  *
  * 行为:
  * - format 变化时按格式联动 bit_depth / input_color_space 的合法选项(png→8/16bit+sRGB,
@@ -276,6 +276,10 @@ app.registerExtension({
         // 需后端用 execute 时实际接收到的值, 否则保存会落到占位符 "preview"
         const prefixLinked =
           node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
+        // filename_suffix 同前缀: 连线时用 execute 实际接收值, 手动输入用 widget 值
+        // (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, ?? "" 兜底)
+        const suffixLinked =
+          node.inputs?.find((i) => i.name === "filename_suffix")?.link != null;
         try {
           const resp = await fetch(`/preview-image/save/${node.id}`, {
             method: "POST",
@@ -283,6 +287,8 @@ app.registerExtension({
             body: JSON.stringify({
               filename_prefix: getWidget("filename_prefix") ?? "preview",
               filename_prefix_linked: prefixLinked,
+              filename_suffix: getWidget("filename_suffix") ?? "",
+              filename_suffix_linked: suffixLinked,
               format: getWidget("format") ?? "png",
               bit_depth: getWidget("bit_depth") ?? "8-bit",
               input_color_space: getWidget("input_color_space") ?? "sRGB",

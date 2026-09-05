@@ -15,9 +15,9 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | Many-to-one selector | `FallingTSSelector` | `FallingTS/Utility` | General ANY node: `items` comma-separated group names, `total` group count (≥ 1), left inputs = group count × number of group names (group 1 first, group 2 after, labels are the group names); the dropdown picks one group name, and each group's **selected value** on the right outputs that group's input for that name (unselected → None, lazy, not executed); fixed outputs at the top: selected item (group-name text) + index (0-based) |
 | Fan-out selector | `FallingTSFanout` | `FallingTS/Utility` | The mirror of many-to-one selection: `items` comma-separated group names (same source as many-to-one), `total` group count (≥ 1, ≤ 50) = number of left input ports (one `input_i` per group); right outputs = group count × number of group names (one per group per group name, label = group name); `selection` **selected item** (dropdown, options = group names, can be wired directly to many-to-one's selected item) — selecting the k-th group name → each group's `input_i` routes to that group's output for that name, the rest None; when unwired, each group is None; on a partial submit, the output nodes downstream of each group's selected group name are actually executed (frontend enhancement) |
 | Grouped switch | `FallingTSSwitch` | `FallingTS/Utility` | One `switch` boolean toggles `total` groups at once (each group when-false/when-true → output, ANY); `total` ≥ 1 |
-| Video preview | `PreviewVideo` | `video` | Preview into the temp directory; clicking "Save" writes to output per `filename_prefix` (`.mp4`, same name overwritten, no sequence number) |
-| Image preview save | `PreviewImageSave` | `FallingTS/Utility` | Always previews (temp, does not write to output); clicking **Save** writes to output per filename/format/bit depth/color space, **same name overwritten, no sequence number** |
-| Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
+| Video preview | `PreviewVideo` | `video` | Preview into the temp directory; clicking "Save" writes to output per `filename_prefix`+`filename_suffix` (`.mp4`, same name overwritten, no sequence number) |
+| Image preview save | `PreviewImageSave` | `FallingTS/Utility` | Always previews (temp, does not write to output); clicking **Save** writes to output per filename prefix/suffix/format/bit depth/color space, **same name overwritten, no sequence number** |
+| Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix`+`filename_suffix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
 
 ### Web frontend enhancements (14, ready to use on install, no configuration)
 
@@ -180,17 +180,17 @@ The mirror of many-to-one selection: many-to-one is "multi-group multi-input →
 
 - Follows the `IO.ComfyNode` V3 spec;
 - Input `video` → encoded to mp4 and written to the **temp directory** (not output) → played in the frontend;
-- Input `filename_prefix` (default `video`) → clicking the "Save" button, the backend writes directly to output from the video cached by execute (`{filename_prefix}.mp4`, same name overwritten, no `_sequence` suffix), **without re-running the workflow**;
-- HTTP route: `POST /preview-video/save/{node_id}` (body: `filename_prefix` + `filename_prefix_linked`);
-- The frontend `web/js/preview-video.js` appends a "Save" button; `filename_prefix` can be wired from upstream (e.g. MDTable's ID column), and save uses the value execute actually received.
+- Input `filename_prefix` (default `video`) + `filename_suffix` (default empty, appended after the prefix) → clicking the "Save" button, the backend writes directly to output from the video cached by execute (`{filename_prefix}{filename_suffix}.mp4`, same name overwritten, no `_sequence` suffix), **without re-running the workflow**;
+- HTTP route: `POST /preview-video/save/{node_id}` (body: `filename_prefix`/`filename_suffix` + `filename_prefix_linked`/`filename_suffix_linked`);
+- The frontend `web/js/preview-video.js` appends a "Save" button; `filename_prefix`/`filename_suffix` can be wired from upstream (e.g. MDTable's ID column), and save uses the value execute actually received.
 
 ### 6. Audio preview `PreviewAudioSave` (V3, with save)
 
 - Follows the `IO.ComfyNode` V3 spec;
 - Input `audio` → native `UI.PreviewAudio` writes a **flac to the temp directory** for the frontend to play;
-- Inputs `filename_prefix` (default `audio`) + `format` (flac/mp3/opus, with quality) → clicking the "Save" button, the backend writes directly to output from the audio cached by execute (`{filename_prefix}.{format}`, same name overwritten, no `_sequence` suffix), **without re-running the workflow**;
-- For multi-segment waveforms, `{prefix}_{i}` (still no 5-digit zero-padded sequence number); `%batch_num%` can be substituted;
-- HTTP route: `POST /preview-audio/save/{node_id}` (body: `filename_prefix`/`filename_prefix_linked`/`format`/`quality`);
+- Inputs `filename_prefix` (default `audio`) + `format` (flac/mp3/opus, with quality) + `filename_suffix` (default empty, appended after the prefix) → clicking the "Save" button, the backend writes directly to output from the audio cached by execute (`{filename_prefix}{filename_suffix}.{format}`, same name overwritten, no `_sequence` suffix), **without re-running the workflow**;
+- For multi-segment waveforms, `{prefix}{suffix}_{i}` (still no 5-digit zero-padded sequence number); `%batch_num%` can be substituted;
+- HTTP route: `POST /preview-audio/save/{node_id}` (body: `filename_prefix`/`filename_suffix`/`filename_prefix_linked`/`filename_suffix_linked`/`format`/`quality`);
 - The frontend `web/js/preview-audio.js` appends a "Save" button.
 
 ---

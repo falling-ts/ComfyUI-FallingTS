@@ -5,8 +5,8 @@
 - 预览部分照 PreviewImage(nodes.py:1713): 写 temp 目录 + 随机前缀 + 低压缩 PNG, 前端 /view?type=temp 显示;
 - 保存部分照 SaveImageAdvanced(comfy_extras/nodes_images.py:1155): _encode_image 按 格式/位深/色彩空间
   编码 + 注入 prompt 元数据;
-- 差异: 保存用 {filename_prefix}.{format} 直接写 output, 同名覆盖, 不带 _序号 后缀
-  (不走 get_save_image_path 的 counter);
+- 差异: 保存用 {filename_prefix}{filename_suffix}.{format} 直接写 output, 同名覆盖, 不带 _序号 后缀
+  (不走 get_save_image_path 的 counter); filename_suffix 默认空串, 可手动输入或上游连线。
 - 关键: 点「保存」【不重跑工作流】—— execute 时把最近一次预览的图片数据缓存到后端,
   点按钮时前端把 文件名/格式/位深/色彩空间 POST 到 /preview-image/save/{id}, 后端直接用缓存写 output。
 """
@@ -48,6 +48,7 @@ class PreviewImageSaveNode:
             dict:
             - "required".images: 要预览/保存的图片;
             - "required".filename_prefix: 保存文件名(不含扩展名, 同名覆盖);
+            - "required".filename_suffix: 文件名后缀(不含扩展名, 默认空, 拼接在 filename_prefix 之后);
             - "required".format: png/exr;
             - "required".bit_depth: 位深(png→8/16bit, exr→32bit float);
             - "required".input_color_space: 输入色彩空间(png→sRGB, exr→sRGB/HDR/linear);
@@ -83,6 +84,16 @@ class PreviewImageSaveNode:
                     {
                         "default": "sRGB",
                         "tooltip": "输入色彩空间: png → sRGB; exr → sRGB/HDR/linear",
+                    },
+                ),
+                # 放在末尾: 旧工作流 widgets_values 按位置对齐(前 4 项 + 按钮 null),
+                # 新输入追加在尾部, 旧工作流加载时 suffix 槽落到默认空串, 不打乱既有控件
+                "filename_suffix": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "tooltip": "文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.{format}",
                     },
                 ),
             },
@@ -189,6 +200,7 @@ class PreviewImageSaveNode:
         format: str = "png",
         bit_depth: str = "8-bit",
         input_color_space: str = "sRGB",
+        filename_suffix: str = "",
         prompt=None,
         extra_pnginfo=None,
         id: str | None = None,
@@ -197,8 +209,8 @@ class PreviewImageSaveNode:
 
         逻辑: 逐张生成 temp PNG 预览返回 UI; 把 images/prompt/extra_pnginfo 存进 _last_output[id]
         —— 之后点「保存」按钮, 前端把 文件名/格式/位深/色彩空间 POST 过来, 后端直接用这份缓存写 output,
-        【不重跑工作流】。filename_prefix/format/bit_depth/input_color_space 这些输入只作为控件显示
-        (按钮读取它们), 本方法不用于保存。
+        【不重跑工作流】。filename_prefix/filename_suffix/format/bit_depth/input_color_space 这些输入
+        只作为控件显示(按钮读取它们), 本方法不用于保存。
 
         参数:
             images (torch.Tensor|None): BxHxWxC 图片批; None (如扇出节点未选中分支输出 = 无值) 回放上一次预览(保持原预览不清空), 并透传本节点最近一次预览的图(下游可拿到该面之前预览的图进入合成; 从未预览过则透传 None, 下游按无值处理);
@@ -206,6 +218,7 @@ class PreviewImageSaveNode:
             format (str, 默认 "png"): png/exr(控件);
             bit_depth (str, 默认 "8-bit"): 位深(控件);
             input_color_space (str, 默认 "sRGB"): 输入色彩空间(控件);
+            filename_suffix (str, 默认 ""): 文件名后缀(控件, 保存时以按钮 POST 的为准);
             prompt (dict|None): 工作流 prompt(缓存, 供保存时注入元数据);
             extra_pnginfo (dict|None): 额外元数据(同上);
             id (str | None, 默认 None): 节点唯一 ID, 用作缓存键。
@@ -221,13 +234,14 @@ class PreviewImageSaveNode:
             return {"ui": {"images": _last_ui.get(id, [])}, "result": (self._last_images(id),)}
 
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
-        # filename_prefix 一并缓存: 该输入可能被上游连线(如 MDTable 的 ID 列),
+        # filename_prefix/filename_suffix 一并缓存: 这些输入可能被上游连线(如 MDTable 的 ID 列),
         # 此时 widget 里只是占位符, 实际值在 execute 收到的入参里 —— 保存用它而非占位符。
         _last_output[id] = {
             "images": list(images),
             "prompt": prompt,
             "extra_pnginfo": extra_pnginfo,
             "filename_prefix": filename_prefix,
+            "filename_suffix": filename_suffix,
         }
 
         results = []
@@ -260,7 +274,8 @@ async def _handle_save(request: web.Request) -> web.Response:
 
     参数:
         request (web.Request): POST /preview-image/save/{node_id}, body 为 JSON
-            {filename_prefix, format, bit_depth, input_color_space}。
+            {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked,
+             format, bit_depth, input_color_space}。
 
     返回:
         web.Response:
@@ -284,6 +299,13 @@ async def _handle_save(request: web.Request) -> web.Response:
     # 用 execute 时实际接收到的值 (前端已标记 filename_prefix_linked)
     if data.get("filename_prefix_linked") and cache.get("filename_prefix") is not None:
         filename_prefix = str(cache["filename_prefix"])
+    # 后缀同前缀: 手动输入或上游连线(连线时用 execute 实际接收值); 空串 = 不拼后缀
+    # (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, 此处 or "" 兜底)
+    filename_suffix = str(data.get("filename_suffix") or "")
+    if data.get("filename_suffix_linked") and cache.get("filename_suffix") is not None:
+        filename_suffix = str(cache["filename_suffix"])
+    # 文件名 = 前缀 + 后缀 (拼接后整体可含 %batch_num%)
+    name = filename_prefix + filename_suffix
     file_format = str(data.get("format", "png"))
     bit_depth = str(data.get("bit_depth", "8-bit"))
     colorspace = str(data.get("input_color_space", "sRGB"))
@@ -291,7 +313,7 @@ async def _handle_save(request: web.Request) -> web.Response:
     node = PreviewImageSaveNode()
     node._save_batch_to_output(
         cache["images"],
-        filename_prefix,
+        name,
         file_format,
         bit_depth,
         colorspace,
@@ -301,7 +323,7 @@ async def _handle_save(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "status": "ok",
-            "message": f"已保存 {len(cache['images'])} 张: {filename_prefix}.{file_format}",
+            "message": f"已保存 {len(cache['images'])} 张: {name}.{file_format}",
         }
     )
 

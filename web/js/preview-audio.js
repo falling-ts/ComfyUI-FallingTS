@@ -222,6 +222,9 @@ app.registerExtension({
         // 需后端用 execute 时实际接收到的值, 否则保存会落到占位符 "audio"
         const prefixLinked =
           node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
+        // filename_suffix 同前缀: 连线时用 execute 实际接收值, 手动输入用 widget 值
+        const suffixLinked =
+          node.inputs?.find((i) => i.name === "filename_suffix")?.link != null;
         const fmtVal = getWidget("format");
         try {
           const resp = await fetch(`/preview-audio/save/${node.id}`, {
@@ -230,6 +233,8 @@ app.registerExtension({
             body: JSON.stringify({
               filename_prefix: getWidget("filename_prefix") ?? "audio",
               filename_prefix_linked: prefixLinked,
+              filename_suffix: getWidget("filename_suffix") ?? "",
+              filename_suffix_linked: suffixLinked,
               format: fmtVal?.format ?? "flac",
               quality: fmtVal?.quality ?? "128k",
             }),

@@ -3,8 +3,9 @@
 # 原理: VIDEO 是惰性内存对象, 核心 WebSocket 协议只有图片预览事件;
 #       本节点把 VIDEO 编码成 mp4 写到【临时目录】(temp, 非 output),
 #       再通过 UI.PreviewVideo 让前端播放临时文件 —— "不满意就不保存"。
-#       点「保存」按钮时, 后端用 execute 缓存的视频按 {filename_prefix}.mp4
+#       点「保存」按钮时, 后端用 execute 缓存的视频按 {filename_prefix}{filename_suffix}.mp4
 #       直接写 output(同名覆盖, 不带 _序号 后缀), 不重跑工作流。
+#       filename_suffix 默认空串, 可手动输入或上游连线, 保存时拼接在前缀之后。
 #
 # 截帧(2026-09-04 新增): 收到视频即用 get_components() 转内部帧集合 images 缓存到节点,
 #       前端点「截帧」按钮把当前播放时间 POST 到 /preview-video/frame/{id},
@@ -76,7 +77,7 @@ class PreviewVideoNode(IO.ComfyNode):
 
         返回:
             IO.Schema: 节点元数据, 含 node_id/display_name/category/description,
-            输入 video + filename_prefix, 输出 video + image_1..image_MAX_FRAMES,
+            输入 video + filename_prefix + filename_suffix, 输出 video + image_1..image_MAX_FRAMES,
             hidden 含 prompt+extra_pnginfo+unique_id, 标记 is_output_node=True。
         """
         outputs = [IO.Video.Output("video", tooltip="预览/保存的视频。")]
@@ -94,7 +95,7 @@ class PreviewVideoNode(IO.ComfyNode):
             category="video",
             description=(
                 "Preview the video without saving it to the ComfyUI output directory; "
-                "click 保存 to write it to output as {filename_prefix}.mp4 (no sequence suffix). "
+                "click 保存 to write it to output as {filename_prefix}{filename_suffix}.mp4 (no sequence suffix). "
                 "Frame capture: 截帧 button reads the playing position, appends selected frames "
                 "to image_1..image_N outputs (up to 64). Encodes to the temp folder for preview."
             ),
@@ -115,6 +116,14 @@ class PreviewVideoNode(IO.ComfyNode):
                     multiline=False,
                     tooltip="保存到 output 的文件名(不含扩展名); 同名直接覆盖, 无序号",
                 ),
+                # 放在末尾: 旧工作流 widgets_values 按位置对齐([前缀, 按钮null]),
+                # 新输入追加在尾部, 旧工作流加载时 suffix 槽落到空串, 不打乱既有控件
+                IO.String.Input(
+                    "filename_suffix",
+                    default="",
+                    multiline=False,
+                    tooltip="文件名后缀(不含扩展名, 默认空); 保存时拼接在 filename_prefix 之后: {filename_prefix}{filename_suffix}.mp4",
+                ),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],
             is_output_node=True,
@@ -122,7 +131,7 @@ class PreviewVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, video, filename_prefix: str = "video", prompt=None, extra_pnginfo=None) -> IO.NodeOutput:
+    def execute(cls, video, filename_prefix: str = "video", filename_suffix: str = "", prompt=None, extra_pnginfo=None) -> IO.NodeOutput:
         """节点执行入口: 把视频编码为 mp4 写入临时目录并在前端播放, 缓存帧集合, 按选中帧输出 IMAGE。
 
         逻辑:
@@ -138,6 +147,7 @@ class PreviewVideoNode(IO.ComfyNode):
         参数:
             video (Video|None): 要预览的视频对象(惰性内存对象); None (lazy 未拉上游 / 扇出未选中分支) 跳过预览/缓存, 输出本节点最近一次预览的视频(从未预览过则 None)。
             filename_prefix (str, 默认 "video"): 保存文件名前缀(控件; 若被上游连线, widget 只是占位符, 本参数为实际接收值, 保存时以此为准)。
+            filename_suffix (str, 默认 ""): 文件名后缀(控件, 保存时拼接在前缀之后; 连线时本参数为实际接收值)。
             prompt (dict|None): 工作流 prompt(预留元数据)。
             extra_pnginfo (dict|None): 额外元数据(预留)。
 
@@ -202,6 +212,7 @@ class PreviewVideoNode(IO.ComfyNode):
         _last_output[nid_str] = {
             "video": video,
             "filename_prefix": filename_prefix,
+            "filename_suffix": filename_suffix,
             "prompt": prompt,
             "file": file,
             "subfolder": subfolder,
@@ -228,7 +239,7 @@ class PreviewVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def check_lazy_status(cls, video=MISSING, filename_prefix: str = "video", prompt=None, extra_pnginfo=None) -> list[str]:  # noqa: A002
+    def check_lazy_status(cls, video=MISSING, filename_prefix: str = "video", filename_suffix: str = "", prompt=None, extra_pnginfo=None) -> list[str]:  # noqa: A002
         """lazy 输入门控: 决定本次执行要不要拉取上游的 video —— "完成只跑下游"的关键。
 
         机制(ComfyUI 执行引擎, 与继续节点同套):
@@ -248,6 +259,7 @@ class PreviewVideoNode(IO.ComfyNode):
                 - None: 连了线但上游未求值(lazy 输入未被拉取, 已完成时即此处);
                 - 其他: 已求值的上游视频(此时已不在 missing_keys, 本方法的返回值会被过滤, 不触发拉取)。
             filename_prefix (str, 默认 "video"): 文件名前缀(本方法不读取, 仅保持签名兼容)。
+            filename_suffix (str, 默认 ""): 文件名后缀(本方法不读取, 仅保持签名兼容)。
             prompt (dict|None): 工作流 prompt(预留, 不读取)。
             extra_pnginfo (dict|None): 额外元数据(预留, 不读取)。
 
@@ -514,13 +526,13 @@ async def _handle_clear(request: web.Request) -> web.Response:
 async def _handle_save(request: web.Request) -> web.Response:
     """HTTP 路由: 用缓存视频把该节点最近预览的视频写入 output(同名覆盖, 无序号)。
 
-    流程: 前端点「保存」按钮时把文件名前缀 POST 过来;
+    流程: 前端点「保存」按钮时把文件名前缀+后缀 POST 过来;
     后端查 _last_output[node_id](execute 时缓存的视频), 有则编码写 output, 无则 400。
-    全程不触发任何工作流重跑。文件名 = {filename_prefix}.mp4, 不带 _0001 序列后缀。
+    全程不触发任何工作流重跑。文件名 = {filename_prefix}{filename_suffix}.mp4, 不带 _0001 序列后缀。
 
     参数:
         request (web.Request): POST /preview-video/save/{node_id}, body 为 JSON
-            {filename_prefix, filename_prefix_linked}。
+            {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked}。
 
     返回:
         web.Response:
@@ -544,18 +556,25 @@ async def _handle_save(request: web.Request) -> web.Response:
     # 用 execute 时实际接收到的值 (前端已标记 filename_prefix_linked)
     if data.get("filename_prefix_linked") and cache.get("filename_prefix"):
         filename_prefix = str(cache["filename_prefix"])
+    # 后缀同前缀: 手动输入或上游连线(连线时用 execute 实际接收值); 空串 = 不拼后缀
+    # (旧工作流 widgets_values 按位置对齐, 尾部 null 落到 suffix 槽, 此处 or "" 兜底)
+    filename_suffix = str(data.get("filename_suffix") or "")
+    if data.get("filename_suffix_linked") and cache.get("filename_suffix") is not None:
+        filename_suffix = str(cache["filename_suffix"])
+    # 文件名 = 前缀 + 后缀
+    name = filename_prefix + filename_suffix
 
     video = cache["video"]
     output_dir = folder_paths.get_output_directory()
     ext = Types.VideoContainer.get_extension("mp4")
-    file_path = os.path.join(output_dir, f"{filename_prefix}.{ext}")
+    file_path = os.path.join(output_dir, f"{name}.{ext}")
     video.save_to(
         file_path,
         format=Types.VideoContainer.MP4,
         codec=Types.VideoCodec.AUTO,
     )
     return web.json_response(
-        {"status": "ok", "message": f"已保存: {filename_prefix}.{ext}"}
+        {"status": "ok", "message": f"已保存: {name}.{ext}"}
     )
 
 
