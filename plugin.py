@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 
+import cgroup_memory
+
 from comfy_api.latest import IO
 from comfy_api.latest import ComfyExtension
 from importlib import import_module
@@ -29,6 +31,9 @@ PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
 PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
 
 logger = logging.getLogger(__name__)
+
+# 容器里 ComfyUI 按宿主全量内存规划缓存会被 cgroup OOM kill, 钳制到 cgroup 上限 (须早于 prompt_worker 算阈值)
+cgroup_memory.apply()
 
 # ─── V1 节点注册表 (支持 custom_nodes/ 自动加载) ──────
 
