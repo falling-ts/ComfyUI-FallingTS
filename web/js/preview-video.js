@@ -453,25 +453,46 @@ function styleDoneButton(node) {
 
 /**
  * 在节点上创建「选中帧列表」DOM widget: 内嵌容器, 从上往下渲染截帧 <img>。
+ * 列表是定高滚动盒: 盒高随帧数增长, 封顶 MAX_LIST_H(400px), 内容超出盒高时
+ * overflow-y:auto 出垂直滚动条 —— 帧再多也不撑破节点上下框。
  * 状态 state = {frames: [{url, fno}]}; 截帧状态刷新即清空 —— configure 还原时
  * setValue 不再把序列化的帧写回 state(保持空列表), 后端由页面加载时的
  * /preview-video/clear 同步清空。
  *
  * @param {LGraphNode} node 节点对象
- * @returns {object} addDOMWidget 创建的 widget
+ * @returns {object} {widget, state, render} —— addDOMWidget 创建的 widget、帧状态、列表重绘函数
  */
 function createFrameListWidget(node) {
+  // 滚动盒高度参数: 单行 ≈ 56px(72px 宽缩略图 + 行内边距, 含行间距 6px); 空态占位 44px
+  const MAX_LIST_H = 400;
+  const ROW_H = 56;
+  const EMPTY_H = 44;
+  /**
+   * 当前列表滚动盒高度: 随帧数增长, 封顶 MAX_LIST_H; 超出部分走垂直滚动条。
+   * @returns {number} 盒高(px)
+   */
+  const frameBoxHeight = () =>
+    state.frames.length
+      ? Math.min(MAX_LIST_H, state.frames.length * ROW_H - 6)
+      : EMPTY_H;
+
   const root = document.createElement("div");
   root.style.display = "flex";
   root.style.flexDirection = "column";
   root.style.gap = "6px";
-  root.style.maxHeight = "400px";
   root.style.overflowY = "auto";
   root.style.width = "100%";
+  root.style.boxSizing = "border-box";
 
   const state = { frames: [] };
 
   const render = () => {
+    // 滚动盒给定高(随帧数增长、封顶 400px): 定高 + overflow-y:auto 才稳定触发垂直滚动;
+    // 节点高度随盒同步(fitHeight; vue 模式下前端 ResizeObserver 亦自动跟随)
+    const h = frameBoxHeight() + "px";
+    root.style.height = h;
+    root.style.maxHeight = h;
+    fitHeight(node);
     root.innerHTML = "";
     if (state.frames.length === 0) {
       const hint = document.createElement("div");
@@ -535,9 +556,10 @@ function createFrameListWidget(node) {
       // 刷新即清空: 不再还原序列化的帧列表, state 保持空(后端已由 /preview-video/clear 同步清空)
       render();
     },
-    getMinHeight: () => Math.min(420, 60 + state.frames.length * 84 + 12),
+    getMinHeight: () => frameBoxHeight(),
     serialize: true,
   });
+  render(); // 创建即渲染占位提示 + 定滚动盒初始高度
   return { widget, state, render };
 }
 
@@ -807,8 +829,9 @@ app.registerExtension({
           }
 
           frameList.state.frames.push({ url, fno });
-          frameList.render();
+          // 先对齐输出端口/total, 再重绘列表(render 内按新盒高同步节点高度)
           syncFrameState(node, frameList.state);
+          frameList.render();
         } catch (err) {
           console.error("[FallingTS] 截帧失败:", err);
           app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端" });
