@@ -453,8 +453,8 @@ function styleDoneButton(node) {
 
 /**
  * 在节点上创建「选中帧列表」DOM widget: 内嵌容器, 从上往下渲染截帧 <img>。
- * 列表是定高滚动盒: 盒高随帧数增长, 封顶 MAX_LIST_H(400px), 内容超出盒高时
- * overflow-y:auto 出垂直滚动条 —— 帧再多也不撑破节点上下框。
+ * 列表不固定高度、不封顶、不滚动: 高度按帧数无限撑开(getMinHeight = 帧数×行高),
+ * 节点高度随列表内容自然扩展, 有多少帧撑多高, 不压缩、不跳变。
  * 状态 state = {frames: [{url, fno}]}; 截帧状态刷新即清空 —— configure 还原时
  * setValue 不再把序列化的帧写回 state(保持空列表), 后端由页面加载时的
  * /preview-video/clear 同步清空。
@@ -463,42 +463,42 @@ function styleDoneButton(node) {
  * @returns {object} {widget, state, render} —— addDOMWidget 创建的 widget、帧状态、列表重绘函数
  */
 function createFrameListWidget(node) {
-  // 滚动盒高度参数: 单行 ≈ 56px(72px 宽缩略图 + 行内边距, 含行间距 6px); 空态占位 44px
-  const MAX_LIST_H = 400;
-  const ROW_H = 56;
+  // 列表高度: 不固定、不封顶, 按帧数无限撑开(有多少帧撑多高);
+  // 每行 = 缩略图 56px + 上下 padding 8px = ROW_H(64px), 行间距 GAP_H(6px);
+  // 空态占位 EMPTY_H(一行提示)。
   const EMPTY_H = 44;
+  const ROW_H = 64;
+  const GAP_H = 6;
   /**
-   * 当前列表滚动盒高度: 随帧数增长, 封顶 MAX_LIST_H; 超出部分走垂直滚动条。
-   * @returns {number} 盒高(px)
+   * 当前列表总高度: 空态 EMPTY_H; 有帧 = 帧数×ROW_H + (帧数-1)×GAP_H(无限撑开, 不封顶)。
+   * @returns {number} 列表总高(px)
    */
   const frameBoxHeight = () =>
-    state.frames.length
-      ? Math.min(MAX_LIST_H, state.frames.length * ROW_H - 6)
-      : EMPTY_H;
+    state.frames.length === 0
+      ? EMPTY_H
+      : state.frames.length * ROW_H + (state.frames.length - 1) * GAP_H;
 
   const root = document.createElement("div");
   root.style.display = "flex";
   root.style.flexDirection = "column";
-  root.style.gap = "6px";
-  root.style.overflowY = "auto";
+  root.style.gap = GAP_H + "px";
+  root.style.overflow = "visible"; // 不滚动: 列表按内容无限撑开, 节点高度随之扩展
   root.style.width = "100%";
   root.style.boxSizing = "border-box";
 
   const state = { frames: [] };
 
   const render = () => {
-    // 滚动盒给定高(随帧数增长、封顶 400px): 定高 + overflow-y:auto 才稳定触发垂直滚动;
-    // 节点高度随盒同步(fitHeight; vue 模式下前端 ResizeObserver 亦自动跟随)
-    const h = frameBoxHeight() + "px";
-    root.style.height = h;
-    root.style.maxHeight = h;
-    fitHeight(node);
+    // 列表按内容无限撑开(不设 height, overflow visible): 先重建 DOM, 再 fitHeight 同步节点
+    // 到精确高度(列表高度 = 帧数×行高)。关键: fitHeight 必须在 DOM 重建之后,
+    // 否则截帧后会按旧(更少)高度压缩节点 = "自动缩高度"。
     root.innerHTML = "";
     if (state.frames.length === 0) {
       const hint = document.createElement("div");
       hint.textContent = "点击「截帧」选取视频帧";
       hint.style.cssText = "color:#888;font-size:12px;padding:8px 4px;text-align:center;";
       root.appendChild(hint);
+      fitHeight(node);
       return;
     }
     state.frames.forEach((f, idx) => {
@@ -512,7 +512,7 @@ function createFrameListWidget(node) {
 
       const img = document.createElement("img");
       img.src = f.url;
-      img.style.cssText = "width:72px;height:auto;border-radius:4px;display:block;";
+      img.style.cssText = "height:56px;width:auto;border-radius:4px;display:block;";
 
       const labelWrap = document.createElement("div");
       labelWrap.style.cssText = "flex:1;display:flex;flex-direction:column;gap:2px;min-width:0;";
@@ -548,7 +548,12 @@ function createFrameListWidget(node) {
 
       root.appendChild(row);
     });
+    fitHeight(node);
   };
+
+  // 增量 fitHeight 基准: 初始列表 minHeight(空态 EMPTY_H), 后续按 delta 调整节点高度,
+  // 保证「节点高度增加量 = 列表增加量」, distributeSpace 后 video 预览高度不变。
+  node._fallingtsListMin = frameBoxHeight();
 
   const widget = node.addDOMWidget("frame_list", "fallingts_frame_list", root, {
     getValue: () => state,
@@ -557,6 +562,10 @@ function createFrameListWidget(node) {
       render();
     },
     getMinHeight: () => frameBoxHeight(),
+    // 固定上限: maxSize = 列表 minHeight, 不让列表无上限扩展抢 distributeSpace 剩余空间
+    // (剩余空间 e 被列表吃满时 video = e - 列表高 会被挤小)。多余空间留给 video,
+    // 配合增量 fitHeight, 视频框高度稳定不压缩。
+    getMaxHeight: () => frameBoxHeight(),
     serialize: true,
   });
   render(); // 创建即渲染占位提示 + 定滚动盒初始高度
@@ -614,16 +623,29 @@ function syncFrameState(node, state) {
 }
 
 /**
- * 高度收回/扩展到自然高度 (宽度保留用户设置)。
- * 构造器按 nodeData 生成全部 64 个 image 输出先把高度撑满, 同步裁剪端口后需收回多余高度;
- * total 增大补端口时同样需要扩展到位。
+ * 截帧列表撑开时增量同步节点高度: 高度变化量 = 列表 minHeight 变化量。
+ *
+ * 为什么不用 computeSize: ComfyUI 节点把「剩余空间 e = 节点高 - 标题 - 固定 widget」
+ * 经 distributeSpace 分给所有 DOM widget(video 预览 + 本列表), 二者 maxSize 都无上限。
+ * computeSize 基于「上一轮布局」的 computedHeight, 截帧后偏小(不含新列表增量 Δ);
+ * 用它设节点高 → e 偏小 → distributeSpace 把 e 让给新列表, video = e - 列表高 被挤小 Δ
+ * (即「点截帧视频框自动压缩」)。
+ *
+ * 增量法: 节点高 += Δ, 则 e += Δ, distributeSpace 后 video = e - 新列表高
+ * = (e_旧 + Δ) - (列表_旧 + Δ) = e_旧 - 列表_旧 = video_旧, 视频框高度不变。
+ * 宽度保留用户设置, 只动高度。
+ *
  * @param {LGraphNode} node
  */
 function fitHeight(node) {
-  const natural = node.computeSize?.();
-  if (!natural || !node.size) return;
-  if (Math.abs(node.size[1] - natural[1]) > 1) {
-    node.setSize([node.size[0], natural[1]]);
+  const listWidget = node.widgets?.find((w) => w.name === "frame_list");
+  if (!listWidget || !node.size) return;
+  const newMin = listWidget.getMinHeight?.() ?? 0;
+  const last = node._fallingtsListMin ?? newMin;
+  const delta = newMin - last;
+  node._fallingtsListMin = newMin;
+  if (Math.abs(delta) > 0.5) {
+    node.setSize([node.size[0], node.size[1] + delta]);
   }
 }
 
@@ -832,6 +854,24 @@ app.registerExtension({
           // 先对齐输出端口/total, 再重绘列表(render 内按新盒高同步节点高度)
           syncFrameState(node, frameList.state);
           frameList.render();
+          // ── 一次性诊断: 截帧后 video 框高度变化根源 ──
+          setTimeout(() => {
+            const domRoot = node.dom || node.doc || node.videoContainer || null;
+            const videoContainer =
+              domRoot?.querySelector?.(".comfy-img-preview") ||
+              node.doc?.querySelector?.(".comfy-img-preview");
+            const videoWidget = node.widgets?.find((w) => w.name === "video-preview");
+            const listWidget = node.widgets?.find((w) => w.name === "frame_list");
+            console.log("[FallingTS][diag] ===== 截帧后高度诊断 =====");
+            console.log("帧数:", frameList.state.frames.length);
+            console.log("节点高度 node.size[1]:", node.size?.[1]);
+            console.log("video 容器 actual height:", videoContainer?.getBoundingClientRect?.()?.height);
+            console.log("video widget computeLayoutSize:", videoWidget?.computeLayoutSize?.());
+            console.log("列表 widget computeLayoutSize:", listWidget?.computeLayoutSize?.());
+            console.log("列表容器 actual height:", listWidget?.element?.getBoundingClientRect?.()?.height);
+            console.log("node.dom/doc/videoContainer 存在:", !!node.dom, !!node.doc, !!node.videoContainer);
+            console.log("[FallingTS][diag] ===== 诊断结束 =====");
+          }, 150);
         } catch (err) {
           console.error("[FallingTS] 截帧失败:", err);
           app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端" });

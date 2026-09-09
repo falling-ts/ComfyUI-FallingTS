@@ -208,10 +208,14 @@ app.registerExtension({
        */
       node.onConfigure = function (info) {
         const wv = info?.widgets_values;
-        if (Array.isArray(wv) && wv.length === 7) {
+        // 新版格式特征: wv[1] 是数字 (font_size); 旧版/中间版 wv[1] 是字符串 (label)。
+        // 7 槽 = 旧版 [label1..label4, font, padding, bg]; 12 槽 = 中间版 [total, label1..label8, font, padding, bg]。
+        // 新版 (total=3 → 7 槽 / total=8 → 12 槽) 的 wv[1] 是数字, 按位置直接套用, 不迁移,
+        // 否则 12 槽会被误当中间版: font/padding/bg 取错位置 (wv[9..11]) 且 label1..labelN 全丢。
+        if (Array.isArray(wv) && wv.length === 7 && typeof wv[1] !== "number") {
           const [, , , , fs, pd, bg] = wv;
           info.widgets_values = [DEFAULT_TOTAL, fs, pd, bg];
-        } else if (Array.isArray(wv) && wv.length === 12) {
+        } else if (Array.isArray(wv) && wv.length === 12 && typeof wv[1] !== "number") {
           const [tt, , , , , , , , , fs, pd, bg] = wv;
           info.widgets_values = [tt ?? DEFAULT_TOTAL, fs, pd, bg];
         }
