@@ -16,7 +16,7 @@
  * 输出端口与后端定长槽(MAX_SEGMENTS=64)配合: 后端始终定义 64 个槽, 前端按 total 裁剪显示。
  */
 
-import { app } from "../../scripts/app.js";
+import { app } from "../../../scripts/app.js";
 
 const NODE_CLASS = "PreviewAudioSave";
 const MAX_SEGMENTS = 64;
@@ -554,7 +554,6 @@ app.registerExtension({
         const getWidget = (name) => node.widgets?.find((w) => w.name === name)?.value;
         const prefixLinked = node.inputs?.find((i) => i.name === "filename_prefix")?.link != null;
         const suffixLinked = node.inputs?.find((i) => i.name === "filename_suffix")?.link != null;
-        const fmtVal = getWidget("format");
         try {
           const resp = await fetch(`/preview-audio/save/${node.id}`, {
             method: "POST",
@@ -564,8 +563,8 @@ app.registerExtension({
               filename_prefix_linked: prefixLinked,
               filename_suffix: getWidget("filename_suffix") ?? "",
               filename_suffix_linked: suffixLinked,
-              format: fmtVal?.format ?? "flac",
-              quality: fmtVal?.quality ?? "128k",
+              format: getWidget("format") ?? "flac",
+              quality: getWidget("quality") ?? "128k",
               segment_index: 0,
             }),
           });

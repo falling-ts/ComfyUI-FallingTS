@@ -290,18 +290,17 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                     multiline=False,
                     tooltip="文件名后缀(不含扩展名, 默认空); 保存时拼接在前缀之后: {filename_prefix}{filename_suffix}.{format}",
                 ),
-                IO.DynamicCombo.Input(
+                IO.Combo.Input(
                     "format",
-                    options=[
-                        IO.DynamicCombo.Option("flac", []),
-                        IO.DynamicCombo.Option("mp3", [
-                            IO.Combo.Input("quality", options=["V0", "128k", "320k"], default="V0"),
-                        ]),
-                        IO.DynamicCombo.Option("opus", [
-                            IO.Combo.Input("quality", options=["64k", "96k", "128k", "192k", "320k"], default="128k"),
-                        ]),
-                    ],
-                    tooltip="保存的文件格式与质量(flac / mp3 / opus)。",
+                    options=["flac", "mp3", "opus"],
+                    default="flac",
+                    tooltip="保存的文件格式。",
+                ),
+                IO.Combo.Input(
+                    "quality",
+                    options=["V0", "128k", "320k", "64k", "96k", "192k"],
+                    default="128k",
+                    tooltip="编码质量(mp3: V0/128k/320k; opus: 64k~320k; flac 忽略此项)。",
                 ),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],
@@ -310,7 +309,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
         )
 
     @classmethod
-    def check_lazy_status(cls, audio=MISSING, filename_prefix: str = "audio", filename_suffix: str = "", format=None, **kwargs) -> list[str]:
+    def check_lazy_status(cls, audio=MISSING, filename_prefix: str = "audio", filename_suffix: str = "", format: str = "flac", quality: str = "128k", **kwargs) -> list[str]:
         """懒加载门控: 已「完成」且有截段时不拉上游(用缓存), 否则拉取音频。
 
         参数:
@@ -318,7 +317,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                 - MISSING: 该输入没连线;
                 - None: 连了线但上游未求值(已完成时即此处);
                 - 其他: 已求值(此时不在 missing_keys, 返回值会被过滤)。
-            filename_prefix / filename_suffix / format: 不读取, 保持签名兼容。
+            filename_prefix / filename_suffix / format / quality: 不读取, 保持签名兼容。
             **kwargs: 吸收其余隐藏输入。
 
         返回:
@@ -358,7 +357,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
         return (_reset_generation, nid_str, seg_key, nid_str in _done)
 
     @classmethod
-    def execute(cls, audio, filename_prefix: str = "audio", filename_suffix: str = "", format: dict | None = None) -> IO.NodeOutput:
+    def execute(cls, audio, filename_prefix: str = "audio", filename_suffix: str = "", format: str = "flac", quality: str = "128k") -> IO.NodeOutput:
         """节点执行入口: 预览音频; 已「完成」则按截段输出 audio_1..audio_N。
 
         逻辑:
@@ -400,6 +399,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
                 "filename_prefix": filename_prefix,
                 "filename_suffix": filename_suffix,
                 "format": format,
+                "quality": quality,
                 "segments": segments,
             }
 
@@ -630,8 +630,8 @@ async def _handle_save(request: web.Request) -> web.Response:
     if data.get("filename_suffix_linked") and cache.get("filename_suffix") is not None:
         filename_suffix = str(cache["filename_suffix"])
 
-    file_format = str(data.get("format") or "flac")
-    quality = str(data.get("quality") or "128k")
+    file_format = str(data.get("format") or cache.get("format") or "flac")
+    quality = str(data.get("quality") or cache.get("quality") or "128k")
 
     # 指定段号(1-based)时只存该段; 省略/0 = 存整段
     try:
