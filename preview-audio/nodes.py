@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from io import BytesIO
 from typing import Any
@@ -51,6 +52,9 @@ _last_output: dict[str, dict] = {}
 _done: set[str] = set()
 # 重置代际: 「重置」时递增, 让 fingerprint_inputs 变化从而强制重新执行
 _reset_generation = 0
+# 诊断: 最近一次 execute 看到的 unique_id 与 hidden 结构(排查缓存键取不到的问题)
+_debug_last_nid = ""
+_debug_hidden = ""
 
 
 def _encode_audio_waveform(waveform: torch.Tensor, sample_rate: int, file_format: str, quality: str) -> bytes:
@@ -210,6 +214,9 @@ def _segments_from_cache(audio: dict, segments: list) -> list:
 def _waveform_peaks(audio: dict, buckets: int = 1200) -> list[float]:
     """把波形降采样成 buckets 个峰值(供前端画波形与拖动选区)。
 
+    只返回原生 Python float, 并清洗 NaN/Inf —— 否则 aiohttp 的 json 序列化会 500,
+    或吐出非标准 JSON 让前端 JSON.parse 失败。
+
     参数:
         audio (dict): 音频对象;
         buckets (int): 目标点数。
@@ -220,8 +227,13 @@ def _waveform_peaks(audio: dict, buckets: int = 1200) -> list[float]:
     waveform = audio.get("waveform")
     if waveform is None:
         return []
-    mono = waveform.abs().amax(dim=0) if waveform.dim() > 1 else waveform.abs()
-    total = int(mono.shape[0])
+    mono = waveform.detach().float().abs()
+    while mono.dim() > 2:      # 去掉 batch 维
+        mono = mono[0]
+    if mono.dim() == 2:        # [C, N] -> [N]
+        mono = mono.amax(dim=0)
+    mono = torch.nan_to_num(mono, nan=0.0, posinf=0.0, neginf=0.0).flatten()
+    total = int(mono.numel())
     if total == 0:
         return []
     if total <= buckets:
@@ -232,17 +244,28 @@ def _waveform_peaks(audio: dict, buckets: int = 1200) -> list[float]:
     for i in range(buckets):
         lo = int(i * step)
         hi = max(lo + 1, int((i + 1) * step))
-        peaks.append(float(mono[lo:hi].max()))
+        seg = mono[lo:hi]
+        peaks.append(float(seg.max()) if seg.numel() else 0.0)
     return peaks
 
 
 def _audio_duration(audio: dict) -> float:
-    """音频总时长(秒); 无有效数据返回 0.0。"""
+    """音频总时长(秒); 无有效数据返回 0.0。
+
+    参数:
+        audio (dict): 音频对象。
+
+    返回:
+        float: 时长秒数(原生 float)。
+    """
     waveform = audio.get("waveform")
     sample_rate = audio.get("sample_rate")
-    if waveform is None or not sample_rate:
+    if waveform is None or sample_rate is None:
         return 0.0
-    return float(waveform.shape[-1]) / float(sample_rate)
+    rate = float(sample_rate)
+    if rate <= 0:
+        return 0.0
+    return float(waveform.shape[-1]) / rate
 
 
 class PreviewAudioSaveNode(IO.ComfyNode):
@@ -378,6 +401,15 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             IO.NodeOutput: 整段音频 + 各截段 + UI.PreviewAudio 预览事件。
         """
         nid = str(getattr(cls.hidden, "unique_id", "") or "")
+        logging.info(
+            "[FallingTS][PreviewAudioSave] execute 进入: unique_id=%r hidden=%r audio=%s",
+            getattr(cls.hidden, "unique_id", "<无该属性>"),
+            cls.hidden,
+            "None" if audio is None else type(audio).__name__,
+        )
+        global _debug_last_nid, _debug_hidden
+        _debug_last_nid = nid
+        _debug_hidden = f"hidden={cls.hidden!r} id={getattr(cls.hidden, 'id', None)!r}"
         cached = _last_output.get(nid) or {}
         done = nid in _done
         segments = cached.get("segments") or []
@@ -575,15 +607,30 @@ async def _handle_waveform(request: web.Request) -> web.Response:
     cache = _last_output.get(nid)
     if not cache or not cache.get("audio"):
         return web.json_response(
-            {"status": "error", "message": "没有可绘制的音频数据, 请先运行到该节点"}, status=400
+            {
+                "status": "error",
+                "message": "没有可绘制的音频数据, 请先运行到该节点",
+                "requested": nid,
+                "known_nodes": sorted(str(k) for k in _last_output.keys()),
+                "debug_last_nid": _debug_last_nid,
+                "debug_hidden": _debug_hidden,
+            },
+            status=400,
         )
     audio = cache["audio"]
+    try:
+        peaks = _waveform_peaks(audio)
+        duration = _audio_duration(audio)
+        sample_rate = int(float(audio.get("sample_rate") or 0))
+    except Exception as e:  # noqa: BLE001 - 需要把真实原因回给前端, 否则只看到 500
+        logging.exception("[FallingTS] waveform 生成失败")
+        return web.json_response({"status": "error", "message": f"波形生成失败: {e!r}"}, status=500)
     return web.json_response(
         {
             "status": "ok",
-            "peaks": _waveform_peaks(audio),
-            "duration": _audio_duration(audio),
-            "sample_rate": int(audio.get("sample_rate") or 0),
+            "peaks": peaks,
+            "duration": duration,
+            "sample_rate": sample_rate,
             "segments": cache.get("segments") or [],
         }
     )

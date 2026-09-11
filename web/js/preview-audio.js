@@ -17,6 +17,7 @@
  */
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 const NODE_CLASS = "PreviewAudioSave";
 const MAX_SEGMENTS = 64;
@@ -353,183 +354,194 @@ function createSegmentListWidget(node) {
 function createWaveformWidget(node) {
   const state = { peaks: [], duration: 0, start: 0, end: 0, dragging: null, dragOffset: 0, loaded: false };
 
+  // Nodes 2.0 下 canvas 自定义 widget 的 draw 不生效(与 PreviewVideo 的按钮同理),
+  // 所以这里用 addDOMWidget 挂一个真实的 <canvas> 元素来画。
+  const root = document.createElement("div");
+  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;";
+
+  const canvas = document.createElement("canvas");
+  canvas.style.cssText =
+    `display:block;width:100%;height:${WAVE_H}px;border-radius:6px;` +
+    "background:#1b1e24;border:1px solid rgba(255,255,255,.12);cursor:crosshair;";
+  root.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+
+  /** 画布可用宽度(CSS 像素)。 */
+  const boxW = () => Math.max(1, canvas.clientWidth || 300);
+
   /**
-   * 节点局部 x → 秒。
+   * 画布 x → 秒。
    *
-   * @param {number} x 局部 x
-   * @param {number} w 波形宽
+   * @param {number} x 画布 x
    * @returns {number} 秒
    */
-  const xToSec = (x, w) => {
+  const xToSec = (x) => {
+    const w = boxW();
     const usable = Math.max(1, w - 2 * HIT);
     const t = (x - HIT) / usable;
     return Math.max(0, Math.min(1, t)) * (state.duration || 0);
   };
 
   /**
-   * 秒 → 节点局部 x。
+   * 秒 → 画布 x。
    *
    * @param {number} sec 秒
-   * @param {number} w 波形宽
-   * @returns {number} 局部 x
+   * @returns {number} 画布 x
    */
-  const secToX = (sec, w) => {
+  const secToX = (sec) => {
+    const w = boxW();
     const usable = Math.max(1, w - 2 * HIT);
     const t = state.duration > 0 ? sec / state.duration : 0;
     return HIT + Math.max(0, Math.min(1, t)) * usable;
   };
 
-  const widget = {
-    type: "waveform",
-    name: "waveform",
-    value: "",
-    options: { serialize: false },
-    state,
-    /**
-     * 是否已有可拖动选区。
-     *
-     * @returns {boolean} 结果
-     */
-    hasRange() {
-      return state.end > state.start;
-    },
-    /**
-     * 画波形与选区。
-     *
-     * @param {CanvasRenderingContext2D} ctx 上下文
-     * @param {LGraphNode} n 节点
-     * @param {number} w 宽
-     * @param {number} y 顶边 y
-     * @returns {void}
-     */
-    draw(ctx, n, w, y) {
-      const H = WAVE_H;
-      ctx.save();
-      ctx.translate(0, y);
-      roundRectPath(ctx, 4, 0, w - 8, H, 6);
-      ctx.fillStyle = "#1b1e24";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,.12)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
+  /** 重绘画布(波形 + 选区 + 两侧把手)。 */
+  const redraw = () => {
+    const w = boxW();
+    const H = WAVE_H;
+    ctx.clearRect(0, 0, w, H);
+    ctx.fillStyle = "#1b1e24";
+    ctx.fillRect(0, 0, w, H);
 
-      if (!state.loaded || !state.peaks.length) {
-        ctx.fillStyle = "rgba(255,255,255,.4)";
-        ctx.font = "12px 'Segoe UI','Microsoft YaHei',sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("运行到本节点后显示波形(点「完成」先生成)", w / 2, H / 2);
-        ctx.restore();
-        return;
-      }
+    if (!state.loaded || !state.peaks.length) {
+      ctx.fillStyle = "rgba(255,255,255,.4)";
+      ctx.font = "12px 'Segoe UI','Microsoft YaHei',sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("运行到本节点后显示波形(点「完成」先生成)", w / 2, H / 2);
+      return;
+    }
 
-      const innerW = Math.max(1, w - 8 - 2 * HIT);
-      const midY = H / 2;
-      const halfH = H / 2 - 10;
+    const midY = H / 2;
+    const halfH = H / 2 - 10;
 
-      if (state.end > state.start) {
-        const x1 = secToX(state.start, w - 8) + 4;
-        const x2 = secToX(state.end, w - 8) + 4;
-        ctx.fillStyle = "rgba(90,170,255,.22)";
-        ctx.fillRect(x1, 2, Math.max(1, x2 - x1), H - 4);
-      }
+    if (state.end > state.start) {
+      const x1 = secToX(state.start);
+      const x2 = secToX(state.end);
+      ctx.fillStyle = "rgba(90,170,255,.22)";
+      ctx.fillRect(x1, 2, Math.max(1, x2 - x1), H - 4);
+    }
 
-      ctx.strokeStyle = "rgba(150,210,255,.85)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      const cnt = state.peaks.length;
-      for (let i = 0; i < cnt; i++) {
-        const x = 4 + HIT + (i / Math.max(1, cnt - 1)) * innerW;
-        const a = Math.min(1, Math.abs(state.peaks[i] || 0)) * halfH;
-        ctx.moveTo(x, midY - a);
-        ctx.lineTo(x, midY + a);
-      }
-      ctx.stroke();
+    ctx.strokeStyle = "rgba(150,210,255,.85)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const cnt = state.peaks.length;
+    for (let i = 0; i < cnt; i++) {
+      const x = HIT + (i / Math.max(1, cnt - 1)) * Math.max(1, w - 2 * HIT);
+      const a = Math.min(1, Math.abs(state.peaks[i] || 0)) * halfH;
+      ctx.moveTo(x, midY - a);
+      ctx.lineTo(x, midY + a);
+    }
+    ctx.stroke();
 
-      ctx.strokeStyle = "rgba(255,255,255,.15)";
-      ctx.beginPath();
-      ctx.moveTo(4 + HIT, midY);
-      ctx.lineTo(4 + HIT + innerW, midY);
-      ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,.15)";
+    ctx.beginPath();
+    ctx.moveTo(HIT, midY);
+    ctx.lineTo(w - HIT, midY);
+    ctx.stroke();
 
-      if (state.end > state.start) {
-        for (const [sec, color] of [
-          [state.start, "#5aaaff"],
-          [state.end, "#ffb454"],
-        ]) {
-          const x = secToX(sec, w - 8) + 4;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(x, 2);
-          ctx.lineTo(x, H - 2);
-          ctx.stroke();
-          ctx.fillStyle = color;
-          roundRectPath(ctx, x - 4, midY - 9, 8, 18, 3);
-          ctx.fill();
-        }
+    if (state.end > state.start) {
+      for (const [sec, color] of [
+        [state.start, "#5aaaff"],
+        [state.end, "#ffb454"],
+      ]) {
+        const x = secToX(sec);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, 2);
+        ctx.lineTo(x, H - 2);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        roundRectPath(ctx, x - 4, midY - 9, 8, 18, 3);
+        ctx.fill();
       }
-      ctx.restore();
-    },
-    computeSize(width) {
-      return [width, WAVE_H];
-    },
-    /**
-     * 鼠标交互: 拖把手改起止 / 拖选区内平移 / 选区外重新拉选。
-     *
-     * @param {Event} event 鼠标事件
-     * @param {[number,number]} pos 节点局部坐标
-     * @param {LGraphNode} n 节点
-     * @returns {boolean} 是否消费
-     */
-    mouse(event, pos, n) {
-      if (!state.loaded || state.duration <= 0) return false;
-      const w = (n.size?.[0] ?? 320) - 8;
-      const x = pos[0];
-      const xs = secToX(state.start, w) + 4;
-      const xe = secToX(state.end, w) + 4;
-      const has = state.end > state.start;
-
-      if (event.type === "mousedown") {
-        if (has && Math.abs(x - xs) <= HIT) state.dragging = "start";
-        else if (has && Math.abs(x - xe) <= HIT) state.dragging = "end";
-        else if (has && x > xs && x < xe) {
-          state.dragging = "range";
-          state.dragOffset = xToSec(x, w) - state.start;
-        } else {
-          state.dragging = "end";
-          state.start = xToSec(x, w);
-          state.end = state.start;
-        }
-        emitDirty(n);
-        return true;
-      }
-      if (event.type === "mousemove" && state.dragging) {
-        const sec = xToSec(x, w);
-        if (state.dragging === "start") {
-          state.start = Math.min(sec, state.end);
-        } else if (state.dragging === "end") {
-          state.end = Math.max(sec, state.start);
-        } else if (state.dragging === "range") {
-          const len = state.end - state.start;
-          const s = Math.max(0, Math.min(state.duration - len, sec - state.dragOffset));
-          state.start = s;
-          state.end = s + len;
-        }
-        emitDirty(n);
-        return true;
-      }
-      if (event.type === "mouseup") {
-        if (state.dragging) {
-          state.dragging = null;
-          emitDirty(n);
-        }
-        return true;
-      }
-      return false;
-    },
+    }
   };
-  node.addCustomWidget(widget);
+
+  /** 按设备像素比调整画布分辨率后重绘。 */
+  const fit = () => {
+    const dpr = window.devicePixelRatio || 1;
+    const w = boxW();
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(WAVE_H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    redraw();
+  };
+
+  // 鼠标交互: 拖把手改起止 / 拖选区内平移 / 选区外重新拉选
+  canvas.addEventListener("mousedown", (e) => {
+    if (!state.loaded || state.duration <= 0) return;
+    const x = e.offsetX;
+    const xs = secToX(state.start);
+    const xe = secToX(state.end);
+    const has = state.end > state.start;
+    if (has && Math.abs(x - xs) <= HIT) state.dragging = "start";
+    else if (has && Math.abs(x - xe) <= HIT) state.dragging = "end";
+    else if (has && x > xs && x < xe) {
+      state.dragging = "range";
+      state.dragOffset = xToSec(x) - state.start;
+    } else {
+      state.dragging = "end";
+      state.start = xToSec(x);
+      state.end = state.start;
+    }
+    canvas.style.cursor = state.dragging === "range" ? "grabbing" : "ew-resize";
+    redraw();
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    if (!state.loaded || state.duration <= 0) return;
+    const x = e.offsetX;
+    if (!state.dragging) {
+      const xs = secToX(state.start);
+      const xe = secToX(state.end);
+      const has = state.end > state.start;
+      canvas.style.cursor = has && (Math.abs(x - xs) <= HIT || Math.abs(x - xe) <= HIT) ? "ew-resize" : "crosshair";
+      return;
+    }
+    const sec = xToSec(x);
+    if (state.dragging === "start") {
+      state.start = Math.min(sec, state.end);
+    } else if (state.dragging === "end") {
+      state.end = Math.max(sec, state.start);
+    } else if (state.dragging === "range") {
+      const len = state.end - state.start;
+      const s = Math.max(0, Math.min(state.duration - len, sec - state.dragOffset));
+      state.start = s;
+      state.end = s + len;
+    }
+    redraw();
+  });
+
+  const endDrag = () => {
+    if (!state.dragging) return;
+    state.dragging = null;
+    canvas.style.cursor = "crosshair";
+    redraw();
+  };
+  canvas.addEventListener("mouseup", endDrag);
+  canvas.addEventListener("mouseleave", endDrag);
+
+  // 节点宽度变化时重排画布
+  const ro = new ResizeObserver(() => fit());
+  ro.observe(canvas);
+  window.addEventListener("resize", fit);
+
+  const widget = node.addDOMWidget("waveform", "waveform", root, {
+    serialize: false,
+    hideOnZoom: false,
+    getValue: () => "",
+    setValue: () => {},
+  });
+  widget.computeSize = (width) => [width, WAVE_H + 8];
+  widget.state = state;
+  widget.redraw = redraw;
+  widget.fit = fit;
+  widget.canvas = canvas;
+  widget.element = root;
+  requestAnimationFrame(fit);
   return widget;
 }
 
@@ -608,8 +620,45 @@ async function refreshWaveform(node, waveWidget, listWidget) {
     }
     listWidget.render();
     syncSegmentState(node, listWidget.state);
+    waveWidget.redraw?.();   // DOM 版波形: 直接重绘画布(不依赖 canvas 自定义 widget 的 draw)
   } catch (err) {
     console.warn("[FallingTS] 拉取波形失败:", err);
+  }
+}
+
+/**
+ * 从节点上找波形 / 段列表 widget(不依赖私有字段, 因为它们可能在 onConfigure 后被重建)。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {{wave: object|undefined, list: object|undefined}} 两个 widget
+ */
+function findAudioWidgets(node) {
+  const widgets = node.widgets || [];
+  return {
+    wave: widgets.find((w) => w.name === "waveform"),
+    list: widgets.find((w) => w.name === "segment_list"),
+  };
+}
+
+/**
+ * 对图上所有 PreviewAudioSave 节点刷新波形(带防抖, 同一节点 800ms 内不重复拉)。
+ *
+ * @returns {void}
+ */
+const _refreshTimers = new Map();
+function refreshAllAudioNodes() {
+  for (const node of app.graph?._nodes || []) {
+    if (node.type !== NODE_CLASS) continue;
+    const prev = _refreshTimers.get(node.id);
+    if (prev) clearTimeout(prev);
+    _refreshTimers.set(
+      node.id,
+      setTimeout(() => {
+        _refreshTimers.delete(node.id);
+        const { wave, list } = findAudioWidgets(node);
+        if (wave && list) refreshWaveform(node, wave, list);
+      }, 300),
+    );
   }
 }
 
@@ -634,6 +683,13 @@ app.registerExtension({
     // 节点增删/重绘会重建元素, 故持续套用(与 PreviewVideo 的 styleFrameButtons 同做法)
     styleSegmentButtons();
     new MutationObserver(styleSegmentButtons).observe(document.body, { childList: true, subtree: true });
+
+    // 波形刷新: onExecuted 在 V3 节点上不可靠(实测从未触发), 改为监听 ComfyUI 的
+    // executed 事件 + 工作流加载完成 + 低频轮询兜底, 三路保证波形最终会拉起来。
+    api.addEventListener("executed", () => refreshAllAudioNodes());
+    api.addEventListener("progress", () => refreshAllAudioNodes());
+    setInterval(refreshAllAudioNodes, 5000);
+
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
     /**
