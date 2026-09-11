@@ -18,6 +18,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix`+`filename_suffix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名前缀/后缀/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
 | 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+`filename_suffix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
+| 视频拆解 | `FallingTSVideoComponents` | `FallingTS/工具` | 把参考视频拆成 帧序列/音频/帧率/位深/色彩空间(**None 安全**,核心 `GetVideoComponents` 的替代):`video` 是**可选输入**,未连接或为 None(mdtable 空字段/上游无值)时**全部输出 None 且不报错**,让下游 H3 Ref2VA 的参考视频位按"无参考"跳过;核心节点收到 None 会 AttributeError,故 `<Video N>` 参考列允许留空的工作流须用本节点 |
 
 ### Web 前端增强(13 个,安装即用,无需配置)
 

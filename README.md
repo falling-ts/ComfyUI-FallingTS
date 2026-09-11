@@ -18,6 +18,7 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | Video preview | `PreviewVideo` | `video` | Preview into the temp directory; clicking "Save" writes to output per `filename_prefix`+`filename_suffix` (`.mp4`, same name overwritten, no sequence number) |
 | Image preview save | `PreviewImageSave` | `FallingTS/Utility` | Always previews (temp, does not write to output); clicking **Save** writes to output per filename prefix/suffix/format/bit depth/color space, **same name overwritten, no sequence number** |
 | Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix`+`filename_suffix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
+| Video components | `FallingTSVideoComponents` | `FallingTS/Utility` | Splits a reference video into frames/audio/fps/bit depth/color space (**None-safe**, replacing the core `GetVideoComponents`): `video` is an **optional input**, so when it is unwired or None (empty mdtable field / no upstream value) **all outputs are None and nothing crashes**, letting the downstream H3 Ref2VA skip that reference slot as "no reference"; the core node raises AttributeError on None, so workflows whose `<Video N>` column may be left empty need this node |
 
 ### Web frontend enhancements (14, ready to use on install, no configuration)
 
