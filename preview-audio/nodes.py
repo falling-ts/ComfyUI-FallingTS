@@ -18,6 +18,7 @@ import logging
 import os
 from io import BytesIO
 from typing import Any
+from urllib.parse import quote
 
 import av
 import torch
@@ -596,6 +597,41 @@ async def _handle_clear(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
+async def _handle_audio_url(request: web.Request) -> web.Response:
+    """返回该节点当前缓存音频的可播放 URL(写 temp 一份, 供节点内 <audio> 试听)。
+
+    节点自带 DOM widget(波形/段列表), 会占满内容区, 导致 ComfyUI 的 PreviewAudio
+    播放器渲染不出来; 因此由后端直接给出可播放 URL, 前端自备 <audio controls>。
+
+    参数:
+        request: 路径参数 node_id。
+
+    返回:
+        web.Response: {"status":"ok","url":...} 或 400/500。
+    """
+    nid = request.match_info["node_id"].strip()
+    cache = _last_output.get(nid)
+    if not cache or not cache.get("audio"):
+        return web.json_response({"status": "error", "message": "没有可播放的音频数据"}, status=400)
+
+    audio = cache["audio"]
+    file_format = str(cache.get("format") or "flac")
+    if file_format not in _FORMATS:
+        file_format = "flac"
+    try:
+        waveform = audio["waveform"]
+        first = waveform[0] if getattr(waveform, "dim", lambda: 0)() > 2 else waveform
+        data = _encode_audio_waveform(first.cpu(), audio["sample_rate"], file_format, str(cache.get("quality") or "128k"))
+        name = f"FallingTS_preview_audio_{nid}.{file_format}"
+        with open(os.path.join(folder_paths.get_temp_directory(), name), "wb") as f:
+            f.write(data)
+    except Exception as e:  # noqa: BLE001 - 把真实原因回前端
+        logging.exception("[FallingTS] 生成可播放音频失败")
+        return web.json_response({"status": "error", "message": f"生成可播放音频失败: {e!r}"}, status=500)
+
+    return web.json_response({"status": "ok", "url": f"/view?filename={quote(name)}&type=temp"})
+
+
 async def _handle_waveform(request: web.Request) -> web.Response:
     """HTTP 路由: 返回该节点缓存音频的降采样峰值(供前端画波形与拖动选区)。
 
@@ -717,3 +753,4 @@ PromptServer.instance.routes.post("/preview-audio/done/{node_id}")(_handle_done)
 PromptServer.instance.routes.post("/preview-audio/reset")(_handle_reset)
 PromptServer.instance.routes.post("/preview-audio/clear")(_handle_clear)
 PromptServer.instance.routes.get("/preview-audio/waveform/{node_id}")(_handle_waveform)
+PromptServer.instance.routes.get("/preview-audio/audio-url/{node_id}")(_handle_audio_url)

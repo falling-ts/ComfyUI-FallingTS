@@ -364,6 +364,14 @@ function createWaveformWidget(node) {
     `display:block;width:100%;height:${WAVE_H}px;border-radius:6px;` +
     "background:#1b1e24;border:1px solid rgba(255,255,255,.12);cursor:crosshair;";
   root.appendChild(canvas);
+
+  // 节点自带的 DOM widget 占满了内容区, ComfyUI 的 PreviewAudio 播放器渲染不出来,
+  // 所以这里自备一个 <audio>, 源自后端 /preview-audio/audio-url/{id}。
+  const audioEl = document.createElement("audio");
+  audioEl.controls = true;
+  audioEl.preload = "none";
+  audioEl.style.cssText = "display:block;width:100%;height:32px;margin-top:4px;";
+  root.appendChild(audioEl);
   const ctx = canvas.getContext("2d");
 
   /** 画布可用宽度(CSS 像素)。 */
@@ -535,11 +543,24 @@ function createWaveformWidget(node) {
     getValue: () => "",
     setValue: () => {},
   });
-  widget.computeSize = (width) => [width, WAVE_H + 8];
+  widget.computeSize = (width) => [width, WAVE_H + 8 + 36];
   widget.state = state;
   widget.redraw = redraw;
   widget.fit = fit;
   widget.canvas = canvas;
+  widget.audioEl = audioEl;
+  /**
+   * 设置播放源(后端 temp 文件的 /view URL); 同源不重复设置以免打断播放。
+   *
+   * @param {string} url 可播放 URL
+   * @returns {void}
+   */
+  widget.setAudioUrl = (url) => {
+    if (!url || audioEl.dataset.src === url) return;
+    audioEl.dataset.src = url;
+    audioEl.src = url;
+    audioEl.load();
+  };
   widget.element = root;
   requestAnimationFrame(fit);
   return widget;
@@ -621,6 +642,14 @@ async function refreshWaveform(node, waveWidget, listWidget) {
     listWidget.render();
     syncSegmentState(node, listWidget.state);
     waveWidget.redraw?.();   // DOM 版波形: 直接重绘画布(不依赖 canvas 自定义 widget 的 draw)
+    // 顺带取可播放 URL(节点自备 <audio> 用)
+    try {
+      const ar = await fetch(`/preview-audio/audio-url/${node.id}`);
+      const aj = await ar.json().catch(() => null);
+      if (ar.ok && aj?.status === "ok") waveWidget.setAudioUrl?.(aj.url);
+    } catch {
+      /* 播放源失败不影响波形显示 */
+    }
   } catch (err) {
     console.warn("[FallingTS] 拉取波形失败:", err);
   }
