@@ -1,16 +1,19 @@
 /**
- * preview-audio.js — PreviewAudioSave 前端增强。
+ * preview-audio.js — PreviewAudioSave 前端增强(截段版)。
  *
- * 三块能力:
- * 1. 「保存」按钮(原有): 把 文件名/格式/质量 POST 到 /preview-audio/save/{id},
- *    后端用 execute 时缓存的音频直接写 output({filename_prefix}{filename_suffix}.{format}), 不重跑工作流;
- * 2. 波形截段(新增): 节点内画音频波形, 两侧把手可拖动确定起始与长度;
- *    点「截段」把 {start, duration} POST 到 /preview-audio/segment/{id} 累积到段列表,
- *    段列表每项可单独删除(点 × → /preview-audio/segment-remove/{id});
- * 3. 「完成」按钮(新增): 有段时 POST /preview-audio/done/{id} 并只提交下游(partial),
- *    使本节点按其缓存音频输出 audio_1..audio_N; 无段时 reset + 全量提交(先生成音频)。
+ * 与 PreviewVideo 同套机制, 只是 画面帧 -> 音频时间段:
+ * 1. 「保存」按钮: 把 文件名/格式/质量 POST 到 /preview-audio/save/{id},
+ *    后端用 execute 时缓存的音频直接写 output, 不重跑工作流;
+ * 2. 波形截段: 节点内画波形, 两侧把手可拖动确定起始与长度;
+ *    点「截段」把 {start, duration} POST 到 /preview-audio/segment/{id} 累积;
+ *    段列表每项可单独删除;
+ * 3. 「输出段数」参数: 输出 audio 端口数量(默认 1, 最小 = max(1, 选中段数), 上限 MAX_SEGMENTS)。
+ *    端口按 total 动态对齐 —— 界面上只有 1(audio) + total 个端口, 不是全部 64 个;
+ * 4. 「完成」按钮: 有段 → POST /preview-audio/done/{id} + 释放生成模型内存 +
+ *    collectOutputsAfter 收集下游输出节点 → queuePrompt(0,1,targets) 只跑下游;
+ *    无段 → reset + 全量提交(先生成音频)。
  *
- * 设计对应后端 preview-audio/nodes.py 的同名路由; 段参数与 PreviewVideo 的 selected_frames 同套机制。
+ * 输出端口与后端定长槽(MAX_SEGMENTS=64)配合: 后端始终定义 64 个槽, 前端按 total 裁剪显示。
  */
 
 import { app } from "../../scripts/app.js";
@@ -18,11 +21,12 @@ import { app } from "../../scripts/app.js";
 const NODE_CLASS = "PreviewAudioSave";
 const MAX_SEGMENTS = 64;
 const WAVE_H = 96;
+const HIT = 8;
 
 /**
  * 统一的提示条输出。
  *
- * @param {"success"|"error"|"info"|"warn"} severity 级别
+ * @param {"success"|"error"|"info"|"warn"|"warning"} severity 级别
  * @param {string} summary 文本
  * @returns {void}
  */
@@ -31,7 +35,7 @@ function toast(severity, summary) {
 }
 
 /**
- * 把秒格式化为紧凑显示(两位小数)。
+ * 秒格式化为两位小数。
  *
  * @param {number} v 秒
  * @returns {string} 形如 "1.25"
@@ -41,7 +45,7 @@ function fmt(v) {
 }
 
 /**
- * canvas 圆角矩形路径(老浏览器无 ctx.roundRect 时用 arcTo 手绘)。
+ * canvas 圆角矩形路径(老浏览器无 ctx.roundRect 时用手绘)。
  *
  * @param {CanvasRenderingContext2D} ctx 上下文
  * @param {number} x 左上 x
@@ -63,9 +67,65 @@ function roundRectPath(ctx, x, y, w, h, r) {
 }
 
 /**
- * 创建段列表 DOM widget: 每行显示 序号/起止/时长 + 删除按钮。
+ * 标记节点与画布为脏(触发重绘)。
  *
- * 列表高度随段数增长(每行 24px), 始终完整可见。
+ * @param {LGraphNode} node 节点
+ * @returns {void}
+ */
+function emitDirty(node) {
+  node.setDirtyCanvas?.(true, true);
+  node.graph?.setDirtyCanvas?.(true, true);
+}
+
+/**
+ * 判断节点是否为「输出节点」(保存/预览等终端节点)。
+ *
+ * @param {LGraphNode} node 画布节点
+ * @returns {boolean} nodeData.output_node 为 true 时 true
+ */
+function isOutputNode(node) {
+  return node?.constructor?.nodeData?.output_node === true;
+}
+
+/**
+ * 从 startNode 下游 BFS 收集所有输出节点, 作为 partial_execution_targets 传给 /prompt。
+ *
+ * 完成截段后只执行本段子图(预览节点 -> 下游保存/合成), 上游(模型/采样)因 audio 输入
+ * lazy 门控被跳过 —— 运行时看不到预览节点之前的部分。
+ *
+ * @param {LGraphNode} startNode 锚点节点
+ * @returns {string[]} 输出节点 ID 字符串数组(去重)
+ */
+function collectOutputsAfter(startNode) {
+  const targets = new Set();
+  const visited = new Set();
+  const queue = [];
+  const graph = startNode.graph;
+  for (const out of startNode.outputs ?? []) {
+    for (const linkId of out.links ?? []) {
+      const link = graph?.links?.[linkId];
+      if (link) queue.push(link.target_id);
+    }
+  }
+  while (queue.length) {
+    const nid = queue.shift();
+    if (visited.has(nid)) continue;
+    visited.add(nid);
+    const n = graph?.getNodeById?.(nid);
+    if (!n) continue;
+    if (isOutputNode(n)) targets.add(String(n.id));
+    for (const out of n.outputs ?? []) {
+      for (const linkId of out.links ?? []) {
+        const link = graph?.links?.[linkId];
+        if (link) queue.push(link.target_id);
+      }
+    }
+  }
+  return [...targets];
+}
+
+/**
+ * 创建段列表 DOM widget: 每行显示 序号/起止/时长 + 删除按钮。
  *
  * @param {LGraphNode} node 节点
  * @returns {object} widget 对象(带 render/state)
@@ -78,7 +138,7 @@ function createSegmentListWidget(node) {
     "font:12px 'Segoe UI','Microsoft YaHei',sans-serif;color:#e8e8e8;overflow:hidden;";
 
   /**
-   * 重绘列表内容(段为空时显示占位提示)。
+   * 重绘列表(段为空时显示占位提示)。
    *
    * @returns {void}
    */
@@ -140,7 +200,7 @@ function createSegmentListWidget(node) {
   widget.state = state;
   widget.render = render;
   /**
-   * 列表所需高度(供 LiteGraph 布局)。
+   * 列表所需高度。
    *
    * @param {number} width 可用宽
    * @returns {[number, number]} [宽, 高]
@@ -154,8 +214,8 @@ function createSegmentListWidget(node) {
  * 创建波形 widget: 画波形 + 选区 + 两侧把手, 支持拖动改起始/长度。
  *
  * 交互:
- * - 拖左把手 → 改 start(保留下一个把手位置, 不越过它);
- * - 拖右把手 → 改 end(同理);
+ * - 拖左侧把手 → 改 start(不越过右侧);
+ * - 拖右侧把手 → 改 end(不越过左侧);
  * - 在选区内拖动 → 整体平移选区;
  * - 在选区外按下 → 以该点为锚点重新拉一个选区。
  *
@@ -163,21 +223,10 @@ function createSegmentListWidget(node) {
  * @returns {object} widget 对象
  */
 function createWaveformWidget(node) {
-  const state = {
-    peaks: [],
-    duration: 0,
-    start: 0,
-    end: 0,
-    dragging: null,
-    dragOffset: 0,
-    loaded: false,
-  };
-
-  // 把手命中判定像素半径
-  const HIT = 8;
+  const state = { peaks: [], duration: 0, start: 0, end: 0, dragging: null, dragOffset: 0, loaded: false };
 
   /**
-   * 节点局部 x 坐标 → 秒。
+   * 节点局部 x → 秒。
    *
    * @param {number} x 局部 x
    * @param {number} w 波形宽
@@ -190,7 +239,7 @@ function createWaveformWidget(node) {
   };
 
   /**
-   * 秒 → 节点局部 x 坐标。
+   * 秒 → 节点局部 x。
    *
    * @param {number} sec 秒
    * @param {number} w 波形宽
@@ -209,7 +258,7 @@ function createWaveformWidget(node) {
     options: { serialize: false },
     state,
     /**
-     * 是否已有可拖动的选区。
+     * 是否已有可拖动选区。
      *
      * @returns {boolean} 结果
      */
@@ -223,14 +272,12 @@ function createWaveformWidget(node) {
      * @param {LGraphNode} n 节点
      * @param {number} w 宽
      * @param {number} y 顶边 y
-     * @param {number} h 高
      * @returns {void}
      */
-    draw(ctx, n, w, y, h) {
+    draw(ctx, n, w, y) {
       const H = WAVE_H;
       ctx.save();
       ctx.translate(0, y);
-      // 背景
       roundRectPath(ctx, 4, 0, w - 8, H, 6);
       ctx.fillStyle = "#1b1e24";
       ctx.fill();
@@ -252,7 +299,6 @@ function createWaveformWidget(node) {
       const midY = H / 2;
       const halfH = H / 2 - 10;
 
-      // 选区高亮
       if (state.end > state.start) {
         const x1 = secToX(state.start, w - 8) + 4;
         const x2 = secToX(state.end, w - 8) + 4;
@@ -260,27 +306,24 @@ function createWaveformWidget(node) {
         ctx.fillRect(x1, 2, Math.max(1, x2 - x1), H - 4);
       }
 
-      // 波形(上下对称)
       ctx.strokeStyle = "rgba(150,210,255,.85)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      const n_ = state.peaks.length;
-      for (let i = 0; i < n_; i++) {
-        const x = 4 + HIT + (i / Math.max(1, n_ - 1)) * innerW;
+      const cnt = state.peaks.length;
+      for (let i = 0; i < cnt; i++) {
+        const x = 4 + HIT + (i / Math.max(1, cnt - 1)) * innerW;
         const a = Math.min(1, Math.abs(state.peaks[i] || 0)) * halfH;
         ctx.moveTo(x, midY - a);
         ctx.lineTo(x, midY + a);
       }
       ctx.stroke();
 
-      // 中线
       ctx.strokeStyle = "rgba(255,255,255,.15)";
       ctx.beginPath();
       ctx.moveTo(4 + HIT, midY);
       ctx.lineTo(4 + HIT + innerW, midY);
       ctx.stroke();
 
-      // 两个把手
       if (state.end > state.start) {
         for (const [sec, color] of [
           [state.start, "#5aaaff"],
@@ -304,16 +347,16 @@ function createWaveformWidget(node) {
       return [width, WAVE_H];
     },
     /**
-     * 鼠标交互: 拖动把手改起止, 拖选区内平移, 选区外重新拉选。
+     * 鼠标交互: 拖把手改起止 / 拖选区内平移 / 选区外重新拉选。
      *
      * @param {Event} event 鼠标事件
      * @param {[number,number]} pos 节点局部坐标
      * @param {LGraphNode} n 节点
-     * @returns {boolean} 是否消费该事件
+     * @returns {boolean} 是否消费
      */
     mouse(event, pos, n) {
       if (!state.loaded || state.duration <= 0) return false;
-      const w = (n.size?.[0] ?? 300) - 8;
+      const w = (n.size?.[0] ?? 320) - 8;
       const x = pos[0];
       const xs = secToX(state.start, w) + 4;
       const xe = secToX(state.end, w) + 4;
@@ -326,12 +369,11 @@ function createWaveformWidget(node) {
           state.dragging = "range";
           state.dragOffset = xToSec(x, w) - state.start;
         } else {
-          // 选区外: 以该点为锚点重新拉选
           state.dragging = "end";
           state.start = xToSec(x, w);
           state.end = state.start;
         }
-        n.setDirtyCanvas(true, true);
+        emitDirty(n);
         return true;
       }
       if (event.type === "mousemove" && state.dragging) {
@@ -342,17 +384,17 @@ function createWaveformWidget(node) {
           state.end = Math.max(sec, state.start);
         } else if (state.dragging === "range") {
           const len = state.end - state.start;
-          let s = Math.max(0, Math.min(state.duration - len, sec - state.dragOffset));
+          const s = Math.max(0, Math.min(state.duration - len, sec - state.dragOffset));
           state.start = s;
           state.end = s + len;
         }
-        n.setDirtyCanvas(true, true);
+        emitDirty(n);
         return true;
       }
       if (event.type === "mouseup") {
         if (state.dragging) {
           state.dragging = null;
-          n.setDirtyCanvas(true, true);
+          emitDirty(n);
         }
         return true;
       }
@@ -364,19 +406,50 @@ function createWaveformWidget(node) {
 }
 
 /**
- * 同步段状态到节点输出槽可见性(与 PreviewVideo 的 syncFrameState 同思路)。
+ * 同步截段状态: 更新 total 下限 + 按 total 对齐输出端口数量。
  *
- * 这里只做画布重绘与标题提示 —— 输出槽由后端 schema 固定为 audio_1..audio_64,
- * 未截到的槽在后端输出 None, 无需前端动态增删端口。
+ * total 规则(与 PreviewVideo/composite 同款):
+ * - total 最小 = max(1, 选中段数): 截段后选中数 > total 时自动抬高 total;
+ * - 输出端口数 = 1(audio) + total 个 audio_N, 而非按选中段数;
+ * - 选中数变为 0 时 total 最小回到 1(不得为 0)。
  *
  * @param {LGraphNode} node 节点
- * @param {object} state 段状态
+ * @param {object} state 段状态 {segments: [...]}
  * @returns {void}
  */
 function syncSegmentState(node, state) {
-  const n = state.segments?.length ?? 0;
-  node.title = n > 0 ? `Preview Audio (保存+截段) · ${n} 段` : "Preview Audio (保存+截段)";
-  node.setDirtyCanvas(true, true);
+  // 1) total 下限随选中段数
+  const totalWidget = node._fallingtsTotalWidget;
+  const selectedCount = state?.segments?.length ?? 0;
+  const minTotal = Math.max(1, selectedCount);
+  if (totalWidget?.options) {
+    totalWidget.options.min = minTotal;
+    const cur = Number(totalWidget.value) || 1;
+    if (cur < minTotal) {
+      totalWidget.value = minTotal;
+      totalWidget.callback?.(minTotal);
+    }
+  }
+
+  // 2) 输出端口: [0]=audio, [1..]=audio_1..N; 数量 = 1 + total
+  const total = Math.max(1, Number(totalWidget?.value) || 1);
+  const target = 1 + total;
+  const startIdx = 1;
+  // 只删"无链接"的尾部端口: 加载工作流时尾部端口可能带着已有链接,
+  // 强删会让前端链接重建时对已删端口写 .link 而报错。
+  while ((node.outputs?.length ?? 0) > target) {
+    const tail = node.outputs[node.outputs.length - 1];
+    if (tail && (tail.links?.length ?? 0) > 0) break;
+    node.removeOutput(node.outputs.length - 1);
+  }
+  while ((node.outputs?.length ?? 0) < target) {
+    node.addOutput("audio_" + (node.outputs.length - startIdx + 1), "AUDIO");
+  }
+  for (let i = startIdx; i < (node.outputs?.length ?? 0); i++) {
+    node.outputs[i].name = `audio_${i}`;
+    node.outputs[i].label = `截段 ${i}`;
+  }
+  emitDirty(node);
 }
 
 /**
@@ -407,7 +480,6 @@ async function refreshWaveform(node, waveWidget, listWidget) {
     }
     listWidget.render();
     syncSegmentState(node, listWidget.state);
-    node.setDirtyCanvas(true, true);
   } catch (err) {
     console.warn("[FallingTS] 拉取波形失败:", err);
   }
@@ -417,21 +489,43 @@ app.registerExtension({
   name: "FallingTS.PreviewAudioSave",
 
   /**
-   * 扩展初始化: 页面加载时清空后端截段状态(与 PreviewVideo 的 clear 同语义 ——
-   * 前端刷新后列表回空, 后端若不清理会把新段追加到旧段后面)。
+   * 扩展初始化钩子: ① 页面加载时 POST /preview-audio/clear 同步清空后端段状态
+   * (前端刷新后列表本就回空, 清的是进程内存, 避免下次截段追加到旧段后面);
+   * ② 包装全局 app.queuePrompt: 默认 Run(未指定目标节点)时先 POST reset 把预览节点
+   * 全部置回未完成, 再按原逻辑全量提交 —— 保证每次 Run 都从开头执行重新生成音频。
    *
-   * @returns {Promise<void>} 清理流程
+   * @returns {Promise<void>} 初始化流程
    */
   async setup() {
     try {
       await fetch("/preview-audio/clear", { method: "POST" });
-    } catch (err) {
-      console.warn("[FallingTS] 清空截段状态失败:", err);
+    } catch {
+      /* 后端未就绪时忽略: 下次 Run 的 reset 会兜底清空 */
     }
+    const orig = app.queuePrompt?.bind(app);
+    if (!orig) return;
+    /**
+     * 包装 queuePrompt: 默认 Run 分支先重置, partial 提交(带 queueNodeIds)不重置。
+     *
+     * @param {number} number 提交次数
+     * @param {number} batch 批次数
+     * @param {Array<string>|undefined} queueNodeIds 显式目标节点列表
+     * @returns {Promise} 原 queuePrompt 返回值
+     */
+    app.queuePrompt = async function (number, batch, queueNodeIds) {
+      if (!queueNodeIds?.length) {
+        try {
+          await fetch("/preview-audio/reset", { method: "POST" });
+        } catch {
+          /* 忽略 */
+        }
+      }
+      return orig(number, batch, queueNodeIds);
+    };
   },
 
   /**
-   * 节点定义注册前钩子: 给 PreviewAudioSave 追加波形截段 UI 与按钮。
+   * 节点定义注册前钩子: 追加按钮 / 波形 / 段列表 / 输出段数, 并对齐端口。
    *
    * @param {Function} nodeType 节点类型构造函数
    * @param {object} nodeData 节点定义数据
@@ -442,7 +536,7 @@ app.registerExtension({
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     /**
-     * 节点创建钩子: 建波形 widget / 段列表 / 「截段」「完成」「保存」按钮。
+     * 节点创建钩子: 建 保存/截段/完成 按钮 + 输出段数 + 波形 + 段列表。
      *
      * @returns {*} 原 onNodeCreated 返回值
      */
@@ -450,94 +544,11 @@ app.registerExtension({
       onNodeCreated?.apply(this, arguments);
       const node = this;
 
-      // 波形(在原有控件之后、按钮之前插入)
-      const waveWidget = createWaveformWidget(node);
-      const listWidget = createSegmentListWidget(node);
-      node._fallingtsWave = waveWidget;
-      node._fallingtsSegments = listWidget;
-
-      /**
-       * 「截段」按钮: 把当前选区 POST 到后端累积, 并加入前端列表。
-       *
-       * @returns {Promise<void>} 请求流程
-       */
-      node.addWidget("button", "截段", null, async () => {
-        const st = waveWidget.state;
-        if (!st.loaded) {
-          toast("warn", "还没有音频波形, 请先点「完成」生成或运行工作流");
-          return;
-        }
-        const duration = st.end - st.start;
-        if (duration <= 0.01) {
-          toast("warn", "请先在波形上拖动选出区间");
-          return;
-        }
-        if (listWidget.state.segments.length >= MAX_SEGMENTS) {
-          toast("warn", `已达截段上限 ${MAX_SEGMENTS} 段`);
-          return;
-        }
-        try {
-          const resp = await fetch(`/preview-audio/segment/${node.id}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ start: st.start, duration }),
-          });
-          const data = await resp.json().catch(() => null);
-          if (!resp.ok) {
-            toast("error", data?.message ?? "截段失败");
-            return;
-          }
-          listWidget.state.segments.push({ start: st.start, duration });
-          listWidget.render();
-          syncSegmentState(node, listWidget.state);
-          toast("success", `已添加第 ${data?.index ?? listWidget.state.segments.length} 段`);
-        } catch (err) {
-          console.error("[FallingTS] 截段失败:", err);
-          toast("error", "截段失败: 无法连接后端");
-        }
-      });
-
-      /**
-       * 「完成」按钮: 有段 → 置 done 并只提交下游; 无段 → reset + 全量提交(先生成音频)。
-       *
-       * @returns {Promise<void>} 请求流程
-       */
-      node.addWidget("button", "完成", null, async () => {
-        const segs = listWidget.state.segments;
-        try {
-          if (!segs.length) {
-            try {
-              await fetch("/preview-audio/reset", { method: "POST" });
-            } catch {
-              /* 忽略: reset 失败不阻塞生成 */
-            }
-            await app.queuePrompt(0, 1);
-            toast("info", "已开始生成音频, 回来后可拖动波形截段");
-            return;
-          }
-          const resp = await fetch(`/preview-audio/done/${node.id}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ segments: segs }),
-          });
-          const data = await resp.json().catch(() => null);
-          if (!resp.ok) {
-            toast("error", data?.message ?? "完成失败");
-            return;
-          }
-          await refreshWaveform(node, waveWidget, listWidget);
-          toast("success", `已置完成(${segs.length} 段), 提交后各段从 audio_1.. 输出`);
-        } catch (err) {
-          console.error("[FallingTS] 完成失败:", err);
-          toast("error", "完成失败: 无法连接后端");
-        }
-      });
-
       /**
        * 「保存」按钮: 把文件名/格式/质量 POST 到后端, 后端用缓存音频直接写 output,
        * 【不重跑工作流】。
        *
-       * @returns {Promise<void>} 保存请求异步流程
+       * @returns {Promise<void>} 保存流程
        */
       node.addWidget("button", "保存", null, async () => {
         const getWidget = (name) => node.widgets?.find((w) => w.name === name)?.value;
@@ -570,18 +581,145 @@ app.registerExtension({
         }
       });
 
-      // 首帧数据(工作流加载/运行后)到位时拉一次波形
-      const onExecuted = node.onExecuted;
-      node.onExecuted = function (message) {
-        onExecuted?.apply(this, arguments);
-        refreshWaveform(node, waveWidget, listWidget);
-      };
+      // ── 截段功能区: 波形 → 截段按钮 → 输出段数 → 段列表 ──
+      const waveWidget = createWaveformWidget(node);
 
-      waveWidget.state.start = 0;
-      waveWidget.state.end = 0;
-      listWidget.render();
-      syncSegmentState(node, listWidget.state);
-      node.setSize([Math.max(320, node.size?.[0] ?? 320), node.size?.[1] ?? 200]);
+      /**
+       * 「截段」按钮: 把当前选区 POST 到后端累积, 并加入前端列表与端口。
+       *
+       * @returns {Promise<void>} 请求流程
+       */
+      node.addWidget("button", "截段", null, async () => {
+        const st = waveWidget.state;
+        if (!st.loaded) {
+          toast("warn", "还没有音频波形, 请先点「完成」生成或运行工作流");
+          return;
+        }
+        const duration = st.end - st.start;
+        if (duration <= 0.01) {
+          toast("warn", "请先在波形上拖动选出区间");
+          return;
+        }
+        const listWidget = node._fallingtsSegments;
+        if (listWidget.state.segments.length >= MAX_SEGMENTS) {
+          toast("warn", `已达截段上限 ${MAX_SEGMENTS} 段`);
+          return;
+        }
+        try {
+          const resp = await fetch(`/preview-audio/segment/${node.id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ start: st.start, duration }),
+          });
+          const data = await resp.json().catch(() => null);
+          if (!resp.ok) {
+            toast("error", data?.message ?? "截段失败");
+            return;
+          }
+          // 先对齐输出端口/total, 再重绘列表
+          listWidget.state.segments.push({ start: st.start, duration });
+          syncSegmentState(node, listWidget.state);
+          listWidget.render();
+          toast("success", `已添加第 ${data?.index ?? listWidget.state.segments.length} 段`);
+        } catch (err) {
+          console.error("[FallingTS] 截段失败:", err);
+          toast("error", "截段失败: 无法连接后端");
+        }
+      });
+
+      /**
+       * 「完成」按钮: 有段 → 置 done + 释放生成模型内存 + 只提交下游; 无段 → reset + 全量提交。
+       *
+       * @returns {Promise<void>} 请求流程
+       */
+      node.addWidget("button", "完成", null, async () => {
+        const segs = node._fallingtsSegments?.state?.segments ?? [];
+        try {
+          if (!segs.length) {
+            try {
+              await fetch("/preview-audio/reset", { method: "POST" });
+            } catch {
+              /* 忽略 */
+            }
+            await app.queuePrompt(0, 1);
+            toast("info", "已开始生成音频, 回来后可拖动波形截段");
+            return;
+          }
+          const resp = await fetch(`/preview-audio/done/${node.id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ segments: segs }),
+          });
+          const data = await resp.json().catch(() => null);
+          if (!data?.done) {
+            toast("warn", "请先截段再点完成");
+            return;
+          }
+          // 释放上一段用过的生成模型内存(可选, 失败不影响)
+          try {
+            await fetch("/free", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ unload_models: true, free_memory: true }),
+            });
+          } catch {
+            /* 忽略 */
+          }
+          // partial 目标: 本节点之后的所有输出节点
+          const targets = collectOutputsAfter(node);
+          if (!targets.length) {
+            console.warn("[FallingTS] 预览节点之后没有输出节点");
+            return;
+          }
+          await app.queuePrompt(0, 1, targets);
+          toast("success", `已完成(${segs.length} 段), 各段从 audio_1.. 输出到下游`);
+        } catch (err) {
+          console.error("[FallingTS] 完成失败:", err);
+          toast("error", "完成失败: 无法连接后端");
+        }
+      });
+
+      // ── 输出段数参数: 输出 audio 端口数量(默认 1, 最小 = max(1, 选中段数), 上限 MAX_SEGMENTS) ──
+      const totalWidget = node.addWidget(
+        "number",
+        "输出段数",
+        1,
+        () => {
+          syncSegmentState(node, node._fallingtsSegments?.state ?? { segments: [] });
+        },
+        { min: 1, max: MAX_SEGMENTS, step: 1, precision: 0 },
+      );
+      totalWidget.options.min = 1;
+      totalWidget.options.max = MAX_SEGMENTS;
+      node._fallingtsTotalWidget = totalWidget;
+
+      // 段列表 DOM widget(波形 + 按钮之下)
+      const segList = createSegmentListWidget(node);
+      node._fallingtsSegments = segList;
+
+      // 节点创建后立即按 total 对齐输出端口(与 route/fanout/composite 同款):
+      // 新拖入节点无链接, 直接裁到 1(audio) + total 个 audio_N。
+      if ((node.outputs ?? []).length > 0) syncSegmentState(node, { segments: [] });
+      const onExecuted = node.onExecuted;
+      node.onExecuted = function () {
+        onExecuted?.apply(this, arguments);
+        refreshWaveform(node, waveWidget, segList);
+      };
+      segList.render();
+      node.setSize([Math.max(340, node.size?.[0] ?? 340), Math.max(300, node.size?.[1] ?? 300)]);
+
+      // 端口对齐: onConfigure 末尾按 total 对齐(configure 同步执行, 渲染在其后,
+      // 因此不会出现"先显示全部 64 端口再隐藏"的闪烁 —— 一次成型)。
+      const prevOnConfigure = node.onConfigure;
+      node.onConfigure = function (info) {
+        prevOnConfigure?.call(this, info);
+        if (node._fallingtsSegments) {
+          // 旧版 widgets_values 兜底: 老工作流里 suffix 槽可能落到按钮值 null
+          const sw = node.widgets?.find((w) => w.name === "filename_suffix");
+          if (sw && sw.value == null) sw.value = "";
+          syncSegmentState(node, node._fallingtsSegments?.state ?? { segments: [] });
+        }
+      };
     };
   },
 });
