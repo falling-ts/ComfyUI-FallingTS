@@ -103,7 +103,7 @@ ComfyUI-FallingTS/
 
 注:`preview-image` / `preview-video` / `preview-audio` / `audio-trim` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
 
-### None 容忍约定(全部 13 节点)
+### None 容忍约定(全部 14 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -113,6 +113,7 @@ ComfyUI-FallingTS/
 
 - **控制/路由类**(route/switch/fanout/selector)——**保持纯路由, 不做 None→last**:`_split_items`/`_clamp_total`/`_resolve_index` 等助手对 None items/total/selection 回退默认(1 组、第 0 项);未选中分支**输出 None**(由下游数据类节点用 sticky 兜底),选中分支输出真实值。这是路由的语义(未选中 = 无值),不缓存、不透传 last;
 - **数据类 —— 预览**(preview-image/preview-video/preview-audio):media 为 None → 回放 `_last_output` 上次预览事件(保持原预览不清空, 不更新「保存」缓存) + **输出该节点最近一次预览的媒体**(preview-image 重组为 BxHxWxC 批张量; video/audio 直接输出缓存对象),让下游(如四图合成)拿到该面「之前预览过」的媒体;从未预览过则输出 None。**绝不透传空 tuple `()`**(会被下游当合法值走 `.shape`/迭代而崩溃);
+- **数据类 —— 音频截段**(audio-trim):`audio` 为 None → 若有缓存则按已缓存段输出, 否则输出全 None; 未点「完成」时用 `ExecutionBlocker` 阻断全部下游(切段节点自身仍执行并发预览事件), 点「完成」后输出整段 + 各段;
 - **数据类 —— 帧率**(fps):images 为 None → 输出本节点最近一次抽帧结果(sticky),从未处理则透传 None;source_fps/target_fps 任一 None 时无法算帧率比,按原样透传(stride=1);
 - **数据类 —— 视频拆解**(video-components):`video` 为 optional,None 时**全部输出 None**(images/audio/fps/bit_depth/color_space),不报错;此处**故意不做 sticky** —— 与其它数据类节点相反,因为 None 表示"该行没有视频参考"(mdtable 空 `<Video N>` 字段),回放上一次的视频会让生成的参考张冠李戴;下游 Ref2VA 的可选 `ref_video_N` 收到 None 即按无参考跳过, 输出 None 不构成"丢数据";
 - **数据类 —— 合成**(composite):total 驱动张数(None → 默认 4, clamp 1..64);image1..64 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → **该格用底色空白占位**(部分有值时正常合成, 缺格用底色占位);**total 张图全无值 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**(绝不崩溃);label1..64 (节点内表单文本框, 空串 = 不画; None → 各自默认标注);font_size/padding/background_color None → 默认 8.0/6/#000000;
