@@ -29,6 +29,8 @@ PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
 PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
 # preview-audio 目录名同样含连字符, 需经 importlib 按名加载
 PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
+# audio-trim 目录名同样含连字符, 需经 importlib 按名加载(音频截段: 波形选区切多段输出)
+AudioTrimNode = import_module("audio-trim.nodes").FallingTSAudioTrimNode
 # video-components 目录名同样含连字符, 需经 importlib 按名加载
 VideoComponentsNode = import_module("video-components.nodes").FallingTSVideoComponentsNode
 
@@ -53,6 +55,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "PreviewVideo": PreviewVideoNode,
     "PreviewImageSave": PreviewImageSaveNode,
     "PreviewAudioSave": PreviewAudioSaveNode,
+    "FallingTSAudioTrim": AudioTrimNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
@@ -69,6 +72,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "PreviewVideo": "Preview Video (保存)",
     "PreviewImageSave": "Preview Image (保存)",
     "PreviewAudioSave": "Preview Audio (保存)",
+    "FallingTSAudioTrim": "FallingTS 音频截段 (波形切段)",
 }
 
 # ─── V3 ComfyExtension (支持 comfy_entrypoint 注册) ─────
