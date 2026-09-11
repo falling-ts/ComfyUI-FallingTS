@@ -78,6 +78,67 @@ function emitDirty(node) {
 }
 
 /**
+ * 给 DOM 版「截段」按钮套青绿渐变样式(与 PreviewVideo 的「截帧」同款配色)。
+ *
+ * Nodes 2.0 把 button widget 渲染成 DOM <button>; PreviewVideo 的全局样式器只按
+ * 「保存/截帧/完成」三个文本匹配, 本节点的「截段」不在其中, 故在此自行套用。
+ *
+ * @param {HTMLElement} el 按钮元素
+ * @returns {void}
+ */
+function applySegmentBtnStyle(el) {
+  el.style.height = "40px";
+  el.style.minHeight = "40px";
+  el.style.padding = "8px 12px";
+  el.style.background = "linear-gradient(135deg,#0bb47d,#17d9a0)";
+  el.style.color = "#fff";
+  el.style.borderRadius = "8px";
+  el.style.fontSize = "15px";
+  el.style.fontWeight = "700";
+  el.style.letterSpacing = "1px";
+  el.style.boxShadow = "0 2px 8px rgba(11,180,125,.35)";
+  el.style.transition = "all .2s ease";
+  el.style.border = "none";
+  if (!el._fallingtsSegmentStyled) {
+    el._fallingtsSegmentStyled = true;
+    el.addEventListener("mouseenter", () => {
+      el.style.background = "linear-gradient(135deg,#0ecc90,#22edb2)";
+      el.style.boxShadow = "0 4px 14px rgba(11,180,125,.5)";
+      el.style.transform = "translateY(-1px)";
+    });
+    el.addEventListener("mouseleave", () => {
+      el.style.background = "linear-gradient(135deg,#0bb47d,#17d9a0)";
+      el.style.boxShadow = "0 2px 8px rgba(11,180,125,.35)";
+      el.style.transform = "";
+    });
+  }
+}
+
+/**
+ * 判断是否为「截段」按钮(按文本或 aria-label)。
+ *
+ * @param {HTMLElement} el 元素
+ * @returns {boolean} 是否截段按钮
+ */
+function isSegmentBtn(el) {
+  if (!el || el.tagName !== "BUTTON") return false;
+  const txt = (el.innerText || "").trim();
+  const aria = (el.getAttribute("aria-label") || "").trim();
+  return txt === "截段" || aria === "截段";
+}
+
+/**
+ * 遍历页面按钮, 给「截段」按钮套样式。
+ *
+ * @returns {void}
+ */
+function styleSegmentButtons() {
+  document.querySelectorAll("button").forEach((el) => {
+    if (isSegmentBtn(el)) applySegmentBtnStyle(el);
+  });
+}
+
+/**
  * 判断节点是否为「输出节点」(保存/预览等终端节点)。
  *
  * @param {LGraphNode} node 画布节点
@@ -122,6 +183,73 @@ function collectOutputsAfter(startNode) {
     }
   }
   return [...targets];
+}
+
+/**
+ * 给 canvas 版「截段」按钮 widget 套样式: 覆写 draw 绘制青绿渐变圆角按钮。
+ *
+ * Nodes 2.0 以 DOM <button> 渲染为主, 这里是旧渲染模式(canvas)的兜底,
+ * 与 PreviewVideo 的 styleFrameButton 同构。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {void}
+ */
+function styleSegmentButton(node) {
+  const btn = node.widgets?.find((w) => w.type === "button" && w.name === "截段");
+  if (!btn) return;
+
+  btn.computedHeight = 56;
+  const origMouse = btn.mouse;
+
+  /**
+   * 自定义绘制: 阴影层 + 青绿渐变圆角主体 + 白字「截段」; _pressed 时下压。
+   *
+   * @param {CanvasRenderingContext2D} ctx 上下文
+   * @param {LGraphNode} _n 节点(未用)
+   * @param {number} widget_width 控件宽
+   * @param {number} y 顶边 y
+   * @returns {void}
+   */
+  btn.draw = function (ctx, _n, widget_width, y) {
+    const W = widget_width;
+    const dy = this._pressed ? 1 : 0;
+    const BH = 52;
+    roundRectPath(ctx, 6, y + 6, W - 12, BH - 8, 10);
+    ctx.fillStyle = "rgba(0,0,0,.22)";
+    ctx.fill();
+    roundRectPath(ctx, 6, y + 3 + dy, W - 12, BH - 8, 10);
+    const g = ctx.createLinearGradient(0, y, 0, y + BH);
+    g.addColorStop(0, this._pressed ? "#0c9e6a" : "#0bb47d");
+    g.addColorStop(1, this._pressed ? "#12c98c" : "#17d9a0");
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.2)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 16px 'Segoe UI','Microsoft YaHei',sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("截段", W / 2, y + BH / 2 + 1 + dy);
+  };
+
+  /**
+   * 鼠标事件: 记录按下状态(下压反馈), 其余交给原 mouse 触发点击回调。
+   *
+   * @param {Event} event 事件
+   * @param {Array} pos 节点局部坐标
+   * @param {LGraphNode} n2 节点
+   * @returns {*} 原 mouse 返回值
+   */
+  btn.mouse = function (event, pos, n2) {
+    const inBtn =
+      this.last_y != null && pos[1] >= this.last_y && pos[1] <= this.last_y + (this.computedHeight || 20);
+    if (event.type === "mousedown") this._pressed = true;
+    if (event.type === "mouseup" || (event.type === "mousedown" && !inBtn)) this._pressed = false;
+    return origMouse ? origMouse.call(this, event, pos, n2) : false;
+  };
+
+  node.setDirtyCanvas(true, true);
 }
 
 /**
@@ -502,6 +630,10 @@ app.registerExtension({
     } catch {
       /* 后端未就绪时忽略: 下次 Run 的 reset 会兜底清空 */
     }
+    // 「截段」按钮样式: Nodes 2.0 把 button widget 渲染为 DOM <button>,
+    // 节点增删/重绘会重建元素, 故持续套用(与 PreviewVideo 的 styleFrameButtons 同做法)
+    styleSegmentButtons();
+    new MutationObserver(styleSegmentButtons).observe(document.body, { childList: true, subtree: true });
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
     /**
@@ -523,7 +655,6 @@ app.registerExtension({
       return orig(number, batch, queueNodeIds);
     };
   },
-
   /**
    * 节点定义注册前钩子: 追加按钮 / 波形 / 段列表 / 输出段数, 并对齐端口。
    *
@@ -704,6 +835,7 @@ app.registerExtension({
         onExecuted?.apply(this, arguments);
         refreshWaveform(node, waveWidget, segList);
       };
+      styleSegmentButton(node);
       segList.render();
       node.setSize([Math.max(340, node.size?.[0] ?? 340), Math.max(300, node.size?.[1] ?? 300)]);
 
