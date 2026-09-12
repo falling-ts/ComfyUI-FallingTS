@@ -156,6 +156,25 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 - `preview-audio` 的 `_handle_clear` 曾写成 `_last_output.clear()` —— 刷新即清空音频缓存,「保存」与播放器都没数据; 更糟的是 ComfyUI 执行缓存还在, 导致全量 Run 时该节点被跳过、缓存再也填不回来;
 - `preview-video` / `audio-trim` 曾在 `setup()` POST `/clear` 清界面态 —— 刷新丢掉上一次的截帧/截段结果。
 
+### 分段执行约定(lazy 门控 + partial 提交)
+
+「先跑到本节点停住 → 点按钮只跑下游」这套机制(**preview-video 的截帧/audio-trim 的截段/proceed 的继续**)由两半组成, **缺一不可**:
+
+**① lazy 门控(后端) —— 决定"上游跑不跑"**
+
+- **输入必须显式声明 `lazy=True`**(V3: `IO.Audio.Input("audio", lazy=True, ...)`), 否则引擎不会调用节点的 `check_lazy_status`, 写了也等于没写 —— 每次都照常拉上游;
+- `check_lazy_status` 返回需要拉取的上游输入名: **已放行(完成/继续)→ `[]` 不拉**; 未放行 → `["audio"]` 拉上游更新缓存;
+- 用 `MISSING = object()` 哨兵区分"该输入没连线"(`MISSING`)与"连了线但上游未求值"(`None`);
+- `execute` 里 `audio is None`(lazy 未拉上游)时**用 `_last_output` 缓存继续**; 未放行则返回 `ExecutionBlocker(None)` 阻断全部下游。
+- **对照**: `preview-video` 的 `IO.Video.Input("video", lazy=True, ...)` 是正确样板; `audio-trim` 曾经漏掉 `lazy=True`, 表现为「点完成仍重新加载模型、耗时 90s+」。
+
+**② partial 提交(前端) —— 决定"下游跑哪些"**
+
+- 提交**完整图**(不裁剪 `prompt.output`), 另带 `partial_execution_targets` = 本节点下游的输出节点 id 列表;
+- ComfyUI 的 `validate_prompt` 只把 targets 里的 output node 纳入执行(`execution.py`), 上游是否执行由 ① 的 lazy 边界决定;
+- **不要按 targets 反推依赖闭包去裁剪 prompt** —— 多余且会掩盖问题(曾因此误判"partial 已生效");
+- 第三参数是**选项对象**: `fetchApi("/prompt", {body: JSON.stringify({prompt, partial_execution_targets})})`。注意 `api.queuePrompt(index, prompt, options)` 的第 3 参是 `{partialExecutionTargets}`, 传裸数组会被静默忽略、退化成全量提交。
+
 ## 软链接映射
 
 | 路径 | 类型 | 相对目标 | 实际指向 |
