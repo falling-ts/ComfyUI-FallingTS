@@ -901,6 +901,30 @@ app.registerExtension({
   },
 
   /**
+   * 扩展初始化: 监听执行事件, 让视频预览在跑完后重新判定一次。
+   *
+   * ComfyUI 的原生预览 <video> 是收到 UI.PreviewVideo 事件后才渲染的 —— 比 onConfigure 晚。
+   * 因此执行结束后再调一次 restoreVideo: 原生播放器一出现就把备用播放器收起来, 避免两个
+   * 播放器并存时用户拖到隐藏的那个(截帧会读到 currentTime=0, 表现为每次都截到第 1 帧、
+   * 提示「帧 1 已在选中列表中」)。
+   *
+   * @returns {Promise<void>} 无
+   */
+  async setup() {
+    let timer = null;
+    const refresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        for (const n of app.graph?._nodes || []) {
+          if (n.type === NODE_CLASS) restoreVideo(n);
+        }
+      }, 600);
+    };
+    api.addEventListener("executed", refresh);
+    api.addEventListener("progress", refresh);
+  },
+
+  /**
    * 节点定义注册前钩子: 给 PreviewVideo 追加「截帧」按钮 + 选中帧列表 + 端口对齐。
    *
    * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
@@ -964,17 +988,29 @@ app.registerExtension({
        * @returns {Promise<void>} 截帧请求异步流程
        */
       node.addWidget("button", "截帧", null, async () => {
-        // 读节点预览 video 当前播放位置(浏览器原生 currentTime = 秒)
+        // 读「用户实际在拖动的」播放器的当前播放位置(浏览器原生 currentTime = 秒)。
+        //
+        // 节点里可能同时存在两个 <video>: ComfyUI 原生预览(跑过之后才渲染) + 我方备用播放器
+        // (刷新后恢复预览用, 默认 display:none)。不能盲取 querySelector("video") 的第一个 ——
+        // 隐藏的备用元素 currentTime 恒为 0, 会导致每次都截到第 1 帧, 表现为
+        // 「帧 1 已在选中列表中」。改为: 收集全部候选, 优先「可见且已设置 src」, 其中取
+        // currentTime 最大者(即用户拖动过的那个)。
         let positionSeconds = 0;
         try {
           const domNode = document.querySelector(`[data-node-id="${node.id}"]`);
-          const videoEl =
-            domNode?.querySelector("video") ??
-            node.videoContainer?.querySelector?.("video") ??
-            node.doc?.querySelector?.("video");
-          if (videoEl && typeof videoEl.currentTime === "number") {
-            positionSeconds = videoEl.currentTime || 0;
-          }
+          const cands = [];
+          if (domNode) cands.push(...domNode.querySelectorAll("video"));
+          const fbEl = node._fallingtsVideoFallback?.videoEl;
+          if (fbEl && !cands.includes(fbEl)) cands.push(fbEl);
+
+          const playable = cands.filter((v) => v.src);
+          const visible = playable.filter((v) => (v.getClientRects?.().length ?? 0) > 0);
+          const pool = visible.length ? visible : playable;
+          const pick = pool.reduce(
+            (best, v) => (!best || (v.currentTime || 0) > (best.currentTime || 0) ? v : best),
+            null,
+          );
+          if (pick) positionSeconds = pick.currentTime || 0;
         } catch (err) {
           console.warn("[FallingTS] 读取播放时间失败, 取 0 秒:", err);
         }
