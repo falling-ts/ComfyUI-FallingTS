@@ -200,5 +200,45 @@
         "tooltip": "网格合成单张图 (列数 = ceil(sqrt(total)), 行优先填充)"
       }
     }
+  },
+  "FallingTSH3AddGuide": {
+    "display_name": "FallingTS H3 引导锚定 (None 安全)",
+    "description": "把 1 张图 (或音频) 锚定到 MiniMax H3 视频的任意帧。image 与 audio 同为 None 时原样透传 positive (该列无锚点, 不报错), 因此关键帧列可以留空; 有值时语义与核心 Add Guide 完全一致 (直接委派 MiniMaxH3AddGuide)。",
+    "inputs": {
+      "positive": {
+        "name": "正向",
+        "tooltip": "上游条件 (基础条件或上一个引导节点的输出)"
+      },
+      "latent": {
+        "name": "Latent",
+        "tooltip": "MiniMax H3 AV latent, 用于取目标时长与尺寸"
+      },
+      "frame_idx": {
+        "name": "帧索引",
+        "tooltip": "锚定帧索引 (24fps 像素帧)。秒数换算 frame_idx = round(秒 × 24); 负值从视频末尾起算, 尾帧用 -1"
+      },
+      "vae": {
+        "name": "视频VAE",
+        "tooltip": "视频 VAE, 接图像时必填"
+      },
+      "audio_vae": {
+        "name": "音频VAE",
+        "tooltip": "音频 VAE, 接音频时必填"
+      },
+      "image": {
+        "name": "图",
+        "tooltip": "要锚定的图。None (mdtable 空列) = 该列无锚点, 原样透传 positive"
+      },
+      "audio": {
+        "name": "音频",
+        "tooltip": "与图同帧起锚定的音轨"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "正向",
+        "tooltip": "追加了一个锚点的条件 (空输入时为传入的 positive 本身)"
+      }
+    }
   }
 }

@@ -33,6 +33,8 @@ PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
 AudioTrimNode = import_module("audio-trim.nodes").FallingTSAudioTrimNode
 # video-components 目录名同样含连字符, 需经 importlib 按名加载
 VideoComponentsNode = import_module("video-components.nodes").FallingTSVideoComponentsNode
+# h3-guide 目录名同样含连字符, 需经 importlib 按名加载
+H3AddGuideNode = import_module("h3-guide.nodes").FallingTSH3AddGuideNode
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSFrameRateConvert": FallingTSFrameRateConvertNode,
     "FallingTSImageComposite": FallingTSImageCompositeNode,
     "FallingTSVideoComponents": VideoComponentsNode,
+    "FallingTSH3AddGuide": H3AddGuideNode,
     "PreviewVideo": PreviewVideoNode,
     "PreviewImageSave": PreviewImageSaveNode,
     "PreviewAudioSave": PreviewAudioSaveNode,
@@ -69,6 +72,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSFrameRateConvert": "FallingTS 帧率转换 (抽帧)",
     "FallingTSImageComposite": "FallingTS 四图合成 (2×2 带标注)",
     "FallingTSVideoComponents": "FallingTS 视频拆解 (拆帧/拆音)",
+    "FallingTSH3AddGuide": "FallingTS H3 引导锚定 (None 安全)",
     "PreviewVideo": "Preview Video (保存)",
     "PreviewImageSave": "Preview Image (保存)",
     "PreviewAudioSave": "Preview Audio (保存)",

@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 14 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 15 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── AGENTS.md                   # AI 编码指南(本文件)
 ├── CLAUDE.md                   # Claude Code 垫片,内容为 @AGENTS.md
@@ -45,6 +45,8 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSImageCompositeNode total 驱动 N 图合成 (total 最少 1 不设上限默认 4, 左侧 image1..imageN 图端口 + 节点内 label1..labelN 标注表单文本框; 列数 = ceil(sqrt(N)) 行优先填充, 统一尺寸, 每张子图左上角中文标注, 合成单张图)
 ├── video-components/
 │   └── nodes.py                # FallingTSVideoComponentsNode 视频拆解 (参考视频 → 帧/音频/帧率/位深/色彩空间; None 安全替代核心 GetVideoComponents: video 可选, None 时全部输出 None 且**不 sticky 回放**)
+├── h3-guide/
+│   └── nodes.py                # FallingTSH3AddGuideNode H3 引导锚定 (None 安全替代核心 MiniMaxH3AddGuide: image 与 audio 同为 None 时**原样透传 positive**, 关键帧列因此可留空; 有值时直接委派 `MiniMaxH3AddGuide.execute`, 不复制其实现)
 ├── fonts/
 │   └── Alibaba-PuHuiTi-Heavy.ttf  # CJK 字体 (随包, 合成节点标注渲染用)
 ├── preview-image/
@@ -100,10 +102,11 @@ ComfyUI-FallingTS/
 | preview-audio | PreviewAudioSave | 音频预览保存 (纯预览与保存, 不切段; audio=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的音频**(sticky), 从未预览则输出 None; 切段已拆到 audio-trim) |
 | audio-trim | FallingTSAudioTrim | 音频截段 (节点内波形拖两侧把手选区 → 点「截段」累积多段 → 点「完成」按段输出 audio_1..audio_N; 未「完成」时用 ExecutionBlocker 阻断下游, 只发预览事件供试听与切段; 同样带「保存」与内置播放器; 输出 1 + 64 槽) |
 | video-components | FallingTSVideoComponents | 视频拆解 (参考视频 → 帧序列/音频/帧率/位深/色彩空间, **None 安全替代核心 GetVideoComponents**: 核心节点的 `video` 是 required 且 execute 内直接调 `video.get_components()`, 收到 None 抛 `AttributeError: 'NoneType' object has no attribute 'get_components'`; 本节点 `video` 为 **optional**, None (mdtable 空 `<Video N>` 字段 / 上游无值) 时**全部输出 None 且不报错**, 下游 H3 Ref2VA 的 `ref_video_N` 是可选输入, None 被其内部 `if video_frames is None: continue` 安全跳过; **不做 sticky 回放** —— None 在此表示"该行没有视频参考", 回放上一次的视频会让生成张冠李戴。3020-参考场景 / 4030-参考视频 各 3 处已换用) |
+| h3-guide | FallingTSH3AddGuide | H3 引导锚定 (**None 安全替代核心 MiniMaxH3AddGuide**: 核心节点在 image 与 audio 同为 None 时直接抛 `ValueError("MiniMaxH3AddGuide needs an image or an audio to anchor")`, 而 mdtable 空列按"可选输入惯例"输出 None、`execution.py` 又把上游 None 原样传给下游(`input_data_all[x] = obj`, 不走 `mark_missing`), 于是 N 路引导串联时只要有一列留空就整图失败; 本节点空输入时**原样透传 positive**(等价于该列无锚点), 有值时**直接委派 `MiniMaxH3AddGuide.execute`** 不复制其实现 —— 锚定语义与官方完全一致。4025-关键帧视频 的 9 路引导链已换用, 尾部关键帧列因此可留空) |
 
 注:`preview-image` / `preview-video` / `preview-audio` / `audio-trim` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
 
-### None 容忍约定(全部 14 节点)
+### None 容忍约定(全部 15 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -116,11 +119,12 @@ ComfyUI-FallingTS/
 - **数据类 —— 音频截段**(audio-trim):`audio` 为 None → 若有缓存则按已缓存段输出, 否则输出全 None; 未点「完成」时用 `ExecutionBlocker` 阻断全部下游(切段节点自身仍执行并发预览事件), 点「完成」后输出整段 + 各段;
 - **数据类 —— 帧率**(fps):images 为 None → 输出本节点最近一次抽帧结果(sticky),从未处理则透传 None;source_fps/target_fps 任一 None 时无法算帧率比,按原样透传(stride=1);
 - **数据类 —— 视频拆解**(video-components):`video` 为 optional,None 时**全部输出 None**(images/audio/fps/bit_depth/color_space),不报错;此处**故意不做 sticky** —— 与其它数据类节点相反,因为 None 表示"该行没有视频参考"(mdtable 空 `<Video N>` 字段),回放上一次的视频会让生成的参考张冠李戴;下游 Ref2VA 的可选 `ref_video_N` 收到 None 即按无参考跳过, 输出 None 不构成"丢数据";
+- **数据类 —— H3 引导锚定**(h3-guide):`image` 与 `audio` 同为 None 时**原样透传 `positive`**, 等价于"该列没有锚点";有值时直接委派核心 `MiniMaxH3AddGuide.execute`, 不复制其实现。此处**不能沿用 sticky 回放** —— 回放上一次的图会把该列的锚点钉到错误画面上;
 - **数据类 —— 合成**(composite):total 驱动张数(None → 默认 4, clamp 1..64);image1..64 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → **该格用底色空白占位**(部分有值时正常合成, 缺格用底色占位);**total 张图全无值 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**(绝不崩溃);label1..64 (节点内表单文本框, 空串 = 不画; None → 各自默认标注);font_size/padding/background_color None → 默认 8.0/6/#000000;
 - **数据类 —— 表格**(table/mdtable):rows/data 为 None → 输出本节点最近一次输出(sticky),从未输出则回退默认表/默认状态;`normalize_table`/`normalize_state` 对 None 回退空表不报错。mdtable 有 `IS_CHANGED(cls, data, **kwargs)` classmethod —— 加隐藏 `id` 输入后引擎会向 `IS_CHANGED` 传入 `id`, 故签名须含 `**kwargs` 吸收(否则崩);
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
-### 前端状态与后端同步约定(全部 14 节点)
+### 前端状态与后端同步约定(全部 15 节点)
 
 **核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
 
