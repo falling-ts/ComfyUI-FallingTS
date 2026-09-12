@@ -69,9 +69,9 @@ ComfyUI-FallingTS/
         ├── media_lightbox_zoom.js      # 全屏预览缩放 (滚轮/拖拽/双击/快捷键)
         ├── node_image_middleclick.js   # 节点中键 → 全屏大图预览
         ├── preview-image.js            # PreviewImageSave 底部控件 + 保存按钮
-        ├── preview-video.js            # PreviewVideo 底部保存按钮
+        ├── preview-video.js            # PreviewVideo 底部保存按钮 + 截帧/完成 + restoreFrames(刷新后从后端重建帧列表)
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮 + 内置播放器
-        ├── audio-trim.js               # FallingTSAudioTrim 波形+播放器+截段/完成按钮+段列表
+        ├── audio-trim.js               # FallingTSAudioTrim 波形+播放器+截段/完成按钮+段列表(刷新后从后端重建)
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
         ├── route.js                    # total组路由节点: total 动态端口 + 假分支真正执行
         ├── fanout.js                  # 扇出选择(多对一镜像): total=组数=输入端口数(input_i 每组一个) + 输出=组数×组名数(标签=组名) + 选中项下拉选项联动(槽类型 STRING,INT: 可连线接多对一 选中项组名/索引, 索引直接选中所属索引组名) + 选中组分支真正执行 + 旧版 value 遗留输入槽加载时自动清理
@@ -119,6 +119,42 @@ ComfyUI-FallingTS/
 - **数据类 —— 合成**(composite):total 驱动张数(None → 默认 4, clamp 1..64);image1..64 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → **该格用底色空白占位**(部分有值时正常合成, 缺格用底色占位);**total 张图全无值 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**(绝不崩溃);label1..64 (节点内表单文本框, 空串 = 不画; None → 各自默认标注);font_size/padding/background_color None → 默认 8.0/6/#000000;
 - **数据类 —— 表格**(table/mdtable):rows/data 为 None → 输出本节点最近一次输出(sticky),从未输出则回退默认表/默认状态;`normalize_table`/`normalize_state` 对 None 回退空表不报错。mdtable 有 `IS_CHANGED(cls, data, **kwargs)` classmethod —— 加隐藏 `id` 输入后引擎会向 `IS_CHANGED` 传入 `id`, 故签名须含 `**kwargs` 吸收(否则崩);
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
+
+### 前端状态与后端同步约定(全部 14 节点)
+
+**核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
+
+#### 三类状态, 生命周期各不相同
+
+| 类别 | 存在哪 | 例子 | 页面刷新 | 默认 Run(`/reset`) |
+|------|--------|------|----------|--------------------|
+| **媒体态** | `_last_output[nid]` | `audio` / `video` / `images` | **保留**(否则「保存」按钮没数据) | 保留(重新执行会覆盖) |
+| **界面态** | `_last_output[nid]` + 前端 widget state | `segments`(截段列表) / `selected_frames`(截帧列表) | **保留**, 前端读回重建 | 清 |
+| **执行态** | 模块级集合/计数 | `_done` / `_released` / `_data_cache` / `_reset_generation` | 保留 | 清 + 递增代际 |
+
+#### 前端(`web/js/*.js`)要求
+
+- **`setup()` 不得 POST `/clear` 之类的清状态端点** —— 那会让刷新丢掉上一次的结果;
+- 在 `onConfigure`(工作流加载完成)末尾调用"读回重建":
+  - `audio-trim` → `refreshWaveform()`:GET `/audio-trim/waveform/{id}` 一次拿回 peaks + segments;
+  - `preview-video` → `restoreFrames()`:GET `/preview-video/state/{id}` 拿帧号, 再逐个 POST `/preview-video/frame/{id}`(`append=false`)取 PNG 转 blob URL;
+  - `preview-audio` → 无界面态, 播放器由 `refreshPlayer()` 从 `/preview-audio/audio-url/{id}` 取;
+- 界面态同步要**双向且含空值**: `Array.isArray(data.segments)` 为真就写回(即便是空数组), 否则删光段后刷新会残留旧列表。
+
+#### 后端(`nodes.py`)要求
+
+- `/xxx/clear` 端点若因兼容保留, 必须 **no-op**(只回 ok), 不得清 `_last_output` 或任何界面态字段;
+- `/xxx/reset` 只在**默认 Run** 分支被调(前端包装 `app.queuePrompt`, 判断 `queueNodeIds` 为空), 清执行态 + 递增 `_reset_generation`;
+- **绝不写 `_last_output.clear()`** —— 那会把媒体态一起清掉。
+
+#### 为什么必须有 `_reset_generation`
+
+ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内重跑同一张图时节点会被**直接跳过**。递增 `_reset_generation` → `fingerprint_inputs` 返回值变化 → ComfyUI 认为节点"变了" → 强制执行。`proceed` / `preview-video` / `audio-trim` / `preview-audio` 都用这一招(否则改了段/帧再 Run 会拿到旧结果, 或「继续」报 400「没有上游数据」)。
+
+#### 反面教材(均已修)
+
+- `preview-audio` 的 `_handle_clear` 曾写成 `_last_output.clear()` —— 刷新即清空音频缓存,「保存」与播放器都没数据; 更糟的是 ComfyUI 执行缓存还在, 导致全量 Run 时该节点被跳过、缓存再也填不回来;
+- `preview-video` / `audio-trim` 曾在 `setup()` POST `/clear` 清界面态 —— 刷新丢掉上一次的截帧/截段结果。
 
 ## 软链接映射
 
