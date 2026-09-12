@@ -721,27 +721,12 @@ function collectOutputsAfter(startNode) {
  */
 async function submitPartial(node, targets) {
   const prompt = await app.graphToPrompt();
-  // 只保留 targets 及其依赖: 否则同一个图里别的输出节点也会被执行一遍,
-  // 把上游采样重新拉起来 —— 与「点完成只跑下游」的意图正好相反。
-  const keep = new Set();
-  const walk = (id) => {
-    if (keep.has(id)) return;
-    keep.add(id);
-    for (const v of Object.values(prompt.output[id]?.inputs || {})) {
-      if (Array.isArray(v) && typeof v[0] === "string") walk(v[0]);
-    }
-  };
-  for (const t of targets) walk(t);
-  const pruned = {};
-  for (const id of keep) {
-    if (prompt.output[id]) pruned[id] = prompt.output[id];
-  }
   const resp = await api.fetchApi("/prompt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       client_id: api.clientId,
-      prompt: pruned,
+      prompt: prompt.output,
       partial_execution_targets: targets,
       extra_data: { extra_pnginfo: { workflow: prompt.workflow } },
     }),

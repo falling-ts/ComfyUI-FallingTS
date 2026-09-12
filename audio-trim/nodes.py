@@ -300,7 +300,15 @@ class FallingTSAudioTrimNode(IO.ComfyNode):
                 "(no sequence suffix, overwrites same name)."
             ),
             inputs=[
-                IO.Audio.Input("audio", tooltip="要预览/截段/保存的音频 (None = 无值, 如扇出未选中分支, 跳过预览, 输出该节点最近一次预览的音频供下游)。"),
+                # audio 是 lazy: 提交执行列表时不拉它上游, 由 check_lazy_status 决定是否拉取。
+                # 未「完成」时拉上游(生成/更新缓存音频); 已「完成」且有段时不拉, execute 直接用
+                # 缓存切段 —— 这正是「点完成只跑下游、上游不再跑」的关键, 缺了 lazy=True
+                # 引擎会直接拉上游, check_lazy_status 根本不会被调用。
+                IO.Audio.Input(
+                    "audio",
+                    lazy=True,
+                    tooltip="要预览/截段/保存的音频 (None = 无值, 如扇出未选中分支, 跳过预览, 输出该节点最近一次预览的音频供下游)。",
+                ),
                 IO.String.Input(
                     "filename_prefix",
                     default="audio",
