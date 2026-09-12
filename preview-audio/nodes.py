@@ -266,14 +266,15 @@ async def _handle_reset(request: web.Request) -> web.Response:
 
 
 async def _handle_clear(request: web.Request) -> web.Response:
-    """HTTP 路由: 清空音频预览缓存(前端页面加载/刷新时调一次)。
+    """HTTP 路由: 页面加载/刷新时的同步钩子(前端 setup 会调一次)。
 
-    音频缓存不清会与刷新后的界面不一致(「保存」拿到的是上一次的数据)。
+    这里**故意不清音频缓存** —— 与 preview-video 只清 selected_frames 同理:
+    清掉之后「保存」与节点内播放器在刷新后就拿不到数据, 必须重跑整条工作流才能用。
+    本节点精简后已无段/帧列表这类纯界面态, 因此只回 ok。
 
     返回:
         web.Response: 200 {"status": "ok"}。
     """
-    _last_output.clear()
     return web.json_response({"status": "ok"})
 
 
