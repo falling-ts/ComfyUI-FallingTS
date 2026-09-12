@@ -254,6 +254,38 @@ function styleSegmentButton(node) {
 }
 
 /**
+ * 只提交「本节点下游」的部分执行(partial execution)。
+ *
+ * 注意不能写成 app.queuePrompt(0, 1, targets): ComfyUI 的 api.queuePrompt 第 3 参数
+ * 是选项对象 {partialExecutionTargets}(驼峰), 传裸数组会被 `?.partialExecutionTargets`
+ * 静默取成 undefined, 于是退化成全量提交(上游采样白跑一遍)。
+ * 这里直接用 graphToPrompt 的结果 POST /prompt, 显式带 partial_execution_targets,
+ * 不依赖上层包装的签名。
+ *
+ * @param {LGraphNode} node 锚点节点(截段节点自身)
+ * @param {string[]} targets 下游输出节点 id 列表
+ * @returns {Promise<object>} 后端响应
+ */
+async function submitPartial(node, targets) {
+  const prompt = await app.graphToPrompt();
+  const resp = await api.fetchApi("/prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: api.clientId,
+      prompt: prompt.output,
+      partial_execution_targets: targets,
+      extra_data: { extra_pnginfo: { workflow: prompt.workflow } },
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`提交失败 HTTP ${resp.status} ${t.slice(0, 200)}`);
+  }
+  return resp.json();
+}
+
+/**
  * 创建段列表 DOM widget: 每行显示 序号/起止/时长 + 删除按钮。
  *
  * @param {LGraphNode} node 节点
@@ -883,10 +915,11 @@ app.registerExtension({
           // partial 目标: 本节点之后的所有输出节点
           const targets = collectOutputsAfter(node);
           if (!targets.length) {
-            console.warn("[FallingTS] 预览节点之后没有输出节点");
+            console.warn("[FallingTS] 音频截段节点之后没有输出节点");
+            toast("warn", "本节点之后没有可执行的输出节点(接下游预览/保存节点后再试)");
             return;
           }
-          await app.queuePrompt(0, 1, targets);
+          await submitPartial(node, targets);
           toast("success", `已完成(${segs.length} 段), 各段从 audio_1.. 输出到下游`);
         } catch (err) {
           console.error("[FallingTS] 完成失败:", err);

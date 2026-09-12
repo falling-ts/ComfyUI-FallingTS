@@ -19,6 +19,7 @@
  */
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 const NODE_CLASS = "PreviewVideo";
 const MAX_FRAMES = 64;
@@ -706,6 +707,37 @@ function collectOutputsAfter(startNode) {
   return [...targets];
 }
 
+/**
+ * 只提交「本节点下游」的部分执行(partial execution)。
+ *
+ * 注意不能写成 app.queuePrompt(0, 1, targets): ComfyUI 的 api.queuePrompt 第 3 参数
+ * 是选项对象 {partialExecutionTargets}(驼峰), 传裸数组会被 `?.partialExecutionTargets`
+ * 静默取成 undefined, 于是退化成全量提交(上游采样白跑一遍)。
+ * 这里直接用 graphToPrompt 的结果 POST /prompt, 显式带 partial_execution_targets。
+ *
+ * @param {LGraphNode} node 锚点节点(预览视频节点自身)
+ * @param {string[]} targets 下游输出节点 id 列表
+ * @returns {Promise<object>} 后端响应
+ */
+async function submitPartial(node, targets) {
+  const prompt = await app.graphToPrompt();
+  const resp = await api.fetchApi("/prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: api.clientId,
+      prompt: prompt.output,
+      partial_execution_targets: targets,
+      extra_data: { extra_pnginfo: { workflow: prompt.workflow } },
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`提交失败 HTTP ${resp.status} ${t.slice(0, 200)}`);
+  }
+  return resp.json();
+}
+
 app.registerExtension({
   name: "FallingTS.PreviewVideo",
 
@@ -929,7 +961,7 @@ app.registerExtension({
             console.warn("[FallingTS] 预览节点之后没有输出节点");
             return;
           }
-          await app.queuePrompt(0, 1, targets);
+          await submitPartial(node, targets);
           app.extensionManager.toast.add({ severity: "success", summary: "已完成, 截帧输出到下游" });
         } catch (err) {
           console.error("[FallingTS] 完成失败:", err);
