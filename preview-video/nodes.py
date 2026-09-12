@@ -502,13 +502,11 @@ async def _handle_reset(request: web.Request) -> web.Response:
 
 
 async def _handle_clear(request: web.Request) -> web.Response:
-    """HTTP 路由: 清空所有 PreviewVideo 的截帧状态(前端页面加载/刷新时调一次)。
+    """HTTP 路由: 保留端点但**不清任何状态**(前端已改为刷新后从后端重建)。
 
-    前端刷新后不再还原序列化的帧列表(缩略图回空), 后端须同步清掉内存帧号, 避免
-    "前端列表已空但后端还留着旧帧号" —— 否则下次截帧会把新帧追加到旧帧号后面。
-    清空各节点缓存的 selected_frames 并清 _done(全部回阻塞态); 视频/帧张量缓存
-    不清(「保存」按钮刷新后仍可用)。selected_frames 变化本身会改变
-    fingerprint_inputs, 无需再递增 _reset_generation。
+    原先前端在页面加载时调它清掉 selected_frames 与 _done, 但那会让刷新丢掉上一次的
+    截帧结果。现在前端改为 GET /preview-video/state 读回帧号并重建缩略图列表, 后端
+    是唯一事实来源, 因此本端点不再清状态, 仅保留以兼容旧前端缓存。
 
     参数:
         request (web.Request): POST /preview-video/clear 请求, 不读取 body。
@@ -516,11 +514,35 @@ async def _handle_clear(request: web.Request) -> web.Response:
     返回:
         web.Response: 200, {"status": "ok"}。
     """
-    for cache in _last_output.values():
-        if isinstance(cache, dict):
-            cache["selected_frames"] = []
-    _done.clear()
     return web.json_response({"status": "ok"})
+
+
+async def _handle_state(request: web.Request) -> web.Response:
+    """HTTP 路由: 返回该节点当前的截帧状态, 供前端在页面刷新后重建帧列表。
+
+    前端加载工作流(或刷新页面)时调一次, 拿 selected_frames 与是否「完成」;
+    再对每个帧号调 POST /preview-video/frame(append=false) 取回 PNG 重建缩略图列表。
+    这样后端是唯一事实来源, 刷新不会丢掉上一次的截帧结果。
+
+    参数:
+        request (web.Request): GET /preview-video/state/{node_id}。
+
+    返回:
+        web.Response: 200 {"status":"ok","selected_frames":[...],"done":bool,
+        "total_frames":int, "has_video":bool}。
+    """
+    nid = request.match_info["node_id"].strip()
+    cache = _last_output.get(nid) or {}
+    images = cache.get("images")
+    return web.json_response(
+        {
+            "status": "ok",
+            "selected_frames": [int(f) for f in (cache.get("selected_frames") or [])],
+            "done": nid in _done,
+            "total_frames": len(images) if images is not None else 0,
+            "has_video": cache.get("video") is not None,
+        }
+    )
 
 
 async def _handle_save(request: web.Request) -> web.Response:
@@ -583,4 +605,5 @@ PromptServer.instance.routes.post("/preview-video/frame/{node_id}")(_handle_fram
 PromptServer.instance.routes.post("/preview-video/frame-remove/{node_id}")(_handle_frame_remove)
 PromptServer.instance.routes.post("/preview-video/done/{node_id}")(_handle_done)
 PromptServer.instance.routes.post("/preview-video/reset")(_handle_reset)
+PromptServer.instance.routes.get("/preview-video/state/{node_id}")(_handle_state)
 PromptServer.instance.routes.post("/preview-video/clear")(_handle_clear)

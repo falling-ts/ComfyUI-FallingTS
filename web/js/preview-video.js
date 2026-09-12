@@ -753,25 +753,63 @@ async function submitPartial(node, targets) {
   return resp.json();
 }
 
+/**
+ * 从后端读回截帧状态并重建前端帧列表(页面刷新/工作流重载后恢复上一次的截帧结果)。
+ *
+ * 后端是唯一事实来源: GET /state 拿帧号, 再对每个帧号 POST /frame(append=false) 取回 PNG,
+ * 转成 blob URL 填进 frame_list。这样刷新不会丢截帧, 也不再把后端状态清掉。
+ *
+ * @param {LGraphNode} node 预览视频节点
+ * @param {object} frameList 帧列表 DOM widget
+ * @returns {Promise<void>} 无
+ */
+async function restoreFrames(node, frameList) {
+  if (!frameList) return;
+  try {
+    const r = await fetch(`/preview-video/state/${node.id}`);
+    const st = await r.json().catch(() => null);
+    if (!r.ok || st?.status !== "ok") return;
+    const fnos = st.selected_frames || [];
+    if (!fnos.length) return;
+
+    const frames = [];
+    for (const fno of fnos) {
+      const resp = await fetch(`/preview-video/frame/${node.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "frame", frame_index: fno, append: false }),
+      });
+      if (!resp.ok) continue;
+      const blob = await resp.blob();
+      frames.push({
+        url: URL.createObjectURL(blob),
+        fno: Number(resp.headers.get("X-Frame-Index") || fno),
+      });
+    }
+    frameList.state.frames = frames;
+    frameList.render();
+    syncFrameState(node, frameList.state);
+    fitHeight(node);
+  } catch {
+    /* 后端未就绪时忽略 */
+  }
+}
+
 app.registerExtension({
   name: "FallingTS.PreviewVideo",
 
   /**
-   * 扩展初始化钩子: ① 截帧状态刷新即清空 —— 页面加载时 POST /preview-video/clear 同步清空
-   * 后端所有 PreviewVideo 的 selected_frames/_done(前端 state 随刷新本就回空, 这里清的是
-   * 进程内存, 避免"前端列表已空但后端还留着旧帧号"导致下次截帧追加到旧帧后);
-   * ② 包装全局提交入口 app.queuePrompt: 默认 Run(未显式指定目标节点)时,
+   * 扩展初始化钩子。
+   *
+   * 页面加载/刷新时**不清后端状态** —— 截帧列表改由 restoreFrames 从
+   * GET /preview-video/state 读回并重建, 刷新不再丢上一次的截帧结果。
+   * 仍然包装全局提交入口 app.queuePrompt: 默认 Run(未显式指定目标节点)时,
    * 先 POST /preview-video/reset 重置所有预览节点为未完成, 再按原逻辑全量提交 ——
    * 保证每次 Run 都从开头执行、重新拉上游生成视频(与继续节点同语义)。
    *
    * @returns {void}
    */
   async setup() {
-    try {
-      await fetch("/preview-video/clear", { method: "POST" });
-    } catch {
-      /* 后端未就绪时忽略: 下次 Run 的 reset 会兜底清空 */
-    }
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;
     /**
@@ -1040,6 +1078,8 @@ app.registerExtension({
           // 与 route/fanout/composite 的 onConfigure 同步对齐行为一致。
           syncFrameState(node, node._fallingtsFrameList?.state ?? { frames: [] });
           fitHeight(node);
+          // 后端是唯一事实来源: 从它读回截帧列表并重建前端(刷新不丢上一次的截帧)
+          restoreFrames(node, node._fallingtsFrameList);
         }
       };
     };

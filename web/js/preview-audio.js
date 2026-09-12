@@ -199,10 +199,8 @@ app.registerExtension({
    * @returns {void}
    */
   setup() {
-    fetch("/preview-audio/clear", { method: "POST" }).catch(() => {
-      /* 后端未就绪时忽略 */
-    });
-
+    // 页面加载/刷新时不清后端状态: 音频缓存留在后端, 播放器由 onNodeCreated 与
+    // refreshAllPlayers 从 /preview-audio/audio-url 读回 —— 刷新后仍能试听与「保存」。
     styleSaveButtons();
     new MutationObserver(styleSaveButtons).observe(document.body, { childList: true, subtree: true });
 

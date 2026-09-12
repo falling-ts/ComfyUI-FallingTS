@@ -676,7 +676,8 @@ async function refreshWaveform(node, waveWidget, listWidget) {
     waveWidget.state.peaks = data.peaks || [];
     waveWidget.state.duration = Number(data.duration || 0);
     waveWidget.state.loaded = true;
-    if (Array.isArray(data.segments) && data.segments.length) {
+    // 段列表始终以后端为准(含空列表): 刷新后据此重建前端, 而不是清掉后端
+    if (Array.isArray(data.segments)) {
       listWidget.state.segments = data.segments.map((s) => ({
         start: Number(s.start || 0),
         duration: Number(s.duration || 0),
@@ -742,26 +743,24 @@ app.registerExtension({
   name: "FallingTS.AudioTrim",
 
   /**
-   * 扩展初始化钩子: ① 页面加载时 POST /audio-trim/clear 同步清空后端段状态
-   * (前端刷新后列表本就回空, 清的是进程内存, 避免下次截段追加到旧段后面);
-   * ② 包装全局 app.queuePrompt: 默认 Run(未指定目标节点)时先 POST reset 把预览节点
-   * 全部置回未完成, 再按原逻辑全量提交 —— 保证每次 Run 都从开头执行重新生成音频。
+   * 扩展初始化钩子。
+   *
+   * 页面加载/刷新时**不清后端状态**, 而是由 refreshAllAudioNodes 从后端读回段列表与波形,
+   * 据此重建前端 —— 后端是唯一事实来源, 刷新不该丢上一次的结果。
+   * 另外包装全局 app.queuePrompt: 默认 Run(未指定目标节点)时先 POST reset 把节点置回
+   * 未完成, 再按原逻辑全量提交 —— 保证每次 Run 都从开头执行重新生成音频。
    *
    * @returns {Promise<void>} 初始化流程
    */
   async setup() {
-    try {
-      await fetch("/audio-trim/clear", { method: "POST" });
-    } catch {
-      /* 后端未就绪时忽略: 下次 Run 的 reset 会兜底清空 */
-    }
     // 「截段」按钮样式: Nodes 2.0 把 button widget 渲染为 DOM <button>,
     // 节点增删/重绘会重建元素, 故持续套用(与 PreviewVideo 的 styleFrameButtons 同做法)
     styleSegmentButtons();
     new MutationObserver(styleSegmentButtons).observe(document.body, { childList: true, subtree: true });
 
-    // 波形刷新: onExecuted 在 V3 节点上不可靠(实测从未触发), 改为监听 ComfyUI 的
-    // executed 事件 + 工作流加载完成 + 低频轮询兜底, 三路保证波形最终会拉起来。
+    // 波形/段列表刷新: onExecuted 在 V3 节点上不可靠(实测从未触发), 改为监听 ComfyUI 的
+    // executed 事件 + 低频轮询兜底。节点创建时也会立刻拉一次(onNodeCreated), 所以
+    // 刷新页面后能立即从后端恢复上一次的波形与段列表。
     api.addEventListener("executed", () => refreshAllAudioNodes());
     api.addEventListener("progress", () => refreshAllAudioNodes());
     setInterval(refreshAllAudioNodes, 5000);
@@ -845,6 +844,7 @@ app.registerExtension({
 
       // ── 截段功能区: 波形 → 截段按钮 → 输出段数 → 段列表 ──
       const waveWidget = createWaveformWidget(node);
+      node._fallingtsWave = waveWidget;
 
       /**
        * 「截段」按钮: 把当前选区 POST 到后端累积, 并加入前端列表与端口。
@@ -982,6 +982,9 @@ app.registerExtension({
           const sw = node.widgets?.find((w) => w.name === "filename_suffix");
           if (sw && sw.value == null) sw.value = "";
           syncSegmentState(node, node._fallingtsSegments?.state ?? { segments: [] });
+          // 后端是唯一事实来源: 立刻读回波形与段列表重建前端(刷新/重载不丢上一次的结果),
+          // 不必等 5 秒轮询。
+          refreshWaveform(node, node._fallingtsWave, node._fallingtsSegments);
         }
       };
     };
