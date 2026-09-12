@@ -135,10 +135,14 @@ ComfyUI-FallingTS/
 #### 前端(`web/js/*.js`)要求
 
 - **`setup()` 不得 POST `/clear` 之类的清状态端点** —— 那会让刷新丢掉上一次的结果;
+- **媒体预览一律用「拉模式」, 不依赖 `UI.Preview*` 事件** —— 原生 `UI.PreviewImage` / `UI.PreviewVideo` / `UI.PreviewAudio` 是**一次性 WebSocket 事件**, 页面刷新后不会重发, 依赖它的节点预览区就空了。四个预览节点因此都: ① 后端提供 `GET /xxx-url/{id}` 返回 `/view` URL(复用 execute 时的缓存, 不重新编码); ② 前端在 `onConfigure` 拉 URL 填到节点上 —— **优先填 ComfyUI 渲染的原生 `<img>`/`<video>`, 找不到才显示自备的备用元素**(备用默认 `display:none`, 避免出现两个播放器):
+  - `preview-image` → `GET /preview-image/image-url/{id}` → `restoreImages()`
+  - `preview-video` → `GET /preview-video/video-url/{id}` → `restoreVideo()`
+  - `preview-audio` → `GET /preview-audio/audio-url/{id}` → `refreshPlayer()`
+  - `audio-trim` → `GET /audio-trim/audio-url/{id}` → `refreshWaveform()` 内一并设置
 - 在 `onConfigure`(工作流加载完成)末尾调用"读回重建":
   - `audio-trim` → `refreshWaveform()`:GET `/audio-trim/waveform/{id}` 一次拿回 peaks + segments;
   - `preview-video` → `restoreFrames()`:GET `/preview-video/state/{id}` 拿帧号, 再逐个 POST `/preview-video/frame/{id}`(`append=false`)取 PNG 转 blob URL;
-  - `preview-audio` → 无界面态, 播放器由 `refreshPlayer()` 从 `/preview-audio/audio-url/{id}` 取;
 - 界面态同步要**双向且含空值**: `Array.isArray(data.segments)` 为真就写回(即便是空数组), 否则删光段后刷新会残留旧列表。
 
 #### 后端(`nodes.py`)要求
