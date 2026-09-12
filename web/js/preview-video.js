@@ -739,6 +739,87 @@ async function submitPartial(node, targets) {
 }
 
 /**
+ * 创建备用 <video> widget(仅在原生视频预览缺失时显示)。
+ *
+ * 原生 UI.PreviewVideo 是一次性 WebSocket 事件, 页面刷新后不会重发, 视频预览就空了。
+ * 这个备用播放器由 restoreVideo() 从 /preview-video/video-url 拉 URL 填上; 若节点上
+ * 已有 ComfyUI 渲染的原生 <video>, 则隐藏它以免出现两个播放器。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {object} widget
+ */
+function createVideoFallbackWidget(node) {
+  const root = document.createElement("div");
+  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;display:none;";
+
+  const videoEl = document.createElement("video");
+  videoEl.controls = true;
+  videoEl.preload = "none";
+  videoEl.style.cssText =
+    "display:block;width:100%;max-height:240px;background:#000;border-radius:6px;";
+
+  root.appendChild(videoEl);
+
+  const widget = node.addDOMWidget("video_fallback", "video", root, {
+    serialize: false,
+    hideOnZoom: false,
+    getValue: () => "",
+    setValue: () => {},
+  });
+  widget.computeSize = (width) => [width, 0];
+  widget.element = root;
+  widget.videoEl = videoEl;
+  return widget;
+}
+
+/**
+ * 刷新后重建视频预览: 拉回 URL 并填到原生 <video>, 原生不存在时改用备用播放器。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {Promise<void>} 无
+ */
+async function restoreVideo(node) {
+  const fb = node._fallingtsVideoFallback;
+  let url = null;
+  try {
+    const r = await fetch(`/preview-video/video-url/${node.id}`);
+    const j = await r.json().catch(() => null);
+    if (r.ok && j?.status === "ok") url = j.url;
+  } catch {
+    /* 后端未就绪时忽略 */
+  }
+  if (!url) {
+    if (fb) fb.element.style.display = "none";
+    return;
+  }
+
+  // 节点内已有的原生 <video>(排除备用播放器自己)
+  const host = document.querySelector(`[data-node-id="${node.id}"]`);
+  const nativeVid = host
+    ? [...host.querySelectorAll("video")].find((v) => !(fb?.element?.contains(v) ?? false))
+    : null;
+
+  if (nativeVid) {
+    if (nativeVid.dataset.src !== url) {
+      nativeVid.dataset.src = url;
+      nativeVid.src = url;
+      nativeVid.controls = true;
+    }
+    if (fb) fb.element.style.display = "none";
+    return;
+  }
+
+  if (fb) {
+    fb.element.style.display = "";
+    if (fb.videoEl.dataset.src !== url) {
+      fb.videoEl.dataset.src = url;
+      fb.videoEl.src = url;
+      fb.videoEl.load();
+    }
+  }
+}
+
+/**
  * 从后端读回截帧状态并重建前端帧列表(页面刷新/工作流重载后恢复上一次的截帧结果)。
  *
  * 后端是唯一事实来源: GET /state 拿帧号, 再对每个帧号 POST /frame(append=false) 取回 PNG,
@@ -1020,6 +1101,9 @@ app.registerExtension({
       const frameList = createFrameListWidget(node);
       node._fallingtsFrameList = frameList;
 
+      // 备用视频播放器: 页面刷新后原生 UI.PreviewVideo 不重发, 由 restoreVideo 补上
+      node._fallingtsVideoFallback = createVideoFallbackWidget(node);
+
       // 节点创建后立即按 total 对齐输出端口(与 route/fanout/composite 同款同步做法):
 // 新拖入节点无任何链接, 直接裁到 1(video)+total 个 image; configure 阶段(同步)
 // 会用保存的端口列表覆盖, 无需担心此处裁剪影响链接恢复。
@@ -1063,8 +1147,9 @@ app.registerExtension({
           // 与 route/fanout/composite 的 onConfigure 同步对齐行为一致。
           syncFrameState(node, node._fallingtsFrameList?.state ?? { frames: [] });
           fitHeight(node);
-          // 后端是唯一事实来源: 从它读回截帧列表并重建前端(刷新不丢上一次的截帧)
+          // 后端是唯一事实来源: 从它读回截帧列表与视频预览并重建前端(刷新不丢)
           restoreFrames(node, node._fallingtsFrameList);
+          restoreVideo(node);
         }
       };
     };

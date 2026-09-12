@@ -231,6 +231,86 @@ function syncFormatDependentWidgets(node) {
   node.setDirtyCanvas(true, true);
 }
 
+/**
+ * 创建备用图片预览 widget(仅在原生预览缺失时显示)。
+ *
+ * 原生 UI.PreviewImage 是一次性 WebSocket 事件, 页面刷新后不会重发, 图片预览就空了。
+ * 这个备用 <img> 由 restoreImages() 从 /preview-image/image-url 拉 URL 填上; 若节点上
+ * 已有 ComfyUI 渲染的原生 <img>, 则隐藏它以免重复显示。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {object} widget
+ */
+function createImageFallbackWidget(node) {
+  const root = document.createElement("div");
+  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;display:none;";
+
+  const imgEl = document.createElement("img");
+  imgEl.style.cssText =
+    "display:block;width:100%;max-height:320px;object-fit:contain;background:#111;border-radius:6px;";
+
+  root.appendChild(imgEl);
+
+  const widget = node.addDOMWidget("image_fallback", "image", root, {
+    serialize: false,
+    hideOnZoom: false,
+    getValue: () => "",
+    setValue: () => {},
+  });
+  widget.computeSize = (width) => [width, 0];
+  widget.element = root;
+  widget.imgEl = imgEl;
+  return widget;
+}
+
+/**
+ * 刷新后重建图片预览: 拉回 URL 并填到原生 <img>, 原生不存在时改用备用 <img>。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {Promise<void>} 无
+ */
+async function restoreImages(node) {
+  const fb = node._fallingtsImageFallback;
+  let urls = [];
+  try {
+    const r = await fetch(`/preview-image/image-url/${node.id}`);
+    const j = await r.json().catch(() => null);
+    if (r.ok && j?.status === "ok") urls = j.urls || [];
+  } catch {
+    /* 后端未就绪时忽略 */
+  }
+  if (!urls.length) {
+    if (fb) fb.element.style.display = "none";
+    return;
+  }
+
+  // 节点内已有的原生 <img>(排除备用自己)
+  const host = document.querySelector(`[data-node-id="${node.id}"]`);
+  const nativeImgs = host
+    ? [...host.querySelectorAll("img")].filter((im) => !(fb?.element?.contains(im) ?? false))
+    : [];
+
+  if (nativeImgs.length) {
+    nativeImgs.forEach((im, i) => {
+      if (urls[i] && im.dataset.src !== urls[i]) {
+        im.dataset.src = urls[i];
+        im.src = urls[i];
+      }
+    });
+    if (fb) fb.element.style.display = "none";
+    return;
+  }
+
+  if (fb) {
+    fb.element.style.display = "";
+    const first = urls[0];
+    if (fb.imgEl.dataset.src !== first) {
+      fb.imgEl.dataset.src = first;
+      fb.imgEl.src = first;
+    }
+  }
+}
+
 app.registerExtension({
   name: "FallingTS.PreviewImageSave",
 
@@ -310,6 +390,9 @@ app.registerExtension({
       syncFormatDependentWidgets(node);
       styleSaveButton(node);
 
+      // 备用图片预览: 页面刷新后原生 UI.PreviewImage 不重发, 由 restoreImages 补上
+      node._fallingtsImageFallback = createImageFallbackWidget(node);
+
       // ── 旧版 widgets_values 迁移 ──
       // 旧结构: [前缀, 格式, 位深, 色彩空间, 保存按钮] (5 槽, 无 suffix);
       // 新结构: [前缀, suffix, 格式, 位深, 色彩空间, 保存按钮] (6 槽, suffix 紧挨前缀)。
@@ -324,6 +407,8 @@ app.registerExtension({
        */
       node.onConfigure = function (info) {
         prevOnConfigure?.call(this, info);
+        // 后端是唯一事实来源: 从它读回预览图并重建前端(刷新不丢)
+        restoreImages(node);
         const named = info?.widgets_values_named;
         const isNewFormat = named && typeof named === "object" && "filename_suffix" in named;
         if (isNewFormat) return;

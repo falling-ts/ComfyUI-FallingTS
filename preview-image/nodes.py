@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import random
 import string
+from urllib.parse import quote
 
 from PIL import Image
 import numpy as np
@@ -262,6 +263,32 @@ def _node_id(request: web.Request) -> str:
         str: 去空白后的节点 ID 字符串。
     """
     return request.match_info["node_id"].strip()
+
+
+@PromptServer.instance.routes.get("/preview-image/image-url/{node_id}")
+async def _handle_image_url(request: web.Request) -> web.Response:
+    """HTTP 路由: 返回该节点最近一次预览图的 URL 列表, 供前端在刷新后重建预览。
+
+    原生 UI.PreviewImage 是一次性 WebSocket 事件, 页面刷新后不会重发, 图片预览就空了。
+    execute 时已把 temp 预览记录存进 _last_ui[id](filename/subfolder/type), 这里直接
+    转成 /view URL 返回 —— 与 preview-audio 的 /audio-url 同构, 后端是唯一事实来源。
+    不重新编码图片, 只复用已有的 temp 文件。
+
+    参数:
+        request (web.Request): GET /preview-image/image-url/{node_id}。
+
+    返回:
+        web.Response: 200 {"status":"ok","urls":[...]}; 无缓存时 400。
+    """
+    items = _last_ui.get(_node_id(request)) or []
+    if not items:
+        return web.json_response({"status": "error", "message": "没有可预览的图片, 请先运行到该节点"}, status=400)
+    urls = [
+        f"/view?filename={quote(it['filename'])}&subfolder={quote(it.get('subfolder') or '')}&type=temp"
+        for it in items
+        if it.get("filename")
+    ]
+    return web.json_response({"status": "ok", "urls": urls})
 
 
 @PromptServer.instance.routes.post("/preview-image/save/{node_id}")

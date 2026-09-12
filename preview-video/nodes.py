@@ -35,6 +35,7 @@ import os
 import random
 import string
 from typing import Any
+from urllib.parse import quote
 
 import numpy as np
 from PIL import Image
@@ -545,6 +546,30 @@ async def _handle_state(request: web.Request) -> web.Response:
     )
 
 
+async def _handle_video_url(request: web.Request) -> web.Response:
+    """HTTP 路由: 返回该节点当前缓存视频的可播放 URL, 供前端在刷新后重建预览。
+
+    节点原生的 UI.PreviewVideo 是一次性 WebSocket 事件, 页面刷新后不会重发, 视频预览
+    就空了。前端因此在节点上备一个 <video>, 页面加载/刷新时调本路由拿 URL 填上 ——
+    与 preview-audio 的 /audio-url 同构, 后端是唯一事实来源。
+
+    参数:
+        request (web.Request): GET /preview-video/video-url/{node_id}。
+
+    返回:
+        web.Response: 200 {"status":"ok","url":...}; 无缓存时 400。
+    """
+    nid = request.match_info["node_id"].strip()
+    cache = _last_output.get(nid) or {}
+    file = cache.get("file")
+    if not file:
+        return web.json_response({"status": "error", "message": "没有可预览的视频, 请先运行到该节点"}, status=400)
+    subfolder = cache.get("subfolder") or ""
+    return web.json_response(
+        {"status": "ok", "url": f"/view?filename={quote(file)}&subfolder={quote(subfolder)}&type=temp"}
+    )
+
+
 async def _handle_save(request: web.Request) -> web.Response:
     """HTTP 路由: 用缓存视频把该节点最近预览的视频写入 output(同名覆盖, 无序号)。
 
@@ -606,4 +631,5 @@ PromptServer.instance.routes.post("/preview-video/frame-remove/{node_id}")(_hand
 PromptServer.instance.routes.post("/preview-video/done/{node_id}")(_handle_done)
 PromptServer.instance.routes.post("/preview-video/reset")(_handle_reset)
 PromptServer.instance.routes.get("/preview-video/state/{node_id}")(_handle_state)
+PromptServer.instance.routes.get("/preview-video/video-url/{node_id}")(_handle_video_url)
 PromptServer.instance.routes.post("/preview-video/clear")(_handle_clear)
