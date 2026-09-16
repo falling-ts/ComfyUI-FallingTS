@@ -23,19 +23,56 @@ const { app } = window.comfyAPI.app;
 let lastOpenedAt = 0;
 
 /**
+ * 取当前 Vue 应用的 pinia 实例。
+ *
+ * @returns {object|null} pinia 实例; 不可用时返回 null
+ */
+function getPinia() {
+  try {
+    const el = document.getElementById('vue-app');
+    return el?.__vue_app__?.config?.globalProperties?.$pinia ?? null;
+  } catch {
+    return null;
+  }
+}
+
+let warnedNoStore = false;
+
+/**
  * 从 Vue pinia store 按 id 取 store 对象。
+ *
+ * 前端升级改过 store 的 id / 挂载细节, 按 id 取不到时再按"能力特征"兜底扫一遍:
+ * 同时提供 getNodeOutputs + getNodeImageUrls 的就是取节点输出的那个 store。
+ * 两条路都失败才返回 null —— 此时 collectImageEntries 仍会继续走
+ * node.images / node.imgs, 不再一票否决。
  *
  * @param {string} id store id(如 "nodeOutput")
  * @returns {object|null} pinia store 对象; 不可用时返回 null
  */
 function getStore(id) {
-  try {
-    const el = document.getElementById('vue-app');
-    const pinia = el?.__vue_app__?.config?.globalProperties?.$pinia;
-    return pinia?._s?.get(id) ?? null;
-  } catch {
-    return null;
+  const map = getPinia()?._s;
+  if (!map || typeof map.get !== 'function') return null;
+  const direct = map.get(id);
+  if (direct) return direct;
+  if (typeof map.values === 'function') {
+    for (const s of map.values()) {
+      if (
+        typeof s?.getNodeOutputs === 'function' &&
+        typeof s?.getNodeImageUrls === 'function'
+      ) {
+        return s;
+      }
+    }
   }
+  if (!warnedNoStore) {
+    warnedNoStore = true;
+    console.warn(
+      '[FallingTS] 未找到取节点输出的 pinia store (已试 id="' +
+        id +
+        '" 与能力特征兜底), 中键预览将只依赖 node.images / node.imgs'
+    );
+  }
+  return null;
 }
 
 /**
@@ -115,8 +152,9 @@ function pathToImageEntry(p) {
  * @returns {Array<{filename?: string, subfolder?: string, type?: string, url?: string}>} 图片条目数组
  */
 function collectImageEntries(node) {
+  // store 可能不可用(前端升级改过 store 结构): 此时不放弃,
+  // 继续走下面的 node.images / node.imgs 兜底通道
   const store = getStore('nodeOutput');
-  if (!store) return [];
 
   const found = [];
   const seen = new Set();
@@ -148,7 +186,7 @@ function collectImageEntries(node) {
   };
 
   // 来源 1: 官方 store 取图函数(优先 nodePreviewImages, 其次 outputs.images)
-  if (typeof store.getNodeImageUrls === 'function') {
+  if (typeof store?.getNodeImageUrls === 'function') {
     const urls = store.getNodeImageUrls(node);
     if (Array.isArray(urls)) {
       for (const u of urls) {
@@ -159,7 +197,7 @@ function collectImageEntries(node) {
 
   // 来源 2: 递归遍历节点输出对象的所有 key/value
   const outputs =
-    typeof store.getNodeOutputs === 'function'
+    typeof store?.getNodeOutputs === 'function'
       ? store.getNodeOutputs(node)
       : null;
   const walkArray = (arr, depth) => {
