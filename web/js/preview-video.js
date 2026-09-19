@@ -82,7 +82,9 @@ function isSaveBtn(el) {
  */
 function currentWorkflowName() {
   try {
-    const wf = app?.workflowManager?.activeWorkflow;
+    // 新版前端把工作流挂在 extensionManager.workflow, 旧版在 app.workflowManager; 两者都探
+    const store = app?.extensionManager?.workflow ?? app?.workflowManager;
+    const wf = store?.activeWorkflow;
     const raw = wf?.name || wf?.filename || wf?.path || "";
     return String(raw).replace(/\.json$/i, "");
   } catch {
