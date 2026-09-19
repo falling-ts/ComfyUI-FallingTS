@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 import cgroup_memory
+import numbered_subdirs
 
 from comfy_api.latest import IO
 from comfy_api.latest import ComfyExtension
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 # 容器里 ComfyUI 按宿主全量内存规划缓存会被 cgroup OOM kill, 钳制到 cgroup 上限 (须早于 prompt_worker 算阈值)
 cgroup_memory.apply()
+
+# 前端文件列表默认不进子目录, 保存到 output/<工作流名>/ 的产物看不到; 挂 middleware 补上
+numbered_subdirs.apply()
 
 # ─── V1 节点注册表 (支持 custom_nodes/ 自动加载) ──────
 

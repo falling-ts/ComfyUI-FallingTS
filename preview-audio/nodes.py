@@ -37,6 +37,49 @@ except ImportError:
 _OPUS_RATES = [8000, 12000, 16000, 24000, 48000]
 _FORMATS = {"flac", "mp3", "opus"}
 
+# 保存目标目录名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
+_UNSAFE_CHARS = '<>:"/\\|?*'
+
+
+def _safe_dir_name(name) -> str:
+    """把工作流名清洗成可安全用作单层目录名的字符串。
+
+    参数:
+        name (str|None): 前端传来的工作流名(可能含 .json 后缀或完整路径)。
+
+    返回:
+        str: 清洗后的目录名; 空串表示不该建子目录(退回 output 根)。
+    """
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    # 只取路径末段, 防 ../ 穿越
+    text = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if text.lower().endswith(".json"):
+        text = text[:-5]
+    for ch in _UNSAFE_CHARS:
+        text = text.replace(ch, "_")
+    text = text.strip().strip(".")
+    return "" if text in ("", ".", "..") else text
+
+
+def _workflow_output_dir(workflow_name) -> str:
+    """取保存目录: output 下按当前工作流名建子目录, 不存在则创建; 名字非法时退回 output 根。
+
+    参数:
+        workflow_name (str|None): 前端传来的当前工作流名。
+
+    返回:
+        str: 可直接拼接文件名的目录绝对路径(保证存在)。
+    """
+    base = folder_paths.get_output_directory()
+    sub = _safe_dir_name(workflow_name)
+    if not sub:
+        return base
+    target = os.path.join(base, sub)
+    os.makedirs(target, exist_ok=True)
+    return target
+
 # 最近一次预览缓存(键 = 节点 id 字符串), 供 sticky 回放与「保存」取数据
 _last_output: dict[str, dict] = {}
 # 重置代际: 「重置」时递增, 让 fingerprint_inputs 变化从而强制重新执行
@@ -112,14 +155,21 @@ def _encode_audio_waveform(waveform: torch.Tensor, sample_rate: int, file_format
 
 
 
-def _save_audio_no_counter(audio: dict, filename_prefix: str, file_format: str, quality: str) -> list[str]:
+def _save_audio_no_counter(
+    audio: dict,
+    filename_prefix: str,
+    file_format: str,
+    quality: str,
+    workflow_name=None,
+) -> list[str]:
     """按 {filename_prefix}.{format} 把音频写 output(同名覆盖, 无 _序号 后缀)。
 
     参数:
         audio (dict): 音频对象, 含 "waveform"(BxCxN) 与 "sample_rate";
         filename_prefix (str): 文件名前缀(可含 %batch_num%);
         file_format (str): flac/mp3/opus;
-        quality (str): 质量。
+        quality (str): 质量;
+        workflow_name (str|None): 当前工作流名; 非空时在 output 下建同名子目录再写。
 
     返回:
         list[str]: 已保存的文件名列表(不含目录)。
@@ -127,7 +177,7 @@ def _save_audio_no_counter(audio: dict, filename_prefix: str, file_format: str, 
     if file_format not in _FORMATS:
         raise ValueError(f"Unsupported audio format: {file_format!r}")
 
-    output_dir = folder_paths.get_output_directory()
+    output_dir = _workflow_output_dir(workflow_name)
     sample_rate = audio["sample_rate"]
     results = []
     for batch_number, waveform in enumerate(audio["waveform"].cpu()):
@@ -365,12 +415,16 @@ async def _handle_save(request: web.Request) -> web.Response:
     name = filename_prefix + filename_suffix
 
     try:
-        saved = _save_audio_no_counter(audio, name, file_format, quality)
+        saved = _save_audio_no_counter(
+            audio, name, file_format, quality, data.get("workflow_name")
+        )
     except ValueError as e:
         return web.json_response({"status": "error", "message": str(e)}, status=400)
 
+    saved_dir = _safe_dir_name(data.get("workflow_name"))
+    where = f"{saved_dir}/" if saved_dir else ""
     return web.json_response(
-        {"status": "ok", "message": f"已保存 {len(saved)} 个文件: {', '.join(saved)}"}
+        {"status": "ok", "message": f"已保存 {len(saved)} 个文件: {where}{', '.join(saved)}"}
     )
 
 

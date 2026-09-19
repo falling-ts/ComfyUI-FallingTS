@@ -8,6 +8,7 @@
 ComfyUI-FallingTS/
 ├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 15 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
+├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── AGENTS.md                   # AI 编码指南(本文件)
 ├── CLAUDE.md                   # Claude Code 垫片,内容为 @AGENTS.md
 ├── README.md                   # 项目说明

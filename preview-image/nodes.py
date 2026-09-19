@@ -37,6 +37,50 @@ _last_output: dict[str, dict] = {}
 # 输入为 None (如扇出未选中分支) 时回放此列表, 保持原有预览不被清空
 _last_ui: dict[str, list] = {}
 
+# 保存目标目录名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
+_UNSAFE_CHARS = '<>:"/\\|?*'
+
+
+def _safe_dir_name(name) -> str:
+    """把工作流名清洗成可安全用作单层目录名的字符串。
+
+    参数:
+        name (str|None): 前端传来的工作流名(可能含 .json 后缀或完整路径)。
+
+    返回:
+        str: 清洗后的目录名; 空串表示不该建子目录(退回 output 根)。
+    """
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    # 只取路径末段, 防 ../ 穿越
+    text = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if text.lower().endswith(".json"):
+        text = text[:-5]
+    for ch in _UNSAFE_CHARS:
+        text = text.replace(ch, "_")
+    text = text.strip().strip(".")
+    return "" if text in ("", ".", "..") else text
+
+
+def _workflow_output_dir(workflow_name) -> str:
+    """取保存目录: output 下按当前工作流名建子目录, 不存在则创建; 名字非法时退回 output 根。
+
+    参数:
+        workflow_name (str|None): 前端传来的当前工作流名。
+
+    返回:
+        str: 可直接拼接文件名的目录绝对路径(保证存在)。
+    """
+    base = folder_paths.get_output_directory()
+    sub = _safe_dir_name(workflow_name)
+    if not sub:
+        return base
+    target = os.path.join(base, sub)
+    os.makedirs(target, exist_ok=True)
+    return target
+
+
 
 class PreviewImageSaveNode:
     """始终预览 + 点「保存」才写 output(同名覆盖, 无序号)。"""
@@ -144,6 +188,7 @@ class PreviewImageSaveNode:
         colorspace: str,
         prompt,
         extra_pnginfo,
+        workflow_name=None,
     ) -> None:
         """按格式编码并写 output: 文件名 {prefix}.{format}, 同名直接覆盖, 无 _序号 后缀。
 
@@ -154,12 +199,14 @@ class PreviewImageSaveNode:
             bit_depth (str): 位深(8-bit/16-bit/32-bit float);
             colorspace (str): 输入色彩空间(sRGB/HDR/linear);
             prompt (dict|None): 工作流 prompt(注入元数据);
-            extra_pnginfo (dict|None): 额外元数据。
+            extra_pnginfo (dict|None): 额外元数据;
+            workflow_name (str|None): 当前工作流名; 非空时在 output 下建同名子目录再写。
 
         返回:
-            None: 直接写文件到 output 目录。
+            None: 直接写文件到 output(或其工作流同名子目录)目录。
         """
-        output_dir = folder_paths.get_output_directory()
+        output_dir = _workflow_output_dir(workflow_name)
+
         for batch_number, image in enumerate(images):
             encoded = _encode_image(image, file_format, bit_depth, colorspace)
             if not args.disable_metadata:
@@ -346,11 +393,14 @@ async def _handle_save(request: web.Request) -> web.Response:
         colorspace,
         cache.get("prompt"),
         cache.get("extra_pnginfo"),
+        data.get("workflow_name"),
     )
+    saved_dir = _safe_dir_name(data.get("workflow_name"))
+    where = f"{saved_dir}/" if saved_dir else ""
     return web.json_response(
         {
             "status": "ok",
-            "message": f"已保存 {len(cache['images'])} 张: {name}.{file_format}",
+            "message": f"已保存 {len(cache['images'])} 张: {where}{name}.{file_format}",
         }
     )
 

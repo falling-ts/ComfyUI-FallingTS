@@ -102,7 +102,9 @@ async function renameMask(node, imageRef) {
   app.extensionManager?.toast?.add?.({
     severity: "success",
     summary: data.out_ref?.filename
-      ? `已整理: 编辑文件→clipspace, 成品→${data.out_ref.filename}`
+      ? `已整理: 编辑文件→clipspace, 成品→${
+          data.out_ref.subfolder ? `${data.out_ref.subfolder}/` : ""
+        }${data.out_ref.filename}`
       : "遮罩文件已整理",
   });
 }

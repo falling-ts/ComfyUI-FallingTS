@@ -1,8 +1,8 @@
 # mask-rename/nodes.py
-"""遮罩编辑器文件整理: 让 clipspace 遮罩文件保存到 clipspace 子目录, 并复制成品到 output 根。
+"""遮罩编辑器文件整理: 让 clipspace 遮罩文件保存到 clipspace 子目录, 并复制成品到资源表目录。
 
 背景:
-- input/ 与 output/ 均软链到同一物理目录(media)。
+- input/ 与 output/ 均软链到同一物理目录(media\七纹刻印)。
 - 内置遮罩编辑器通过 /upload/image 上传, 前端硬编码 type=input、不带 subfolder → 默认落 input 根。
 
 本模块做两件事:
@@ -11,10 +11,10 @@
    返回 subfolder='clipspace' —— 节点引用自动带 subfolder, 重新打开遮罩编辑器可完整恢复
    -mask/-paint 层继续编辑。
 2. 【POST /fallingts_mask/rename】: 复制 input/clipspace 里的 clipspace-painted-masked-{ts}.png
-   到 output/{base}.png(按 ID 命名成品, 同名覆盖)。
+   到 output/0010-灰度遮罩/{base}.png(按 ID 命名成品, 同名覆盖, 目录不存在则创建)。
 
 目录结构:
-  - input/output 根: 只有成品 {base}.png
+  - output/0010-灰度遮罩/: 成品 {base}.png(遮罩编辑器只服务「灰度遮罩」资源表)
   - input/clipspace/: 遮罩编辑文件(clipspace-*, 可重新编辑)
 
 base 名 = 预览节点 execute 时缓存的 filename_prefix(即 MD 行 ID)。
@@ -42,6 +42,11 @@ _last_output = _preview_image._last_output
 _CLIPSPACE_PREFIX = "clipspace-painted-masked-"
 # 只允许处理「近期」生成的遮罩文件(防误动历史文件); 传 force=true 可绕过
 _RECENT_MS = 10 * 60 * 1000
+
+# 成品归属的 output 子目录 = 该遮罩所属的资源表名。
+# 遮罩编辑器只服务「灰度遮罩」资源表, 故成品固定归入 0010-灰度遮罩/,
+# 与 preview-image 的「按工作流名建子目录」保持一致的目录层级。
+_MASK_TABLE_DIR = "0010-灰度遮罩"
 
 
 def _sanitize_base(name: str) -> str:
@@ -131,12 +136,12 @@ if not _install_upload_hook():
 
 @PromptServer.instance.routes.post("/fallingts_mask/rename")
 async def _rename_mask(request: web.Request) -> web.Response:
-    """复制 input/clipspace 里的 clipspace-painted-masked-{ts}.png -> output/{base}.png(成品)。
+    """复制 input/clipspace 里的 clipspace-painted-masked-{ts}.png -> output/0010-灰度遮罩/{base}.png。
 
     body: {"node_id": "前端节点 id", "image_ref": "clipspace-painted-masked-1754976000123.png", "base": "可选覆盖"}
     返回: {"ok": true,
            "edit_ref": {"filename": "clipspace-painted-masked-{ts}.png", "subfolder": "clipspace", "type": "input"},
-           "out_ref": {"filename": "{base}.png", "subfolder": "", "type": "output"},
+           "out_ref": {"filename": "{base}.png", "subfolder": "0010-灰度遮罩", "type": "output"},
            "copied": bool}
     """
     try:
@@ -179,7 +184,12 @@ async def _rename_mask(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "找不到对应遮罩文件"}, status=400)
 
     copied = False
-    out_file = os.path.join(output_dir, f"{base}.png")
+    out_dir = os.path.join(output_dir, _MASK_TABLE_DIR)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        logger.warning("创建遮罩成品目录失败 %s: %s", out_dir, e)
+    out_file = os.path.join(out_dir, f"{base}.png")
     try:
         shutil.copyfile(src, out_file)
         copied = True
@@ -191,7 +201,8 @@ async def _rename_mask(request: web.Request) -> web.Response:
         "subfolder": "clipspace",
         "type": "input",
     }
-    out_ref = {"filename": f"{base}.png", "subfolder": "", "type": "output"}
+    # subfolder 必须与写入位置一致, 否则前端 /view?subfolder= 取不到图
+    out_ref = {"filename": f"{base}.png", "subfolder": _MASK_TABLE_DIR, "type": "output"}
     return web.json_response(
         {"ok": True, "edit_ref": edit_ref, "out_ref": out_ref, "copied": copied}
     )

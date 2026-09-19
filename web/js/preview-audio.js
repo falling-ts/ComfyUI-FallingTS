@@ -60,6 +60,22 @@ function isSaveBtn(el) {
   return txt === "保存" || txt === "Save" || aria === "保存" || aria === "Save";
 }
 
+/**
+ * 取当前工作流的名字, 用于让后端把产物写进 output 下的同名子目录。
+ * 前端各版本存放位置不一, 逐级兜底; 取不到返回空串, 后端会退回 output 根目录。
+ *
+ * @returns {string} 工作流名(已去掉 .json 后缀); 取不到时为空串
+ */
+function currentWorkflowName() {
+  try {
+    const wf = app?.workflowManager?.activeWorkflow;
+    const raw = wf?.name || wf?.filename || wf?.path || "";
+    return String(raw).replace(/\.json$/i, "");
+  } catch {
+    return "";
+  }
+}
+
 /** 遍历页面按钮, 给「保存」按钮套样式。 */
 function styleSaveButtons() {
   document.querySelectorAll("button").forEach((el) => {
@@ -168,6 +184,8 @@ app.registerExtension({
               filename_suffix_linked: suffixLinked,
               format: getWidget("format") ?? "flac",
               quality: getWidget("quality") ?? "128k",
+              // 当前工作流名: 后端据此在 output 下建同名子目录再保存(取不到则由后端回退 output 根)
+              workflow_name: currentWorkflowName(),
             }),
           });
           const data = await resp.json().catch(() => ({}));

@@ -68,6 +68,22 @@ function isSaveBtn(el) {
 }
 
 /**
+ * 取当前工作流的名字, 用于让后端把产物写进 output 下的同名子目录。
+ * 前端各版本存放位置不一, 逐级兜底; 取不到返回空串, 后端会退回 output 根目录。
+ *
+ * @returns {string} 工作流名(已去掉 .json 后缀); 取不到时为空串
+ */
+function currentWorkflowName() {
+  try {
+    const wf = app?.workflowManager?.activeWorkflow;
+    const raw = wf?.name || wf?.filename || wf?.path || "";
+    return String(raw).replace(/\.json$/i, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
  * 遍历页面按钮, 对保存按钮套样式。
  *
  * @returns {void}
@@ -373,6 +389,8 @@ app.registerExtension({
               format: getWidget("format") ?? "png",
               bit_depth: getWidget("bit_depth") ?? "8-bit",
               input_color_space: getWidget("input_color_space") ?? "sRGB",
+              // 当前工作流名: 后端据此在 output 下建同名子目录再保存(取不到则由后端回退 output 根)
+              workflow_name: currentWorkflowName(),
             }),
           });
           const data = await resp.json().catch(() => null);

@@ -70,6 +70,50 @@ _done: set[str] = set()
 # 强制 PreviewVideo 重新执行(重新拉上游填缓存), 不被 ComfyUI 全局执行缓存跳过。
 _reset_generation: int = 0
 
+# 保存目标目录名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
+_UNSAFE_CHARS = '<>:"/\\|?*'
+
+
+def _safe_dir_name(name) -> str:
+    """把工作流名清洗成可安全用作单层目录名的字符串。
+
+    参数:
+        name (str|None): 前端传来的工作流名(可能含 .json 后缀或完整路径)。
+
+    返回:
+        str: 清洗后的目录名; 空串表示不该建子目录(退回 output 根)。
+    """
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    # 只取路径末段, 防 ../ 穿越
+    text = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if text.lower().endswith(".json"):
+        text = text[:-5]
+    for ch in _UNSAFE_CHARS:
+        text = text.replace(ch, "_")
+    text = text.strip().strip(".")
+    return "" if text in ("", ".", "..") else text
+
+
+def _workflow_output_dir(workflow_name) -> str:
+    """取保存目录: output 下按当前工作流名建子目录, 不存在则创建; 名字非法时退回 output 根。
+
+    参数:
+        workflow_name (str|None): 前端传来的当前工作流名。
+
+    返回:
+        str: 可直接拼接文件名的目录绝对路径(保证存在)。
+    """
+    base = folder_paths.get_output_directory()
+    sub = _safe_dir_name(workflow_name)
+    if not sub:
+        return base
+    target = os.path.join(base, sub)
+    os.makedirs(target, exist_ok=True)
+    return target
+
+
 
 class PreviewVideoNode(IO.ComfyNode):
     @classmethod
@@ -579,7 +623,9 @@ async def _handle_save(request: web.Request) -> web.Response:
 
     参数:
         request (web.Request): POST /preview-video/save/{node_id}, body 为 JSON
-            {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked}。
+            {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked,
+             workflow_name}。workflow_name 非空时, 文件写进 output/<工作流名>/ 子目录
+            (不存在则自动创建), 为空则退回 output 根目录。
 
     返回:
         web.Response:
@@ -612,7 +658,7 @@ async def _handle_save(request: web.Request) -> web.Response:
     name = filename_prefix + filename_suffix
 
     video = cache["video"]
-    output_dir = folder_paths.get_output_directory()
+    output_dir = _workflow_output_dir(data.get("workflow_name"))
     ext = Types.VideoContainer.get_extension("mp4")
     file_path = os.path.join(output_dir, f"{name}.{ext}")
     video.save_to(
@@ -620,8 +666,10 @@ async def _handle_save(request: web.Request) -> web.Response:
         format=Types.VideoContainer.MP4,
         codec=Types.VideoCodec.AUTO,
     )
+    saved_dir = _safe_dir_name(data.get("workflow_name"))
+    where = f"{saved_dir}/" if saved_dir else ""
     return web.json_response(
-        {"status": "ok", "message": f"已保存: {name}.{ext}"}
+        {"status": "ok", "message": f"已保存: {where}{name}.{ext}"}
     )
 
 
