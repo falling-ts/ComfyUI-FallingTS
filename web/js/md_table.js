@@ -5,6 +5,8 @@
 //   「确定」载入选中行到节点表单 (竖向排列, 按类型渲染控件, 可编辑), 「刷新」按 ID 重查 md 文件;
 // - 弹窗: 无序号列, 首列单选 radio, 底部 每页 10/20/30/50/100 + 首页/上一页/下一页/尾页,
 //   确定按钮仅在选中行后亮起 (蓝色), 取消关闭;
+// - 弹窗表格: 所有单元格 (含表头) 严格一行不换行, 列宽按内容撑开, 总宽超出弹窗时横向滚动;
+//   TEXT 字段另限最多 TEXT_PREVIEW_MAX(50) 字符, 超出截断加 "..." (完整值挂 title 悬停可见);
 // - 表单类型 (来自表头 `标题(类型)`, 未标默认 STRING): INT/FLOAT -> 数字输入, BOOLEAN -> 复选,
 //   TEXT -> 多行文本框(自动撑高), STRING -> 单行文本输入, IMAGE/VIDEO/AUDIO/MASK -> 路径输入 + 内嵌预览;
 // - 输出端口动态: [0] ID, [1..] 各非 ID 字段 (按类型), 末位 整行数据 (整行 JSON), 沿用表格节点动态端口模式。
@@ -18,6 +20,7 @@ const WIDGET_TYPE = "FALLINGTS_MD_TABLE";
 const MAX_FIELDS = 40; // 与后端 parser.MAX_FIELDS 一致
 const MAX_OUTPUTS = MAX_FIELDS + 2; // ID + 字段 + 整行数据
 const MIN_WIDGET_HEIGHT = 150;
+const TEXT_PREVIEW_MAX = 50; // 弹窗内 TEXT 单元格最多显示的字符数 (超出截断加 "...", 完整值挂 title 悬停可见)
 
 // 各字段类型显示色 (表单类型标签 / 弹窗表头) — 大写 ComfyUI 风格类型
 const TYPE_COLORS = {
@@ -275,6 +278,12 @@ function buildModalCell(field, value, isId) {
   const td = document.createElement("td");
   const v = String(value ?? "").trim();
   if (isId || (field.type !== "IMAGE" && field.type !== "MASK") || !v) {
+    // TEXT: 严格一行, 超过 TEXT_PREVIEW_MAX 字符截断加 "...", 完整值挂 title 悬停可见
+    if (!isId && field.type === "TEXT" && v.length > TEXT_PREVIEW_MAX) {
+      td.textContent = v.slice(0, TEXT_PREVIEW_MAX) + "...";
+      td.title = v;
+      return td;
+    }
     td.textContent = v;
     return td;
   }
@@ -292,7 +301,7 @@ function buildModalCell(field, value, isId) {
   });
   td.appendChild(thumb);
   const txt = document.createElement("div");
-  txt.style.cssText = "font-size:10px;color:#9a9a9a;word-break:break-all;line-height:1.2;";
+  txt.style.cssText = "font-size:10px;color:#9a9a9a;white-space:nowrap;line-height:1.2;";
   txt.textContent = v;
   td.appendChild(txt);
   return td;
@@ -319,9 +328,9 @@ function injectModalStyle() {
 .fts-md-search{padding:8px 14px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #333;background:#212121}
 .fts-md-search input{width:130px;box-sizing:border-box;background:#171717;color:#eee;border:1px solid #444;border-radius:3px;font-size:11px;padding:3px 6px}
 .fts-md-search input::placeholder{color:#777}
-.fts-md-wrap{overflow:auto;padding:8px 14px;flex:1}
-.fts-md-wrap table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
-.fts-md-wrap th,.fts-md-wrap td{border:1px solid #3a3a3a;padding:4px 6px;text-align:left;vertical-align:top;word-break:break-all}
+.fts-md-wrap{overflow:auto;padding:8px 14px;flex:1;min-width:0}
+.fts-md-wrap table{width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
+.fts-md-wrap th,.fts-md-wrap td{border:1px solid #3a3a3a;padding:4px 6px;text-align:left;vertical-align:top;white-space:nowrap}
 .fts-md-wrap th{background:#2b2b2b;color:#ccc;position:sticky;top:0;z-index:1}
 .fts-md-wrap th.radio-col{width:34px;text-align:center}
 .fts-md-wrap td.radio-col{text-align:center}
