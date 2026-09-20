@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 from aiohttp import web
 from server import PromptServer
@@ -78,11 +79,69 @@ def _media_dirs() -> tuple[str, ...]:
     return tuple(out)
 
 
+# "编号-名称"子目录判据 (与 numbered_subdirs.py 同口径): 保存类节点按工作流名建的那层
+_NUMBERED_SUBDIR_RE = re.compile(r"^\d+-")
+
+
+def _find_ref_file(directory: str, ref: str, exts: tuple) -> str | None:
+    """在 directory 本层及其"编号-名称"子目录里找 basename(去扩展) 命中 ref 的媒体文件。
+
+    保存类节点会把产物写进 `output/<工作流名>/` (如
+    `media/七纹刻印/0011-万物建模/0001-陈落.png`), 资源并不总在 output/input 顶层;
+    只列一层会让 `@{ID}` 引用取不到图, 节点内预览与 execute 一起失效。
+
+    本层优先于子目录, 子目录按名称排序取首个命中; 只下探"编号-名称"目录,
+    ComfyUI 自建的 3d/qwen3tts 等不被卷入。
+
+    参数:
+        directory (str): 搜索根 (output/input/base 之一)。
+        ref (str): `@{ID}` 里的 ID。
+        exts (tuple): 允许匹配的扩展名。
+
+    返回:
+        str | None: 命中文件的绝对路径; 未找到为 None。
+    """
+    files, subdirs = [], []
+    try:
+        with os.scandir(directory) as it:
+            for entry in it:
+                name = entry.name
+                if name.startswith("."):
+                    continue
+                if entry.is_file():
+                    files.append((name, entry.path))
+                elif entry.is_dir() and _NUMBERED_SUBDIR_RE.match(name):
+                    subdirs.append((name, entry.path))
+    except OSError:
+        return None
+
+    for name, path in sorted(files):
+        stem, ext = os.path.splitext(name)
+        if ext.lower() in exts and (stem == ref or stem.startswith(ref + "_")):
+            return path
+    for _, path in sorted(subdirs):
+        hit = _find_ref_file(path, ref, exts)
+        if hit:
+            return hit
+    return None
+
+
+def _under(base: str, rel: str) -> str | None:
+    """把 rel 解析到 base 内; 越界 (`..` 逃逸 / 绝对路径) 返回 None。"""
+    base_abs = os.path.abspath(base)
+    full = os.path.abspath(os.path.join(base_abs, rel))
+    if full != base_abs and not full.startswith(base_abs + os.sep):
+        return None
+    return full
+
+
 def resolve_media_path(raw, exts=None) -> str | None:
     """把 IMAGE/VIDEO/AUDIO/MASK 字段值解析为真实文件路径 (全部动态解析, 不写死)。
 
     规则:
-    - `@{ID}` 引用: 在 output/input 目录找 basename(去扩展) == ID 的媒体文件
+    - `@{工作流文件名/ID}` 引用: 文件名段正是保存类节点建的那层子目录名, 故先按
+      `output|input/<文件名>/<ID>.*` 定位; 未命中再在 output/input 下 (含"编号-名称"
+      子目录, 见 `_find_ref_file`) 递归找 basename(去扩展) == ID 的媒体文件
       (兼容 `ID_00001_` 计数器命名); 按 exts 过滤类型;
     - 绝对路径: 存在则原样返回;
     - 相对路径: 依次相对 output/input/base 解析 (不依赖进程 CWD);
@@ -98,18 +157,20 @@ def resolve_media_path(raw, exts=None) -> str | None:
     exts = exts or _MEDIA_EXTS
     ref = media_ref_id(raw)
     if ref:
+        # `@{工作流文件名/ID}`: 前半与资源表 md 同名, 也正是产物落盘的子目录名
+        subdir, _, stem = ref.rpartition("/")
         for base in _media_dirs():
             if not base or not os.path.isdir(base):
                 continue
-            try:
-                for fn in os.listdir(base):
-                    if not os.path.isfile(os.path.join(base, fn)):
-                        continue
-                    stem, ext = os.path.splitext(fn)
-                    if ext.lower() in exts and (stem == ref or stem.startswith(ref + "_")):
-                        return os.path.join(base, fn)
-            except OSError:
-                continue
+            if subdir:
+                sub = _under(base, subdir)
+                if sub and os.path.isdir(sub):
+                    hit = _find_ref_file(sub, stem, exts)
+                    if hit:
+                        return hit
+            hit = _find_ref_file(base, stem, exts)
+            if hit:
+                return hit
         return None
     p = os.path.normpath(str(raw or "").strip())
     if os.path.isabs(p):
