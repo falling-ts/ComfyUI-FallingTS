@@ -79,18 +79,18 @@ def _media_dirs() -> tuple[str, ...]:
     return tuple(out)
 
 
-# "编号-名称"子目录判据 (与 numbered_subdirs.py 同口径): 保存类节点按工作流名建的那层
-_NUMBERED_SUBDIR_RE = re.compile(r"^\d+-")
+# "编号+分隔符+名称"子目录判据 (与 numbered_subdirs.py 同口径): 保存类节点按工作流名建的那层
+_NUMBERED_SUBDIR_RE = re.compile(r"^\d+[-_]")
 
 
 def _find_ref_file(directory: str, ref: str, exts: tuple) -> str | None:
-    """在 directory 本层及其"编号-名称"子目录里找 basename(去扩展) 命中 ref 的媒体文件。
+    """在 directory 本层及其"编号+分隔符+名称"子目录里找 basename(去扩展) 命中 ref 的媒体文件。
 
     保存类节点会把产物写进 `output/<工作流名>/` (如
     `media/七纹刻印/0011-万物建模/0001-陈落.png`), 资源并不总在 output/input 顶层;
     只列一层会让 `@{ID}` 引用取不到图, 节点内预览与 execute 一起失效。
 
-    本层优先于子目录, 子目录按名称排序取首个命中; 只下探"编号-名称"目录,
+    本层优先于子目录, 子目录按名称排序取首个命中; 只下探"编号+分隔符+名称"目录,
     ComfyUI 自建的 3d/qwen3tts 等不被卷入。
 
     参数:
@@ -140,7 +140,7 @@ def resolve_media_path(raw, exts=None) -> str | None:
 
     规则:
     - `@{工作流文件名/ID}` 引用: 文件名段正是保存类节点建的那层子目录名, 故先按
-      `output|input/<文件名>/<ID>.*` 定位; 未命中再在 output/input 下 (含"编号-名称"
+      `output|input/<文件名>/<ID>.*` 定位; 未命中再在 output/input 下 (含"编号+分隔符+名称"
       子目录, 见 `_find_ref_file`) 递归找 basename(去扩展) == ID 的媒体文件
       (兼容 `ID_00001_` 计数器命名); 按 exts 过滤类型;
     - 绝对路径: 存在则原样返回;

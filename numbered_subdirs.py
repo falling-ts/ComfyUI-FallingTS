@@ -10,8 +10,9 @@
 # 前端「已保存 / 已生成」下拉里因此看不到保存进去的文件。
 #
 # 本模块给 /internal 子应用挂一个 middleware, 接管该路由: 顶层文件照旧, 额外进入
-# **"编号-名称"形式的子目录**(如 0040-文生视频 —— 保存类节点按工作流名建的那层) 把里面的
-# 文件一并列出。判据是 "数字+短横线", 这样 ComfyUI 自建的 3d 目录不会被卷进来。
+# **"编号+分隔符+名称"形式的子目录**(如 0010_灰度遮罩 —— 保存类节点按工作流名建的那层) 把里面的
+# 文件一并列出。判据是 "数字 + 连字符或下划线"(`-` 为早期命名, `_` 为现行命名),
+# 这样 ComfyUI 自建的 3d 目录不会被卷进来。
 #
 # 返回格式与核心保持一致: "<相对路径> [<directory_type>]", 相对路径用 '/' 分隔。
 # LoadImage 等节点用 folder_paths.get_annotated_filepath 解析该值, 它走
@@ -34,8 +35,8 @@ logger = logging.getLogger(__name__)
 # 与核心 get_files 接受的口径一致
 _DIRECTORY_TYPES = ("output", "input", "temp")
 
-# 只认 "编号-名称" 形式的子目录 (0040-文生视频); ComfyUI 自建的 3d 不符合, 不扫
-_NUMBERED_DIR = re.compile(r"^\d+-")
+# 只认 "编号+分隔符+名称" 形式的子目录 (0010_灰度遮罩 / 0040-文生视频); ComfyUI 自建的 3d 不符合, 不扫
+_NUMBERED_DIR = re.compile(r"^\d+[-_]")
 
 
 def _iter_files(directory: str, prefix: str = ""):
