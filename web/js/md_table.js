@@ -775,7 +775,7 @@ function mkNodeBtn(text) {
 }
 
 /**
- * 创建 DOM widget 根: 路径行(选择文件) + 操作行(打开数据) + 表单区 + 底部刷新。
+ * 创建 DOM widget 根: 路径行(选择文件) + 操作行(打开数据) + 刷新行(紧接打开数据下方) + 表单区。
  *
  * @returns {{root: HTMLDivElement, pathRow: HTMLDivElement, actionRow: HTMLDivElement,
  *            formEl: HTMLDivElement, refreshRow: HTMLDivElement}} DOM 引用集合
@@ -813,18 +813,18 @@ function buildRoot() {
   const formEl = document.createElement("div");
   formEl.style.cssText = "display:flex;flex-direction:column;gap:6px;width:100%;";
 
-  // 底部刷新行
+  // 刷新行: 紧接在「打开数据」下方, 左对齐同一列
   const refreshRow = document.createElement("div");
-  refreshRow.style.cssText = "display:flex;justify-content:flex-end;";
+  refreshRow.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;";
   const btnRefresh = mkNodeBtn("🔄 刷新");
   refreshRow.appendChild(btnRefresh);
 
-  root.append(pathRow, actionRow, formEl, refreshRow);
+  root.append(pathRow, actionRow, refreshRow, formEl);
   return { root, pathRow, actionRow, formEl, refreshRow, btnPick, btnOpen, btnRefresh, pathInput, selInfo, btnBrowse };
 }
 
 /**
- * 创建 md 数据表 DOM widget: 路径/操作/表单/刷新 + 弹窗选行 + 动态输出端口。
+ * 创建 md 数据表 DOM widget: 路径/操作/刷新/表单 + 弹窗选行 + 动态输出端口。
  *
  * @param {LGraphNode} node 节点对象
  * @param {string} inputName 输入名 ("data")

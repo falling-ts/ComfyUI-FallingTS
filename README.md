@@ -129,7 +129,7 @@ dataB → when-true_1 →   (total groups)    └output_1→ original downstream
 2. **🗂 Open data** — an embedded HTML popup: **fuzzy search per field** at the top, **pagination** at the bottom (10/20/30/50/100 per page + first/prev/next/last), the table has **no sequence-number column, single-select radio in the first column**;
 3. After selecting a row, the bottom **OK** button changes from gray to **blue** and lights up; clicking closes the popup and the node loads that row's data into the form; cancel closes without effect;
 4. The form arranges each field **vertically**, rendering controls by type (INT/FLOAT numeric input, BOOLEAN checkbox, TEXT multi-line textbox **auto-growing to fit content**, STRING single-line input, IMAGE/VIDEO/AUDIO/MASK path input + embedded preview), editable;
-5. **🔄 Refresh** (bottom of the node) — re-queries the md file by ID and updates the form with the latest disk values (syncs after the md file is changed externally).
+5. **🔄 Refresh** (directly below "Open data") — re-queries the md file by ID and updates the form with the latest disk values (syncs after the md file is changed externally).
 
 **Outputs** (dynamic ports, following the table node pattern; unused slots are hidden):
 - `[0] ID` (STRING);
