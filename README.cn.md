@@ -146,7 +146,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 **HTTP 路由**(后端自动注册):
 - `POST /fallingts_mdtable/select_file` — 弹系统文件选择器,返回绝对路径
 - `GET /fallingts_mdtable/read?path=` — 解析 md,返回字段定义 + 全部数据行
-- `GET /fallingts_mdtable/preview?path=` — 按路径或 `@{工作流文件名/ID}` 引用提供本地 image/video/audio 预览(支持 Range); 引用先按 `output|input/<工作流文件名>/<ID>.*` 定位, 未命中再在 output/input 及其「编号+分隔符+名称」子目录(保存类节点按工作流名建的那层)中递归查找
+- `GET /fallingts_mdtable/preview?path=` — 按路径或 `@{工作流文件名/ID}` 引用提供本地 image/video/audio 预览(支持 Range); 引用分两趟解析: **严格优先** —— 先在 `output|input/<工作流文件名>/<ID>.*` 精确找; 全都未命中再**兜底**在 output/input 及其「编号+分隔符+名称」子目录(保存类节点按工作流名建的那层)中按 ID 递归查找, 同族目录(如 `0020_场景首帧` → `00200_场景首帧2.1`)优先于其它目录
 - `GET /fallingts_mdtable/resolve?path=&kind=` — 把字段值解析为实际文件绝对路径(供节点内「文件: …」提示), 定位规则同上并按字段类型过滤扩展名
 
 ### 3. 多对一选择 `FallingTSSelector`

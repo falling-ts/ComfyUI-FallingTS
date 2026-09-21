@@ -83,20 +83,57 @@ def _media_dirs() -> tuple[str, ...]:
 _NUMBERED_SUBDIR_RE = re.compile(r"^\d+[-_]")
 
 
-def _find_ref_file(directory: str, ref: str, exts: tuple) -> str | None:
+def _split_numbered(name: str) -> tuple[str, str] | None:
+    """拆「编号 + 分隔符 + 名称」为 (编号, 名称); 不符合编号目录判据时返回 None。"""
+    m = _NUMBERED_SUBDIR_RE.match(name)
+    return (name[: m.end() - 1], name[m.end():]) if m else None
+
+
+def _ref_score(dir_name: str, subdir: str) -> int:
+    """目录名与 `@{目录/ID}` 前半段的贴合度 (越小越优先), 供兜底搜索排序。
+
+    严格命中已在 `resolve_media_path` 第一趟做完, 这里只负责把"同族目录"排到前面
+    —— 新旧版本并存时 (如 `0020_场景首帧` → `00200_场景首帧2.1`), 兜底也应先看
+    同一族的目录, 而不是按目录名字典序撞运气。
+
+    参数:
+        dir_name (str): 候选子目录名。
+        subdir (str): 引用里写明的目录段; 空串表示 `@{ID}` 写法 (无目录提示)。
+
+    返回:
+        int: 0 同族 (编号与名称都互为前缀) / 1 部分贴合 / 2 同为编号目录 / 3 其余。
+    """
+    got = _split_numbered(dir_name)
+    if not got:
+        return 2 if subdir and subdir in dir_name else 3
+    want = _split_numbered(subdir)
+    if not want:
+        return 3
+    gn, gname = got
+    wn, wname = want
+    num_ok = gn.startswith(wn) or wn.startswith(gn)
+    name_ok = gname.startswith(wname) or wname.startswith(gname)
+    if num_ok and name_ok:
+        return 0
+    return 1 if num_ok or name_ok else 2
+
+
+def _find_ref_file(directory: str, ref: str, exts: tuple, subdir: str = "") -> str | None:
     """在 directory 本层及其"编号+分隔符+名称"子目录里找 basename(去扩展) 命中 ref 的媒体文件。
 
     保存类节点会把产物写进 `output/<工作流名>/` (如
     `media/七纹刻印/0011-万物建模/0001-陈落.png`), 资源并不总在 output/input 顶层;
     只列一层会让 `@{ID}` 引用取不到图, 节点内预览与 execute 一起失效。
 
-    本层优先于子目录, 子目录按名称排序取首个命中; 只下探"编号+分隔符+名称"目录,
-    ComfyUI 自建的 3d/qwen3tts 等不被卷入。
+    本层优先于子目录; 子目录只下探"编号+分隔符+名称"目录 (ComfyUI 自建的 3d/qwen3tts
+    等不被卷入), 且**按与 `subdir` 的贴合度排序** (`_ref_score`), 同族目录先搜, 同分再按
+    名称排序取首个命中。
 
     参数:
         directory (str): 搜索根 (output/input/base 之一)。
         ref (str): `@{ID}` 里的 ID。
         exts (tuple): 允许匹配的扩展名。
+        subdir (str): 引用里写明的目录段, 仅用于子目录排序 (兜底优先同族); 空串表示无提示。
 
     返回:
         str | None: 命中文件的绝对路径; 未找到为 None。
@@ -119,8 +156,8 @@ def _find_ref_file(directory: str, ref: str, exts: tuple) -> str | None:
         stem, ext = os.path.splitext(name)
         if ext.lower() in exts and (stem == ref or stem.startswith(ref + "_")):
             return path
-    for _, path in sorted(subdirs):
-        hit = _find_ref_file(path, ref, exts)
+    for _, path in sorted(subdirs, key=lambda item: (_ref_score(item[0], subdir), item[0])):
+        hit = _find_ref_file(path, ref, exts, subdir)
         if hit:
             return hit
     return None
@@ -139,10 +176,13 @@ def resolve_media_path(raw, exts=None) -> str | None:
     """把 IMAGE/VIDEO/AUDIO/MASK 字段值解析为真实文件路径 (全部动态解析, 不写死)。
 
     规则:
-    - `@{工作流文件名/ID}` 引用: 文件名段正是保存类节点建的那层子目录名, 故先按
-      `output|input/<文件名>/<ID>.*` 定位; 未命中再在 output/input 下 (含"编号+分隔符+名称"
-      子目录, 见 `_find_ref_file`) 递归找 basename(去扩展) == ID 的媒体文件
-      (兼容 `ID_00001_` 计数器命名); 按 exts 过滤类型;
+    - `@{工作流文件名/ID}` 引用, 分两趟 (严格在前, 兜底在后):
+      ① 严格: 文件名段正是保存类节点建的那层子目录名, 先在**所有**搜索根按
+         `output|input/<文件名>/<ID>.*` 精确找, 命中即用;
+      ② 兜底: 全都没命中时, 再在 output/input 下 (含"编号+分隔符+名称"子目录, 见
+         `_find_ref_file`) 递归找 basename(去扩展) == ID 的媒体文件 (兼容 `ID_00001_`
+         计数器命名), 同族目录 (如 `0020_场景首帧` → `00200_场景首帧2.1`) 优先于其它目录;
+      两趟都按 exts 过滤类型;
     - 绝对路径: 存在则原样返回;
     - 相对路径: 依次相对 output/input/base 解析 (不依赖进程 CWD);
     - 其余: 返回 None (调用方按原字符串回退)。
@@ -159,16 +199,21 @@ def resolve_media_path(raw, exts=None) -> str | None:
     if ref:
         # `@{工作流文件名/ID}`: 前半与资源表 md 同名, 也正是产物落盘的子目录名
         subdir, _, stem = ref.rpartition("/")
-        for base in _media_dirs():
-            if not base or not os.path.isdir(base):
-                continue
-            if subdir:
-                sub = _under(base, subdir)
-                if sub and os.path.isdir(sub):
-                    hit = _find_ref_file(sub, stem, exts)
-                    if hit:
-                        return hit
-            hit = _find_ref_file(base, stem, exts)
+        roots = [b for b in _media_dirs() if b and os.path.isdir(b)]
+        # ① 严格: 引用写明的目录里精确命中 —— 全部搜索根试完才轮到兜底,
+        #    免得 output 的兜底命中抢在 input 的严格命中前面
+        for base in roots:
+            if not subdir:
+                break
+            sub = _under(base, subdir)
+            if sub and os.path.isdir(sub):
+                hit = _find_ref_file(sub, stem, exts)
+                if hit:
+                    return hit
+        # ② 兜底: 按 ID 在 output/input 下全区搜 (兼容目录改名/保存目录与表名不一致),
+        #    同族目录优先 (_ref_score)
+        for base in roots:
+            hit = _find_ref_file(base, stem, exts, subdir)
             if hit:
                 return hit
         return None
