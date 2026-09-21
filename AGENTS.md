@@ -163,7 +163,9 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 #### 反面教材(均已修)
 
 - `preview-audio` 的 `_handle_clear` 曾写成 `_last_output.clear()` —— 刷新即清空音频缓存,「保存」与播放器都没数据; 更糟的是 ComfyUI 执行缓存还在, 导致全量 Run 时该节点被跳过、缓存再也填不回来;
-- `preview-video` / `audio-trim` 曾在 `setup()` POST `/clear` 清界面态 —— 刷新丢掉上一次的截帧/截段结果。
+- `preview-video` / `audio-trim` 曾在 `setup()` POST `/clear` 清界面态 —— 刷新丢掉上一次的截帧/截段结果;
+- **`preview-video.js` 曾有 `app.registerExtension({...})` 里两个 `setup()`** —— JS 对象字面量的重复键**以后者为准**, 于是包装 `app.queuePrompt`(默认 Run 前 POST `/preview-video/reset`)的那段成了**死代码**: `_reset_generation` 不递增 → `fingerprint_inputs` 不变 → PreviewVideo 被执行缓存跳过 → 不重新生成视频、不发新 UI 事件, 前端预览一直停在**上一次的 temp 文件**上; 该文件一旦被清理(ComfyUI 重启/清 temp), 点播放就报「视频加载失败 / Invalid URL」。已合并为一个 `setup()`。**注册对象里的方法名不允许重复**(排查:`Select-String` 找同一对象里的同名键);
+- `preview-video` 的 `restoreVideo()` 曾把后端返回的 `/view?...` **原样**写给 `<video>`, 且**无条件覆盖**前端自己算出的地址 —— 前者是相对路径, 而前端原生 `VideoPreview` 组件的文件名标签用 `new URL(e)` 解析(无 base), 加载失败时标签会显示成 `Invalid URL`; 后者让播放器指向上一次执行的旧文件。现在一律转**绝对**地址, 且只在"指向的文件不是本次这个"时才改写 src。**不要往 `app.nodePreviewImages[nodeId]` 写地址**: `getNodeImageUrls` 会优先读它, 写进去后前端后续渲染一直用这个快照值(预览反而停在旧文件), 实测还会让节点预览进入递归更新、页面主线程卡死。
 
 ### 分段执行约定(lazy 门控 + partial 提交)
 

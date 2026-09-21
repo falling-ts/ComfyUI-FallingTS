@@ -793,6 +793,18 @@ function createVideoFallbackWidget(node) {
 /**
  * 刷新后重建视频预览: 拉回 URL 并填到原生 <video>, 原生不存在时改用备用播放器。
  *
+ * 两个关键点(2026-09-22 修「点击播放报 视频加载失败 / Invalid URL」):
+ * ① URL 一律转成**绝对**地址 —— 前端原生 VideoPreview 组件的文件名标签是
+ *    `new URL(e).searchParams.get("filename")`, 相对路径("/view?..." 或 "/api/view?...")
+ *    会让 new URL 抛错, 标签直接显示成 "Invalid URL";
+ * ② 原生播放器只在"指向的文件不是本次这个"时才改写 src —— 前端自己按
+ *    nodeOutputs 算出的 /api/view 地址(同一文件)保持不动, 指向上一次执行的旧文件
+ *    (该文件被清理后就播不出来, 报「视频加载失败」)时更新为本次的。
+ *
+ * ⚠️ 不要往 `app.nodePreviewImages[nodeId]` 里写地址: getNodeImageUrls 会**优先**读它,
+ *    一旦写进去, 前端后续渲染就一直用这个快照值(每次执行后不会自己刷新), 预览反而
+ *    停在旧文件上; 实测写它还会让节点预览进入递归更新、页面主线程卡死。
+ *
  * @param {LGraphNode} node 节点
  * @returns {Promise<void>} 无
  */
@@ -811,6 +823,8 @@ async function restoreVideo(node) {
     return;
   }
 
+  const absUrl = new URL(url, window.location.origin).href;
+
   // 节点内已有的原生 <video>(排除备用播放器自己)
   const host = document.querySelector(`[data-node-id="${node.id}"]`);
   const nativeVid = host
@@ -818,9 +832,18 @@ async function restoreVideo(node) {
     : null;
 
   if (nativeVid) {
-    if (nativeVid.dataset.src !== url) {
-      nativeVid.dataset.src = url;
-      nativeVid.src = url;
+    // 只在"不是同一个文件"时才动它(见上方 ②)
+    const cur = nativeVid.getAttribute("src");
+    let curName = null;
+    try {
+      curName = cur ? new URL(cur, window.location.origin).searchParams.get("filename") : null;
+    } catch {
+      curName = null;
+    }
+    const newName = new URL(absUrl).searchParams.get("filename");
+    if (curName !== newName) {
+      nativeVid.dataset.src = absUrl;
+      nativeVid.src = absUrl;
       nativeVid.controls = true;
     }
     if (fb) fb.element.style.display = "none";
@@ -829,9 +852,9 @@ async function restoreVideo(node) {
 
   if (fb) {
     fb.element.style.display = "";
-    if (fb.videoEl.dataset.src !== url) {
-      fb.videoEl.dataset.src = url;
-      fb.videoEl.src = url;
+    if (fb.videoEl.dataset.src !== absUrl) {
+      fb.videoEl.dataset.src = absUrl;
+      fb.videoEl.src = absUrl;
       fb.videoEl.load();
     }
   }
@@ -885,58 +908,51 @@ app.registerExtension({
   /**
    * 扩展初始化钩子。
    *
-   * 页面加载/刷新时**不清后端状态** —— 截帧列表改由 restoreFrames 从
-   * GET /preview-video/state 读回并重建, 刷新不再丢上一次的截帧结果。
-   * 仍然包装全局提交入口 app.queuePrompt: 默认 Run(未显式指定目标节点)时,
-   * 先 POST /preview-video/reset 重置所有预览节点为未完成, 再按原逻辑全量提交 ——
-   * 保证每次 Run 都从开头执行、重新拉上游生成视频(与继续节点同语义)。
+   * ① 包装全局提交入口 app.queuePrompt: 默认 Run(未显式指定目标节点)时, 先 POST
+   *    /preview-video/reset 重置所有预览节点为未完成, 再按原逻辑全量提交 —— 保证每次
+   *    Run 都从开头执行、重新拉上游生成视频(与继续节点同语义)。
+   *    完成截帧后的 partial 提交(带 queueNodeIds)保留已放行状态, 不重置。
+   *    ⚠️ 本文件曾经有**两个** setup(): JS 对象字面量的重复键以后者为准, 于是这段包装
+   *    一直是死代码 —— reset 从未发出, _reset_generation 不递增, fingerprint_inputs
+   *    不变, PreviewVideo 被 ComfyUI 执行缓存跳过: 重新 Run 时预览仍停留在上一次的
+   *    temp 文件(该文件一旦被清理, 播放就报「视频加载失败 / Invalid URL」)。两个
+   *    setup 已合并为下面这一个。
    *
-   * @returns {void}
-   */
-  async setup() {
-    const orig = app.queuePrompt?.bind(app);
-    if (!orig) return;
-    /**
-     * 包装 queuePrompt: 拦截"默认 Run"(queueNodeIds 为空)分支, 先重置预览节点再提交。
-     * 完成截帧后的 partial 提交(带 queueNodeIds)保留已放行状态, 不重置。
-     *
-     * @param {number} number 提交次数
-     * @param {number} batch 批次数
-     * @param {Array<string>|undefined} queueNodeIds 「完成」按钮显式指定的目标节点 ID 列表, 非空时跳过重置
-     * @returns {Promise} 原始 queuePrompt 的返回值(提交任务后的 Promise)
-     */
-    app.queuePrompt = async function (number, batch, queueNodeIds) {
-      /* 默认 Run (无显式目标): 重置所有预览节点为未完成, 再全量提交 */
-      if (!queueNodeIds?.length) {
-        try {
-          await fetch("/preview-video/reset", { method: "POST" });
-        } catch {
-          /* 忽略 */
-        }
-      }
-      return orig(number, batch, queueNodeIds);
-    };
-  },
-
-  /**
-   * 扩展初始化: 监听执行事件, 让视频预览在跑完后重新判定一次。
-   *
-   * ComfyUI 的原生预览 <video> 是收到 UI.PreviewVideo 事件后才渲染的 —— 比 onConfigure 晚。
-   * 因此执行结束后再调一次 restoreVideo: 原生播放器一出现就把备用播放器收起来, 避免两个
-   * 播放器并存时用户拖到隐藏的那个(截帧会读到 currentTime=0, 表现为每次都截到第 1 帧、
-   * 提示「帧 1 已在选中列表中」)。
+   * ② 监听执行事件, 让视频预览在跑完后重新判定一次。ComfyUI 的原生预览 <video> 是
+   *    收到 UI.PreviewVideo 事件后才渲染的(Vue 异步挂载, 比 onConfigure 晚), 因此
+   *    执行结束后按 600ms / 2.5s 两拍各调一次 restoreVideo: 原生播放器一出现就把备用
+   *    播放器收起来, 避免两个播放器并存时用户拖到隐藏的那个(截帧会读到 currentTime=0,
+   *    表现为每次都截到第 1 帧、提示「帧 1 已在选中列表中」)。
    *
    * @returns {Promise<void>} 无
    */
   async setup() {
+    const orig = app.queuePrompt?.bind(app);
+    if (orig) {
+      app.queuePrompt = async function (number, batch, queueNodeIds) {
+        /* 默认 Run (无显式目标): 重置所有预览节点为未完成, 再全量提交 */
+        if (!queueNodeIds?.length) {
+          try {
+            await fetch("/preview-video/reset", { method: "POST" });
+          } catch {
+            /* 忽略 */
+          }
+        }
+        return orig(number, batch, queueNodeIds);
+      };
+    }
+
     let timer = null;
     const refresh = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => {
+      const run = () => {
         for (const n of app.graph?._nodes || []) {
           if (n.type === NODE_CLASS) restoreVideo(n);
         }
-      }, 600);
+      };
+      timer = setTimeout(run, 600);
+      // 第二拍: 原生 <video> 由 Vue 异步挂载, 可能晚于第一拍才出现在 DOM 里
+      setTimeout(run, 2500);
     };
     api.addEventListener("executed", refresh);
     api.addEventListener("progress", refresh);
