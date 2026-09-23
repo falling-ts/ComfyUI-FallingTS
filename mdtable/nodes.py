@@ -79,7 +79,7 @@ def _media_dirs() -> tuple[str, ...]:
     return tuple(out)
 
 
-# "编号+分隔符+名称"子目录判据 (与 numbered_subdirs.py 同口径): 保存类节点按工作流名建的那层
+# "编号+分隔符+名称"子目录判据 (与 numbered_subdirs.py 同口径): 保存类节点建的那层
 _NUMBERED_SUBDIR_RE = re.compile(r"^\d+[-_]")
 
 
@@ -121,8 +121,9 @@ def _ref_score(dir_name: str, subdir: str) -> int:
 def _find_ref_file(directory: str, ref: str, exts: tuple, subdir: str = "") -> str | None:
     """在 directory 本层及其"编号+分隔符+名称"子目录里找 basename(去扩展) 命中 ref 的媒体文件。
 
-    保存类节点会把产物写进 `output/<工作流名>/` (如
-    `media/七纹刻印/0011-万物建模/0001-陈落.png`), 资源并不总在 output/input 顶层;
+    保存类节点会把产物写进 `output/<子目录>/` (如
+    `media/七纹刻印/0011_万物建模/00001_陈落.png`; 子目录名优先取工作流的 md 表文件名,
+    没有 md 表节点才用工作流名 —— 见 output_subdir.py), 资源并不总在 output/input 顶层;
     只列一层会让 `@{ID}` 引用取不到图, 节点内预览与 execute 一起失效。
 
     本层优先于子目录; 子目录只下探"编号+分隔符+名称"目录 (ComfyUI 自建的 3d/qwen3tts
@@ -197,7 +198,7 @@ def resolve_media_path(raw, exts=None) -> str | None:
     exts = exts or _MEDIA_EXTS
     ref = media_ref_id(raw)
     if ref:
-        # `@{工作流文件名/ID}`: 前半与资源表 md 同名, 也正是产物落盘的子目录名
+        # `@{表文件名/ID}`: 前半是资源表 md 文件名, 也正是产物落盘的子目录名
         subdir, _, stem = ref.rpartition("/")
         roots = [b for b in _media_dirs() if b and os.path.isdir(b)]
         # ① 严格: 引用写明的目录里精确命中 —— 全部搜索根试完才轮到兜底,

@@ -28,6 +28,8 @@ import folder_paths
 from comfy.cli_args import args
 from comfy_extras.nodes_images import _encode_image, inject_png_metadata, inject_exr_metadata
 
+from output_subdir import resolve_subdir, safe_dir_name
+
 
 # 最近一次预览的图片数据缓存: node_id -> {"images": [张量...], "prompt": ..., "extra_pnginfo": ...}
 # 点「保存」时前端把控件配置 POST 过来, 后端直接用这里的缓存写 output(无需重跑工作流)
@@ -37,12 +39,8 @@ _last_output: dict[str, dict] = {}
 # 输入为 None (如扇出未选中分支) 时回放此列表, 保持原有预览不被清空
 _last_ui: dict[str, list] = {}
 
-# 保存目标目录名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
-_UNSAFE_CHARS = '<>:"/\\|?*'
-
-
 def _safe_dir_name(name) -> str:
-    """把工作流名清洗成可安全用作单层目录名的字符串。
+    """把工作流名清洗成可安全用作单层目录名的字符串(实现见 output_subdir.safe_dir_name)。
 
     参数:
         name (str|None): 前端传来的工作流名(可能含 .json 后缀或完整路径)。
@@ -50,30 +48,24 @@ def _safe_dir_name(name) -> str:
     返回:
         str: 清洗后的目录名; 空串表示不该建子目录(退回 output 根)。
     """
-    text = str(name or "").strip()
-    if not text:
-        return ""
-    # 只取路径末段, 防 ../ 穿越
-    text = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    if text.lower().endswith(".json"):
-        text = text[:-5]
-    for ch in _UNSAFE_CHARS:
-        text = text.replace(ch, "_")
-    text = text.strip().strip(".")
-    return "" if text in ("", ".", "..") else text
+    return safe_dir_name(name)
 
 
-def _workflow_output_dir(workflow_name) -> str:
-    """取保存目录: output 下按当前工作流名建子目录, 不存在则创建; 名字非法时退回 output 根。
+def _workflow_output_dir(workflow_name, prompt=None) -> str:
+    """取保存目录: output 下按子目录名建目录, 不存在则创建; 名字非法时退回 output 根。
+
+    子目录名由 output_subdir.resolve_subdir 解析 —— 工作流里有 md 数据表节点时用它的
+    表文件名, 没有 md 表节点才用工作流名(理由见该模块头部说明)。
 
     参数:
         workflow_name (str|None): 前端传来的当前工作流名。
+        prompt (dict|None): 该节点 execute 时缓存的 API prompt(用于找 md 表节点)。
 
     返回:
         str: 可直接拼接文件名的目录绝对路径(保证存在)。
     """
     base = folder_paths.get_output_directory()
-    sub = _safe_dir_name(workflow_name)
+    sub = resolve_subdir(workflow_name, prompt)
     if not sub:
         return base
     target = os.path.join(base, sub)
@@ -198,14 +190,15 @@ class PreviewImageSaveNode:
             file_format (str): png/exr;
             bit_depth (str): 位深(8-bit/16-bit/32-bit float);
             colorspace (str): 输入色彩空间(sRGB/HDR/linear);
-            prompt (dict|None): 工作流 prompt(注入元数据);
+            prompt (dict|None): 工作流 prompt(注入元数据; 同时用于解析产物子目录名);
             extra_pnginfo (dict|None): 额外元数据;
-            workflow_name (str|None): 当前工作流名; 非空时在 output 下建同名子目录再写。
+            workflow_name (str|None): 当前工作流名; 非空时在 output 下建同名子目录再写
+                (工作流里有 md 数据表节点时改用表文件名, 见 _workflow_output_dir)。
 
         返回:
-            None: 直接写文件到 output(或其工作流同名子目录)目录。
+            None: 直接写文件到 output(或其子目录)目录。
         """
-        output_dir = _workflow_output_dir(workflow_name)
+        output_dir = _workflow_output_dir(workflow_name, prompt)
 
         for batch_number, image in enumerate(images):
             encoded = _encode_image(image, file_format, bit_depth, colorspace)
@@ -344,7 +337,8 @@ async def _handle_save(request: web.Request) -> web.Response:
 
     流程: 前端点「保存」按钮时把 文件名/格式/位深/色彩空间 POST 过来;
     后端查 _last_output[node_id](execute 时缓存的图片), 有则按配置编码写 output, 无则 400。
-    全程不触发任何工作流重跑。
+    全程不触发任何工作流重跑。子目录名优先取该次执行缓存的 md 数据表文件名(见 output_subdir),
+    工作流里没有 md 表节点时才用 body 里的 workflow_name。
 
     参数:
         request (web.Request): POST /preview-image/save/{node_id}, body 为 JSON
@@ -395,7 +389,7 @@ async def _handle_save(request: web.Request) -> web.Response:
         cache.get("extra_pnginfo"),
         data.get("workflow_name"),
     )
-    saved_dir = _safe_dir_name(data.get("workflow_name"))
+    saved_dir = resolve_subdir(data.get("workflow_name"), cache.get("prompt"))
     where = f"{saved_dir}/" if saved_dir else ""
     return web.json_response(
         {

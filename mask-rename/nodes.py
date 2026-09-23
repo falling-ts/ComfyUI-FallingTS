@@ -11,10 +11,10 @@
    返回 subfolder='clipspace' —— 节点引用自动带 subfolder, 重新打开遮罩编辑器可完整恢复
    -mask/-paint 层继续编辑。
 2. 【POST /fallingts_mask/rename】: 复制 input/clipspace 里的 clipspace-painted-masked-{ts}.png
-   到 output/0010-灰度遮罩/{base}.png(按 ID 命名成品, 同名覆盖, 目录不存在则创建)。
+   到 output/0010_灰度遮罩/{base}.png(按 ID 命名成品, 同名覆盖, 目录不存在则创建)。
 
 目录结构:
-  - output/0010-灰度遮罩/: 成品 {base}.png(遮罩编辑器只服务「灰度遮罩」资源表)
+  - output/0010_灰度遮罩/: 成品 {base}.png(遮罩编辑器只服务「灰度遮罩」资源表)
   - input/clipspace/: 遮罩编辑文件(clipspace-*, 可重新编辑)
 
 base 名 = 预览节点 execute 时缓存的 filename_prefix(即 MD 行 ID)。
@@ -44,9 +44,9 @@ _CLIPSPACE_PREFIX = "clipspace-painted-masked-"
 _RECENT_MS = 10 * 60 * 1000
 
 # 成品归属的 output 子目录 = 该遮罩所属的资源表名。
-# 遮罩编辑器只服务「灰度遮罩」资源表, 故成品固定归入 0010-灰度遮罩/,
-# 与 preview-image 的「按工作流名建子目录」保持一致的目录层级。
-_MASK_TABLE_DIR = "0010-灰度遮罩"
+# 遮罩编辑器只服务「灰度遮罩」资源表, 故成品固定归入 0010_灰度遮罩/,
+# 与 preview-image 的「按 md 表文件名建子目录」保持一致的目录层级。
+_MASK_TABLE_DIR = "0010_灰度遮罩"
 
 
 def _sanitize_base(name: str) -> str:
@@ -136,12 +136,12 @@ if not _install_upload_hook():
 
 @PromptServer.instance.routes.post("/fallingts_mask/rename")
 async def _rename_mask(request: web.Request) -> web.Response:
-    """复制 input/clipspace 里的 clipspace-painted-masked-{ts}.png -> output/0010-灰度遮罩/{base}.png。
+    """复制 input/clipspace 里的 clipspace-painted-masked-{ts}.png -> output/0010_灰度遮罩/{base}.png。
 
     body: {"node_id": "前端节点 id", "image_ref": "clipspace-painted-masked-1754976000123.png", "base": "可选覆盖"}
     返回: {"ok": true,
            "edit_ref": {"filename": "clipspace-painted-masked-{ts}.png", "subfolder": "clipspace", "type": "input"},
-           "out_ref": {"filename": "{base}.png", "subfolder": "0010-灰度遮罩", "type": "output"},
+           "out_ref": {"filename": "{base}.png", "subfolder": "0010_灰度遮罩", "type": "output"},
            "copied": bool}
     """
     try:

@@ -9,6 +9,7 @@ ComfyUI-FallingTS/
 ├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 15 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
+├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
 ├── AGENTS.md                   # AI 编码指南(本文件)
 ├── CLAUDE.md                   # Claude Code 垫片,内容为 @AGENTS.md
 ├── README.md                   # 项目说明
@@ -106,6 +107,17 @@ ComfyUI-FallingTS/
 | h3-guide | FallingTSH3AddGuide | H3 引导锚定 (**None 安全替代核心 MiniMaxH3AddGuide**: 核心节点在 image 与 audio 同为 None 时直接抛 `ValueError("MiniMaxH3AddGuide needs an image or an audio to anchor")`, 而 mdtable 空列按"可选输入惯例"输出 None、`execution.py` 又把上游 None 原样传给下游(`input_data_all[x] = obj`, 不走 `mark_missing`), 于是 N 路引导串联时只要有一列留空就整图失败; 本节点空输入时**原样透传 positive**(等价于该列无锚点), 有值时**直接委派 `MiniMaxH3AddGuide.execute`** 不复制其实现 —— 锚定语义与官方完全一致。4025-关键帧视频 的 9 路引导链已换用, 空槽因此可留空 (首帧 / 尾帧固定槽位照常参与, 只是两端都应填写); **并带同帧去重** —— 4025 的帧索引由「首帧硬钉第 0 帧 + 中间帧逐列 `关键帧n所在秒数` 换算 (`max(0, min(round(秒数 x 24), length - 1))`) + 尾帧取 `length - 1`」确定, 两个中间帧秒数相同或换算后落在同一帧时会撞在同一帧, 本节点发现本次图片锚点与上游某槽撞帧时**撤掉本次图片锚点并告警**(仅撤图片 `latent`, 同帧音频锚点保留), 避免同一时刻钉上两个互相矛盾的画面致物件漂移) |
 
 注:`preview-image` / `preview-video` / `preview-audio` / `audio-trim` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
+
+### 产物落盘目录约定(三个预览保存节点)
+
+预览保存节点(`PreviewImageSave` / `PreviewVideo` / `PreviewAudioSave`)点「保存」时把文件写进 `output/<子目录>/<文件名>`。子目录名由 `output_subdir.resolve_subdir` 解析(2026-09-24 起):
+
+- 工作流的 API prompt 里有 `FallingTSMarkDownTable` 节点 → 用它的 `data.md_path` **表文件名**(去 `.md`)作子目录名;
+- 没有 md 表节点 → 退回前端 POST 的 `workflow_name`(原行为)。
+
+这样产物目录与资源表 `@{表文件名/行 ID}` 的口径一致(mdtable 解析器严格按 `output/<表文件名>/` 找文件),引用因此走**严格命中**而非递归兜底。代价:`0011_万物建模` 与 `00110_万物建模_QI2.1` 共用同一张表 ⇒ 落同一个目录,同一行 ID 的产物互相覆盖。
+
+⚠️ **V3 节点的 hidden 不进 `execute` 实参** —— `execution.py` 的 `get_finalized_class_inputs` 把 hidden 单独摘出,只能经 `cls.hidden.<name>` 取(`HiddenHolder.__getattr__` 对未知键返回 None)。所以 `preview-video` / `preview-audio` 的 `execute` 里**不能**写 `prompt=None` 形参(写了恒为 None, 静默失效),prompt 一律从 `cls.hidden.prompt` 读;`preview-image` 是 V1 节点(`"hidden": {"prompt": "PROMPT"}`),prompt 才是真正的 execute 实参。**加/改任何依赖 hidden 的 V3 节点逻辑前先确认这一点。**
 
 ### None 容忍约定(全部 15 节点)
 

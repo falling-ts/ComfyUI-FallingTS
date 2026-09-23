@@ -48,6 +48,8 @@ from comfy_api.latest import IO, Types, UI
 from comfy_execution.graph_utils import ExecutionBlocker
 import folder_paths
 
+from output_subdir import resolve_subdir, safe_dir_name
+
 _NODE_NAME = "PreviewVideo"
 
 # 截帧输出上限(与 composite 的 MAX_TOTAL=64 一致; 后端声明定长槽, 前端按需增删端口)
@@ -70,12 +72,8 @@ _done: set[str] = set()
 # 强制 PreviewVideo 重新执行(重新拉上游填缓存), 不被 ComfyUI 全局执行缓存跳过。
 _reset_generation: int = 0
 
-# 保存目标目录名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
-_UNSAFE_CHARS = '<>:"/\\|?*'
-
-
 def _safe_dir_name(name) -> str:
-    """把工作流名清洗成可安全用作单层目录名的字符串。
+    """把工作流名清洗成可安全用作单层目录名的字符串(实现见 output_subdir.safe_dir_name)。
 
     参数:
         name (str|None): 前端传来的工作流名(可能含 .json 后缀或完整路径)。
@@ -83,30 +81,24 @@ def _safe_dir_name(name) -> str:
     返回:
         str: 清洗后的目录名; 空串表示不该建子目录(退回 output 根)。
     """
-    text = str(name or "").strip()
-    if not text:
-        return ""
-    # 只取路径末段, 防 ../ 穿越
-    text = text.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    if text.lower().endswith(".json"):
-        text = text[:-5]
-    for ch in _UNSAFE_CHARS:
-        text = text.replace(ch, "_")
-    text = text.strip().strip(".")
-    return "" if text in ("", ".", "..") else text
+    return safe_dir_name(name)
 
 
-def _workflow_output_dir(workflow_name) -> str:
-    """取保存目录: output 下按当前工作流名建子目录, 不存在则创建; 名字非法时退回 output 根。
+def _workflow_output_dir(workflow_name, prompt=None) -> str:
+    """取保存目录: output 下按子目录名建目录, 不存在则创建; 名字非法时退回 output 根。
+
+    子目录名由 output_subdir.resolve_subdir 解析 —— 工作流里有 md 数据表节点时用它的
+    表文件名, 没有 md 表节点才用工作流名(理由见该模块头部说明)。
 
     参数:
         workflow_name (str|None): 前端传来的当前工作流名。
+        prompt (dict|None): 该节点 execute 时缓存的 API prompt(用于找 md 表节点)。
 
     返回:
         str: 可直接拼接文件名的目录绝对路径(保证存在)。
     """
     base = folder_paths.get_output_directory()
-    sub = _safe_dir_name(workflow_name)
+    sub = resolve_subdir(workflow_name, prompt)
     if not sub:
         return base
     target = os.path.join(base, sub)
@@ -176,7 +168,7 @@ class PreviewVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, video, filename_prefix: str = "video", filename_suffix: str = "", prompt=None, extra_pnginfo=None) -> IO.NodeOutput:
+    def execute(cls, video, filename_prefix: str = "video", filename_suffix: str = "") -> IO.NodeOutput:
         """节点执行入口: 把视频编码为 mp4 写入临时目录并在前端播放, 缓存帧集合, 按选中帧输出 IMAGE。
 
         逻辑:
@@ -193,8 +185,6 @@ class PreviewVideoNode(IO.ComfyNode):
             video (Video|None): 要预览的视频对象(惰性内存对象); None (lazy 未拉上游 / 扇出未选中分支) 跳过预览/缓存, 输出本节点最近一次预览的视频(从未预览过则 None)。
             filename_prefix (str, 默认 "video"): 保存文件名前缀(控件; 若被上游连线, widget 只是占位符, 本参数为实际接收值, 保存时以此为准)。
             filename_suffix (str, 默认 ""): 文件名后缀(控件, 保存时拼接在前缀之后; 连线时本参数为实际接收值)。
-            prompt (dict|None): 工作流 prompt(预留元数据)。
-            extra_pnginfo (dict|None): 额外元数据(预留)。
 
         返回:
             IO.NodeOutput:
@@ -204,6 +194,9 @@ class PreviewVideoNode(IO.ComfyNode):
         """
         nid = getattr(cls.hidden, "unique_id", None)
         nid_str = str(nid) if nid else ""
+        # 工作流 prompt 只能从 hidden 取 —— V3 节点的 hidden 不进 execute 实参
+        # (execution.py 的 get_finalized_class_inputs 把 hidden 单独摘出), 缓存下来供「保存」解析子目录名。
+        prompt = getattr(cls.hidden, "prompt", None)
 
         # None (lazy 未拉上游 / 扇出未选中分支): 回放上一次预览事件。
         # 已完成 -> 输出缓存的视频+选中帧(partial 只跑下游); 未完成 -> block 阻断下游。
@@ -284,7 +277,7 @@ class PreviewVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def check_lazy_status(cls, video=MISSING, filename_prefix: str = "video", filename_suffix: str = "", prompt=None, extra_pnginfo=None) -> list[str]:  # noqa: A002
+    def check_lazy_status(cls, video=MISSING, filename_prefix: str = "video", filename_suffix: str = "") -> list[str]:  # noqa: A002
         """lazy 输入门控: 决定本次执行要不要拉取上游的 video —— "完成只跑下游"的关键。
 
         机制(ComfyUI 执行引擎, 与继续节点同套):
@@ -305,8 +298,6 @@ class PreviewVideoNode(IO.ComfyNode):
                 - 其他: 已求值的上游视频(此时已不在 missing_keys, 本方法的返回值会被过滤, 不触发拉取)。
             filename_prefix (str, 默认 "video"): 文件名前缀(本方法不读取, 仅保持签名兼容)。
             filename_suffix (str, 默认 ""): 文件名后缀(本方法不读取, 仅保持签名兼容)。
-            prompt (dict|None): 工作流 prompt(预留, 不读取)。
-            extra_pnginfo (dict|None): 额外元数据(预留, 不读取)。
 
         返回:
             list[str]: 本次需要拉取的上游输入名列表, 只能是 ["video"] 或 []。
@@ -624,8 +615,8 @@ async def _handle_save(request: web.Request) -> web.Response:
     参数:
         request (web.Request): POST /preview-video/save/{node_id}, body 为 JSON
             {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked,
-             workflow_name}。workflow_name 非空时, 文件写进 output/<工作流名>/ 子目录
-            (不存在则自动创建), 为空则退回 output 根目录。
+             workflow_name}。子目录名优先取该次执行缓存的 md 数据表文件名(见 output_subdir),
+            工作流里没有 md 表节点时才用 workflow_name; 名字为空则退回 output 根目录。
 
     返回:
         web.Response:
@@ -658,7 +649,7 @@ async def _handle_save(request: web.Request) -> web.Response:
     name = filename_prefix + filename_suffix
 
     video = cache["video"]
-    output_dir = _workflow_output_dir(data.get("workflow_name"))
+    output_dir = _workflow_output_dir(data.get("workflow_name"), cache.get("prompt"))
     ext = Types.VideoContainer.get_extension("mp4")
     file_path = os.path.join(output_dir, f"{name}.{ext}")
     video.save_to(
@@ -666,7 +657,7 @@ async def _handle_save(request: web.Request) -> web.Response:
         format=Types.VideoContainer.MP4,
         codec=Types.VideoCodec.AUTO,
     )
-    saved_dir = _safe_dir_name(data.get("workflow_name"))
+    saved_dir = resolve_subdir(data.get("workflow_name"), cache.get("prompt"))
     where = f"{saved_dir}/" if saved_dir else ""
     return web.json_response(
         {"status": "ok", "message": f"已保存: {where}{name}.{ext}"}

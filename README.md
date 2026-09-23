@@ -147,7 +147,7 @@ dataB → when-true_1 →   (total groups)    └output_1→ original downstream
 **HTTP routes** (auto-registered by the backend):
 - `POST /fallingts_mdtable/select_file` — pop the system file picker, return the absolute path
 - `GET /fallingts_mdtable/read?path=` — parse the md, return the field definitions + all data rows
-- `GET /fallingts_mdtable/preview?path=` — serve local image/video/audio preview by path or `@{workflow-file/ID}` reference (Range supported); a reference resolves in two passes: **strict first** — an exact `output|input/<workflow file>/<ID>.*`; only when nothing matches, **fallback** to searching output/input and their "numbered-separator-name" subdirectories (the layer save nodes create from the workflow name) by ID, preferring same-family directories (e.g. `0020_场景首帧` → `00200_场景首帧2.1`) over others
+- `GET /fallingts_mdtable/preview?path=` — serve local image/video/audio preview by path or `@{table-file/ID}` reference (Range supported); a reference resolves in two passes: **strict first** — an exact `output|input/<table file>/<ID>.*`; only when nothing matches, **fallback** to searching output/input and their "numbered-separator-name" subdirectories (the layer save nodes create, preferring the workflow's md table file name) by ID, preferring same-family directories (e.g. `0020_场景首帧` → `00200_场景首帧_QI2.1`) over others
 - `GET /fallingts_mdtable/resolve?path=&kind=` — resolve a field value to its real absolute file path (feeds the in-node "文件: …" line); same lookup rules, filtered by field type
 
 ### 3. Many-to-one selection `FallingTSSelector`

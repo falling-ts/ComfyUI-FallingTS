@@ -1,7 +1,8 @@
 # 让前端文件列表看到"编号子目录"里的文件
 #
 # 背景: 保存类节点 (PreviewImageSave / PreviewVideo / PreviewAudioSave / 遮罩编辑器)
-# 会把产物写进 output/<工作流名>/ 这样的子目录, 而 ComfyUI 的
+# 会把产物写进 output/<子目录>/ 这样的子目录(子目录名优先取工作流的 md 表文件名,
+# 没有 md 表节点才用工作流名 —— 见 output_subdir.py), 而 ComfyUI 的
 # GET /internal/files/{directory_type} 是这样列的:
 #
 #     sorted((entry for entry in os.scandir(directory) if is_visible_file(entry)), ...)
@@ -10,7 +11,7 @@
 # 前端「已保存 / 已生成」下拉里因此看不到保存进去的文件。
 #
 # 本模块给 /internal 子应用挂一个 middleware, 接管该路由: 顶层文件照旧, 额外进入
-# **"编号+分隔符+名称"形式的子目录**(如 0010_灰度遮罩 —— 保存类节点按工作流名建的那层) 把里面的
+# **"编号+分隔符+名称"形式的子目录**(如 0010_灰度遮罩 —— 保存类节点建的那层) 把里面的
 # 文件一并列出。判据是 "数字 + 连字符或下划线"(`-` 为早期命名, `_` 为现行命名),
 # 这样 ComfyUI 自建的 3d 目录不会被卷进来。
 #
