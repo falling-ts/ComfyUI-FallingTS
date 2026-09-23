@@ -153,7 +153,7 @@ ComfyUI-FallingTS/
 
 - **`setup()` 不得 POST `/clear` 之类的清状态端点** —— 那会让刷新丢掉上一次的结果;
 - **媒体预览一律用「拉模式」, 不依赖 `UI.Preview*` 事件** —— 原生 `UI.PreviewImage` / `UI.PreviewVideo` / `UI.PreviewAudio` 是**一次性 WebSocket 事件**, 页面刷新后不会重发, 依赖它的节点预览区就空了。四个预览节点因此都: ① 后端提供 `GET /xxx-url/{id}` 返回 `/view` URL(复用 execute 时的缓存, 不重新编码); ② 前端在 `onConfigure` 拉 URL 填到节点上 —— **优先填 ComfyUI 渲染的原生 `<img>`/`<video>`, 找不到才显示自备的备用元素**(备用默认 `display:none`, 避免出现两个播放器):
-  - `preview-image` → `GET /preview-image/image-url/{id}` → `restoreImages()`
+  - `preview-image` → `GET /preview-image/image-url/{id}?workflow_id=<app.rootGraph.id>` → `restoreImages()`
   - `preview-video` → `GET /preview-video/video-url/{id}` → `restoreVideo()`
   - `preview-audio` → `GET /preview-audio/audio-url/{id}` → `refreshPlayer()`
   - `audio-trim` → `GET /audio-trim/audio-url/{id}` → `refreshWaveform()` 内一并设置
@@ -168,6 +168,26 @@ ComfyUI-FallingTS/
 - `/xxx/reset` 只在**默认 Run** 分支被调(前端包装 `app.queuePrompt`, 判断 `queueNodeIds` 为空), 清执行态 + 递增 `_reset_generation`;
 - **绝不写 `_last_output.clear()`** —— 那会把媒体态一起清掉。
 
+#### 预览缓存的键必须带工作流作用域(`preview-image`,2026-09-24)
+
+`_last_output` / `_last_ui` 的键是 **`<工作流根 id>::<节点 id>`**(工作流 id 取不到时退回纯节点 id)。根 id 两边同源:后端从 `extra_pnginfo.workflow.id` 取(前端 `graphToPrompt()` 把 `graph.serialize()` 整个塞进 `extra_pnginfo.workflow`,而 `serialize()` 返回 `{id: this.id, ...}`),前端从 **`app.rootGraph.id`** 取(必须取根图 —— 取子图 `node.graph` 会拿到别的 id)。
+
+**为什么**:只按节点 id 缓存会**跨工作流串图** —— 节点 id 在各工作流之间大量重复(实测 `18` 撞 6 个工作流、`62` 撞 4 个、`901`~`908` 各撞 3~4 个、`6013/6014` 撞 2 个),打开工作流 B 时会把之前跑过的 A 的同 id 节点预览当成 B 的预览显示出来(「遗留预览」)。同一份缓存还被「保存」按钮使用, 所以串图会把 **A 的图写进 B 的产物目录**。
+
+- `GET /preview-image/image-url/{id}` 必须带 `?workflow_id=`;`POST /preview-image/save/{id}` 必须带 body 字段 `workflow_id`;
+- 读缓存一律走 `_cache_get(cache, node_id, workflow_id)`:优先带作用域的键, 再退回纯节点 id —— 退回是为了兼容「那次执行没带工作流标识」的写入(无头 API 提交时 `extra_pnginfo` 为空), 否则页面刷新后这类预览再也读不回来;
+- `image-url` 返回前用 `_temp_file_exists()` 过滤掉指向已被清理的 temp 文件的死条目(纯内存缓存 + 会被清理的 temp 目录 ⇒ 死条目必然出现, 不过滤就会在节点上挂一张加载失败的图);
+- ⚠️ **`preview-video` / `preview-audio` / `audio-trim` 的 `_last_output` 目前仍只按节点 id 索引**, 有同样的跨工作流串图风险(它们的备用播放器会在执行后被收起, 所以可见症状限于"跑之前显示别的工作流的媒体")。要修就照本节同一套做法。
+
+#### 预览区「两个图片 / 两个播放器」的通用根因
+
+备用元素是**普通 widget**(`addDOMWidget`), 在 Vue 节点体里的渲染顺序是 `端口 → widgets → 提升预览 → 原生预览`, 所以备用元素排在**原生预览之前(上方)**;而 `restoreXxx()` 只在 `onConfigure` 跑一次, 那时 Vue 节点 DOM 往往还没挂出来 → 判定"节点里没有原生预览"→ 显示备用元素。此后**没有任何时机再收它**, 跑完流程原生预览出现, 节点上就成了两个(备用在上、原生在下)。
+
+**所以每个预览节点都必须在执行结束后再判定一次**: `api.addEventListener("executed" / "execution_success")` 后按 600ms / 2.5s 两拍重跑 `restoreXxx()`(第二拍给 Vue 异步挂载留余量)。
+
+- `preview-video`(挂 `executed` / `progress`)、`preview-audio`(同)已有;
+- `preview-image` 2026-09-24 补上, 只挂 `executed` / `execution_success` —— **不挂 `progress`**: progress 每个采样步都发, 会把"跑完再判定"变成高频轮询(每个预览节点一次 HTTP)。
+
 #### 为什么必须有 `_reset_generation`
 
 ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内重跑同一张图时节点会被**直接跳过**。递增 `_reset_generation` → `fingerprint_inputs` 返回值变化 → ComfyUI 认为节点"变了" → 强制执行。`proceed` / `preview-video` / `audio-trim` / `preview-audio` 都用这一招(否则改了段/帧再 Run 会拿到旧结果, 或「继续」报 400「没有上游数据」)。
@@ -178,6 +198,7 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 - `preview-video` / `audio-trim` 曾在 `setup()` POST `/clear` 清界面态 —— 刷新丢掉上一次的截帧/截段结果;
 - **`preview-video.js` 曾有 `app.registerExtension({...})` 里两个 `setup()`** —— JS 对象字面量的重复键**以后者为准**, 于是包装 `app.queuePrompt`(默认 Run 前 POST `/preview-video/reset`)的那段成了**死代码**: `_reset_generation` 不递增 → `fingerprint_inputs` 不变 → PreviewVideo 被执行缓存跳过 → 不重新生成视频、不发新 UI 事件, 前端预览一直停在**上一次的 temp 文件**上; 该文件一旦被清理(ComfyUI 重启/清 temp), 点播放就报「视频加载失败 / Invalid URL」。已合并为一个 `setup()`。**注册对象里的方法名不允许重复**(排查:`Select-String` 找同一对象里的同名键);
 - `preview-video` 的 `restoreVideo()` 曾把后端返回的 `/view?...` **原样**写给 `<video>`, 且**无条件覆盖**前端自己算出的地址 —— 前者是相对路径, 而前端原生 `VideoPreview` 组件的文件名标签用 `new URL(e)` 解析(无 base), 加载失败时标签会显示成 `Invalid URL`; 后者让播放器指向上一次执行的旧文件。现在一律转**绝对**地址, 且只在"指向的文件不是本次这个"时才改写 src。**不要往 `app.nodePreviewImages[nodeId]` 写地址**: `getNodeImageUrls` 会优先读它, 写进去后前端后续渲染一直用这个快照值(预览反而停在旧文件), 实测还会让节点预览进入递归更新、页面主线程卡死。
+- **`preview-image` 曾只按节点 id 缓存预览, 且备用图只在 `onConfigure` 判定一次**(2026-09-24 修) —— 两个后果: ① 打开别的工作流时, 同 id 节点上会显示**上一次别的流程留下的图**(实测后端 `_last_ui["2"]` 残留一张 64×64 的 E2E 测试图, 而 `0010_灰度遮罩` 的 `PreviewImageSave` 正好是节点 2); ② 跑完流程后节点上**同时**显示两张图 —— 上面是插件备用 `<img>`(陈旧, 只反映加载那一刻的缓存), 下面是原生 Vue 预览(本次真实结果)。因为备用图是 widget、渲染在原生预览之前, 而它**不在前端 `nodePreviewImages`/`nodeOutputs` 里**, 鼠标中键也点不到它 —— `node_image_middleclick.js` 的取图通道只有前端自己那四路, 且 Vue DOM 模式那一路要求 `target.closest('.image-preview')`(只有原生预览组件带这个类)。修法见上两节。
 
 ### 分段执行约定(lazy 门控 + partial 提交)
 

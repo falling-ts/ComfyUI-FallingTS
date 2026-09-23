@@ -31,13 +31,77 @@ from comfy_extras.nodes_images import _encode_image, inject_png_metadata, inject
 from output_subdir import resolve_subdir, safe_dir_name
 
 
-# 最近一次预览的图片数据缓存: node_id -> {"images": [张量...], "prompt": ..., "extra_pnginfo": ...}
+# 最近一次预览的图片数据缓存: 缓存键 -> {"images": [张量...], "prompt": ..., "extra_pnginfo": ...}
 # 点「保存」时前端把控件配置 POST 过来, 后端直接用这里的缓存写 output(无需重跑工作流)
 _last_output: dict[str, dict] = {}
 
-# 最近一次预览的 UI 记录缓存: node_id -> ui["images"] 列表(指向 temp 目录文件)
+# 最近一次预览的 UI 记录缓存: 缓存键 -> ui["images"] 列表(指向 temp 目录文件)
 # 输入为 None (如扇出未选中分支) 时回放此列表, 保持原有预览不被清空
 _last_ui: dict[str, list] = {}
+
+
+def _workflow_scope(extra_pnginfo) -> str:
+    """从 extra_pnginfo 取当前工作流的根 id, 作为缓存键的工作流作用域。
+
+    该 id 就是工作流 JSON 的根 `id`(前端 `graph.serialize().id`; 前端的
+    `graphToPrompt()` 把 `graph.serialize()` 整个塞进 `extra_pnginfo.workflow`, 所以这里
+    取到的和前端 `app.graph.id` 是同一个值)。
+
+    **为什么必须带工作流作用域**: 只按节点 id 缓存会跨工作流串图 —— 节点 id 在各工作流之间
+    大量重复(实测 `18` 撞 6 个工作流、`62` 撞 4 个、`901`~`908` 各撞 3~4 个), 打开工作流 B 时
+    会把之前跑过的 A 的同 id 节点预览当成 B 的预览显示出来(遗留预览)。
+
+    参数:
+        extra_pnginfo (dict|None): execute 收到的额外元数据。
+
+    返回:
+        str: 工作流根 id; 取不到(如无头 API 直接提交、未带 extra_pnginfo)时返回空串。
+    """
+    if not isinstance(extra_pnginfo, dict):
+        return ""
+    workflow = extra_pnginfo.get("workflow")
+    if not isinstance(workflow, dict):
+        return ""
+    return str(workflow.get("id") or "").strip()
+
+
+def _scoped_key(node_id, workflow_id=None) -> str:
+    """把 (工作流 id, 节点 id) 拼成缓存键; 工作流 id 缺失时退回纯节点 id。
+
+    参数:
+        node_id (str|int|None): 节点唯一 ID。
+        workflow_id (str|None): 工作流根 id(见 _workflow_scope)。
+
+    返回:
+        str: 缓存键 "<工作流 id>::<节点 id>", 或纯 "<节点 id>"。
+    """
+    nid = str(node_id or "")
+    wid = str(workflow_id or "").strip()
+    return f"{wid}::{nid}" if wid and nid else nid
+
+
+def _cache_get(cache: dict, node_id, workflow_id=None):
+    """按 (工作流, 节点) 读缓存: 优先带工作流标识的键, 再退回纯节点 id。
+
+    退回纯节点 id 是为了兼容「那次执行没带工作流标识」的写入(无头 API 提交时
+    extra_pnginfo 为空), 否则页面刷新后这类预览就再也读不回来了。
+
+    参数:
+        cache (dict): _last_output 或 _last_ui。
+        node_id (str|int|None): 节点唯一 ID。
+        workflow_id (str|None): 调用方声明的当前工作流根 id。
+
+    返回:
+        *: 命中的缓存值; 未命中返回 None。
+    """
+    keys = [str(node_id or "")]
+    if workflow_id:
+        keys.insert(0, _scoped_key(node_id, workflow_id))
+    for key in keys:
+        if key in cache:
+            return cache[key]
+    return None
+
 
 def _safe_dir_name(name) -> str:
     """把工作流名清洗成可安全用作单层目录名的字符串(实现见 output_subdir.safe_dir_name)。
@@ -213,19 +277,20 @@ class PreviewImageSaveNode:
                 f.write(encoded)
 
     @staticmethod
-    def _last_images(id) -> "torch.Tensor | None":
+    def _last_images(id, workflow_id=None) -> "torch.Tensor | None":
         """取该节点最近一次预览的图片, 重组为 BxHxWxC 批张量 (来自 _last_output 缓存); 无缓存返回 None。
 
         用于 None 透传: 本节点本次没有新图 (如扇出未选中分支) 时, 把该节点上一次预览的图透传给下游
         (如四图合成), 让下游能拿到该面「之前预览过」的图进入合成, 而非黑空格。
 
         参数:
-            id (str | None): 节点唯一 ID, 用作缓存键。
+            id (str | None): 节点唯一 ID, 用作缓存键的一部分。
+            workflow_id (str | None): 当前工作流根 id(缓存作用域, 见 _workflow_scope)。
 
         返回:
             torch.Tensor | None: BxHxWxC 批张量; 无缓存 (从未预览过) 或形状不一致无法堆叠时 None (下游按无值处理)。
         """
-        cache = _last_output.get(id)
+        cache = _cache_get(_last_output, id, workflow_id)
         imgs = cache.get("images") if cache else None
         if not imgs or not all(isinstance(x, torch.Tensor) for x in imgs):
             return None
@@ -248,7 +313,7 @@ class PreviewImageSaveNode:
     ):
         """节点执行入口: 生成 temp 预览, 并把最近一次图片数据缓存到后端供「保存」直接写 output。
 
-        逻辑: 逐张生成 temp PNG 预览返回 UI; 把 images/prompt/extra_pnginfo 存进 _last_output[id]
+        逻辑: 逐张生成 temp PNG 预览返回 UI; 把 images/prompt/extra_pnginfo 存进 _last_output[工作流 id::节点 id]
         —— 之后点「保存」按钮, 前端把 文件名/格式/位深/色彩空间 POST 过来, 后端直接用这份缓存写 output,
         【不重跑工作流】。filename_prefix/filename_suffix/format/bit_depth/input_color_space 这些输入
         只作为控件显示(按钮读取它们), 本方法不用于保存。
@@ -262,22 +327,28 @@ class PreviewImageSaveNode:
             input_color_space (str, 默认 "sRGB"): 输入色彩空间(控件);
             prompt (dict|None): 工作流 prompt(缓存, 供保存时注入元数据);
             extra_pnginfo (dict|None): 额外元数据(同上);
-            id (str | None, 默认 None): 节点唯一 ID, 用作缓存键。
+            id (str | None, 默认 None): 节点唯一 ID, 用作缓存键的一部分(另一半是工作流作用域, 见 _workflow_scope)。
 
         返回:
             dict: {"ui": {"images": [temp 预览记录...]}, "result": (images,)}。
         """
+        # 缓存键带工作流作用域: 只按节点 id 缓存会跨工作流串图(见 _workflow_scope)
+        scope = _workflow_scope(extra_pnginfo)
+
         # None (如扇出节点未选中分支输出 = 无值): 不动原来的数据 —— 回放上一次预览记录
         # (temp 文件仍在, 原预览保持显示); 透传本节点【最近一次预览的图】(下游如四图合成能拿到该面
         # 之前预览过的图进入合成, 未选中的面不再是黑空格); 从未预览过则透传 None (下游按无值处理);
         # 不更新「保存」缓存, 不崩溃
         if images is None:
-            return {"ui": {"images": _last_ui.get(id, [])}, "result": (self._last_images(id),)}
+            return {
+                "ui": {"images": _cache_get(_last_ui, id, scope) or []},
+                "result": (self._last_images(id, scope),),
+            }
 
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
         # filename_prefix/filename_suffix 一并缓存: 这些输入可能被上游连线(如 MDTable 的 ID 列),
         # 此时 widget 里只是占位符, 实际值在 execute 收到的入参里 —— 保存用它而非占位符。
-        _last_output[id] = {
+        _last_output[_scoped_key(id, scope)] = {
             "images": list(images),
             "prompt": prompt,
             "extra_pnginfo": extra_pnginfo,
@@ -289,7 +360,7 @@ class PreviewImageSaveNode:
         for image in images:
             file, subfolder = self._make_temp_preview(image)
             results.append({"filename": file, "subfolder": subfolder, "type": "temp"})
-        _last_ui[id] = results
+        _last_ui[_scoped_key(id, scope)] = results
         return {"ui": {"images": results}, "result": (images,)}
 
 
@@ -305,22 +376,46 @@ def _node_id(request: web.Request) -> str:
     return request.match_info["node_id"].strip()
 
 
+def _temp_file_exists(item: dict) -> bool:
+    """判断一条 temp 预览记录指向的文件是否还在。
+
+    缓存是纯内存的, 而 temp 文件会被清理(重启/手工清 temp), 留下指不到文件的死条目 ——
+    这种条目不该再返回给前端, 否则节点上会挂一张加载失败的图。
+
+    参数:
+        item (dict): _last_ui 里的一条 {"filename", "subfolder", "type"} 记录。
+
+    返回:
+        bool: 文件存在返回 True。
+    """
+    name = item.get("filename")
+    if not name:
+        return False
+    path = os.path.join(folder_paths.get_temp_directory(), item.get("subfolder") or "", name)
+    return os.path.isfile(path)
+
+
 @PromptServer.instance.routes.get("/preview-image/image-url/{node_id}")
 async def _handle_image_url(request: web.Request) -> web.Response:
     """HTTP 路由: 返回该节点最近一次预览图的 URL 列表, 供前端在刷新后重建预览。
 
     原生 UI.PreviewImage 是一次性 WebSocket 事件, 页面刷新后不会重发, 图片预览就空了。
-    execute 时已把 temp 预览记录存进 _last_ui[id](filename/subfolder/type), 这里直接
+    execute 时已把 temp 预览记录存进 _last_ui[工作流 id::节点 id](filename/subfolder/type), 这里直接
     转成 /view URL 返回 —— 与 preview-audio 的 /audio-url 同构, 后端是唯一事实来源。
-    不重新编码图片, 只复用已有的 temp 文件。
+    不重新编码图片, 只复用已有的 temp 文件; 指向的文件已被清理的条目会被过滤掉。
+
+    缓存按 (工作流根 id, 节点 id) 取: 前端必须带 `?workflow_id=<app.graph.id>`。不带就只按节点 id 查,
+    那时会命中「那次执行没带工作流标识」写下的条目 —— 跨工作流串图的旧毛病正是这么来的, 所以前端
+    一律要带。
 
     参数:
-        request (web.Request): GET /preview-image/image-url/{node_id}。
+        request (web.Request): GET /preview-image/image-url/{node_id}?workflow_id=<工作流根 id>。
 
     返回:
         web.Response: 200 {"status":"ok","urls":[...]}; 无缓存时 400。
     """
-    items = _last_ui.get(_node_id(request)) or []
+    items = _cache_get(_last_ui, _node_id(request), request.query.get("workflow_id")) or []
+    items = [it for it in items if _temp_file_exists(it)]
     if not items:
         return web.json_response({"status": "error", "message": "没有可预览的图片, 请先运行到该节点"}, status=400)
     urls = [
@@ -336,14 +431,17 @@ async def _handle_save(request: web.Request) -> web.Response:
     """HTTP 路由: 用缓存数据把该节点最近预览的图片写入 output(同名覆盖, 无序号)。
 
     流程: 前端点「保存」按钮时把 文件名/格式/位深/色彩空间 POST 过来;
-    后端查 _last_output[node_id](execute 时缓存的图片), 有则按配置编码写 output, 无则 400。
+    后端查 _last_output[工作流 id::节点 id](execute 时缓存的图片), 有则按配置编码写 output, 无则 400。
     全程不触发任何工作流重跑。子目录名优先取该次执行缓存的 md 数据表文件名(见 output_subdir),
     工作流里没有 md 表节点时才用 body 里的 workflow_name。
+
+    缓存按 (工作流根 id, 节点 id) 取 —— 前端必须带 body 字段 workflow_id(=`app.graph.id`)。
+    不带就只按节点 id 查, 会命中别的工作流留下的同 id 节点数据(跨工作流串图), 所以前端一律要带。
 
     参数:
         request (web.Request): POST /preview-image/save/{node_id}, body 为 JSON
             {filename_prefix, filename_suffix, filename_prefix_linked, filename_suffix_linked,
-             format, bit_depth, input_color_space}。
+             format, bit_depth, input_color_space, workflow_name, workflow_id}。
 
     返回:
         web.Response:
@@ -351,16 +449,17 @@ async def _handle_save(request: web.Request) -> web.Response:
         - 失败: 400, {"status": "error", "message": "没有预览数据, 请先运行到该节点"}。
     """
     nid = _node_id(request)
-    cache = _last_output.get(nid)
-    if not cache or not cache.get("images"):
-        return web.json_response(
-            {"status": "error", "message": "没有预览数据, 请先运行到该节点"}, status=400
-        )
 
     try:
         data = await request.json()
     except Exception:
         data = {}
+
+    cache = _cache_get(_last_output, nid, data.get("workflow_id"))
+    if not cache or not cache.get("images"):
+        return web.json_response(
+            {"status": "error", "message": "没有预览数据, 请先运行到该节点"}, status=400
+        )
 
     filename_prefix = str(data.get("filename_prefix", "preview"))
     # 若 filename_prefix 输入被上游连线(如 MDTable 的 ID), widget 值是占位符:

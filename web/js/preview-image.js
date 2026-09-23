@@ -14,6 +14,7 @@
  */
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 const NODE_CLASS = "PreviewImageSave";
 
@@ -80,6 +81,29 @@ function currentWorkflowName() {
     const wf = store?.activeWorkflow;
     const raw = wf?.name || wf?.filename || wf?.path || "";
     return String(raw).replace(/\.json$/i, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 取当前工作流的根 id(= 工作流 JSON 的根 id, 即 `graph.serialize().id`)。
+ *
+ * 后端拿它给预览缓存加作用域: 只按节点 id 缓存会让各工作流之间**同 id 的节点互相串图**
+ * (节点 id 在工作流之间大量重复, 实测 `18` 撞 6 个工作流、`62` 撞 4 个), 打开工作流 B 时
+ * 会把之前跑过的 A 的同 id 节点预览当成 B 的预览显示出来。后端在 execute 时从
+ * `extra_pnginfo.workflow.id` 取到的是同一个值(前端 `graphToPrompt()` 把 `graph.serialize()`
+ * 整个塞进 `extra_pnginfo.workflow`)。
+ *
+ * @returns {string} 工作流根 id; 取不到时为空串(后端退回纯节点 id)
+ */
+function currentWorkflowId() {
+  try {
+    // 必须取**根图**: 前端 graphToPrompt() 默认序列化 rootGraph, extra_pnginfo.workflow.id 来自它;
+    // 取子图(node.graph)会拿到别的 id, 与后端存的键对不上
+    const g = app?.rootGraph ?? app?.graph;
+    if (!g) return "";
+    return String(g.id || g.serialize?.()?.id || "");
   } catch {
     return "";
   }
@@ -284,6 +308,9 @@ function createImageFallbackWidget(node) {
 /**
  * 刷新后重建图片预览: 拉回 URL 并填到原生 <img>, 原生不存在时改用备用 <img>。
  *
+ * 请求必须带 `workflow_id` —— 后端缓存按 (工作流根 id, 节点 id) 索引, 不带就只能按节点 id 查,
+ * 会把别的工作流留下的同 id 节点预览拉回来当成这个节点的预览(遗留预览)。
+ *
  * @param {LGraphNode} node 节点
  * @returns {Promise<void>} 无
  */
@@ -291,7 +318,8 @@ async function restoreImages(node) {
   const fb = node._fallingtsImageFallback;
   let urls = [];
   try {
-    const r = await fetch(`/preview-image/image-url/${node.id}`);
+    const wid = encodeURIComponent(currentWorkflowId());
+    const r = await fetch(`/preview-image/image-url/${node.id}?workflow_id=${wid}`);
     const j = await r.json().catch(() => null);
     if (r.ok && j?.status === "ok") urls = j.urls || [];
   } catch {
@@ -331,6 +359,47 @@ async function restoreImages(node) {
 
 app.registerExtension({
   name: "FallingTS.PreviewImageSave",
+
+  /**
+   * 扩展初始化钩子: 跑完流程后重新判定一次「备用图要不要显示」。
+   *
+   * 原生预览是收到 `executed` 事件后才由 Vue 异步挂载的, 比 onConfigure 晚; 而 restoreImages()
+   * 只在 onConfigure 跑一次 —— 那时节点 DOM 往往还没挂出来, 于是判定"节点里没有原生 <img>"
+   * → 显示备用图。此后没有任何时机再收它, 跑完流程原生预览出现, 节点上就成了**两个图片**:
+   * 备用图在上(插件 addDOMWidget 的 widget, 排在原生预览之前), 原生预览在下。
+   *
+   * 这里在 `executed` / `execution_success` 后按 600ms / 2.5s 两拍各重跑一次 restoreImages:
+   * 原生预览一出现就把备用图收起来。第二拍是给 Vue 异步挂载留的余量。
+   *
+   * 只挂这两个低频事件, **不挂 `progress`** —— progress 每个采样步都发, 会把「跑完再判定」
+   * 变成高频轮询(每个预览节点一次 HTTP)。
+   *
+   * @returns {void} 无
+   */
+  setup() {
+    const timers = [];
+    /**
+     * 安排两拍重扫: 清掉上一轮未触发的定时器, 再排 600ms / 2.5s 两拍。
+     *
+     * @returns {void} 无
+     */
+    const refresh = () => {
+      timers.splice(0).forEach(clearTimeout);
+      /**
+       * 对画布上每个 PreviewImageSave 节点重跑一次 restoreImages。
+       *
+       * @returns {void} 无
+       */
+      const run = () => {
+        for (const n of app.graph?._nodes || []) {
+          if (n.type === NODE_CLASS) restoreImages(n);
+        }
+      };
+      timers.push(setTimeout(run, 600), setTimeout(run, 2500));
+    };
+    api.addEventListener("executed", refresh);
+    api.addEventListener("execution_success", refresh);
+  },
 
   /**
    * 节点定义注册前钩子: 给 PreviewImageSave 绑定 format 联动 + 追加「保存」按钮。
@@ -393,6 +462,9 @@ app.registerExtension({
               input_color_space: getWidget("input_color_space") ?? "sRGB",
               // 当前工作流名: 后端据此在 output 下建同名子目录再保存(取不到则由后端回退 output 根)
               workflow_name: currentWorkflowName(),
+              // 当前工作流根 id: 后端据此定位「本次执行」的预览缓存 —— 不带就会拿别的工作流
+              // 同 id 节点缓存的图存进来(跨工作流串图, 会把 A 的图写进 B 的产物目录)
+              workflow_id: currentWorkflowId(),
             }),
           });
           const data = await resp.json().catch(() => null);
