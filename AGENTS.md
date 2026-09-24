@@ -83,6 +83,7 @@ ComfyUI-FallingTS/
         ├── switch.js                   # 分组开关前端联动
         ├── composite.js                # 多图合成: total 决定左侧图端口 image1..imageN + 节点内 label1..labelN 标注表单文本框 (按 total 自动扩充) + 旧版 7 槽 / 中间版 12 槽 widgets_values 加载时自动迁移
         ├── table_lookup.js             # 通用表格 Excel 式控件
+        ├── no_auto_workflow.js         # 真正"不打开任何工作流": 关掉最后一个不再残留未保存工作流 + 启动不自动打开
         └── workflow_reload_button.js   # 刷新工作流按钮
 ```
 
@@ -218,6 +219,28 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 - ComfyUI 的 `validate_prompt` 只把 targets 里的 output node 纳入执行(`execution.py`), 上游是否执行由 ① 的 lazy 边界决定;
 - **不要按 targets 反推依赖闭包去裁剪 prompt** —— 多余且会掩盖问题(曾因此误判"partial 已生效");
 - 第三参数是**选项对象**: `fetchApi("/prompt", {body: JSON.stringify({prompt, partial_execution_targets})})`。注意 `api.queuePrompt(index, prompt, options)` 的第 3 参是 `{partialExecutionTargets}`, 传裸数组会被静默忽略、退化成全量提交。
+
+### 「不打开任何工作流」前端扩展(`no_auto_workflow.js`,2026-09-24)
+
+目标: 关掉工作流之后标签栏为空、画布空白、**没有活动工作流** —— 既不残留打开的工作流,也不残留未保存的占位工作流。
+
+**上游两条硬编码路径(前端包 1.52.7, 都没有设置开关)**:
+
+- `workflowService.ts` 的 `closeWorkflow()`: 在 `openWorkflows.length === 1` 时**先** `await loadDefaultWorkflow()`(即 `app.loadGraphData(defaultGraph)`)**再**关闭原工作流 ⇒ 关掉最后一个标签必然残留一个 `Unsaved Workflow`(默认图,10 个节点);
+- `useWorkflowPersistenceV2.ts` 的 `resolveStartupOutcome()`: `Comfy.TutorialCompleted ? await comfyApp.loadGraphData() : await loadBlankWorkflow()` ⇒ **每次刷新页面也必定自动打开一个** `Unsaved Workflow`。
+- 内置设置里**没有**对应项:`Comfy.Workflow.WorkflowTabsPosition`(`Sidebar`/`Topbar`)只是"标签放顶部还是侧栏", 不改变"要不要打开工作流"。
+
+**实现(包 `app.loadGraphData` —— 打开工作流的唯一入口, 内部经 `afterLoadNewGraph` → `activateLoadedWorkflow` → `createNewTemporary` 建标签)**:
+
+1. **识别关闭最后一个**: 给 `workflowDraftV2` store 的 `removeDraft` 挂前哨 —— 上游在塞默认工作流之前**同步**调它, 且它只被 `close`/`delete` 调用; 判定条件 `openWorkflows.length === 1 && openWorkflows[0].path === 被移除的 path`。标记只保留一个事件循环拍(`setTimeout(…, 0)` 清), 因为其它调用点(`discardStartupBlankDraft`)后面不跟加载, 不会误伤。
+2. **识别启动自动打开**: 零实参的 `loadGraphData()` 在整个前端**只有启动那一处**(其余调用都至少带图数据); 另有未完成新手引导时的 `loadBlankWorkflow() → loadGraphData(空白图)`, 用"启动 20s 时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。
+3. **拦截后绝不新建标签**: 把**当前活动工作流**当作第 4 实参传进去 —— `activateLoadedWorkflow` 里的 `workflowStore.openWorkflow()` 会因 `isActive()` 直接返回, 不走 `createNewTemporary`(与 `workflow_reload_button.js` 注释里记的坑同源), 同时把载荷换成 `blankGraph` 让画布清空。
+4. **收尾**: 关完之后 `activeWorkflow` 仍指着那个已不在 `openWorkflows` 里的旧对象, 用一次性 `setTimeout` 兜底置空(前端源码里 `activeWorkflow` 到处都有 `?.` / `if (!activeWorkflow) return` 守卫, `useWorkflowPersistenceV2` 的 `restoreState` 也显式处理空值, 所以 `null` 是安全状态)。
+5. ⚠️ `blankCanvas()` 必须用官方的 `app.isGraphReady` 判据 —— 直接读 `app.rootGraph` 会在图未初始化时打一行 `console.error('ComfyApp graph accessed before initialization')`。
+
+**调试**: URL 加 `?noAutoWorkflow=off` 可临时停用本扩展做对照。
+**验证**: `scripts\_verify-no-auto-workflow.py`(无头 chromium + CDP 真跑; `--off` 跑基线对照, `--port N` 换端口)。基线(停用)实测: 启动后 `open=['workflows/Unsaved Workflow.json']`, 关掉最后一个后仍残留 1 个;启用后两处都是 `open=[] / active=null / nodes=0`。
+⚠️ 跑该脚本前确认没有残留的 headless chromium 占着调试端口 —— `cdp.py` 的 `start()` 现在会先探测端口, `close()` 在 Windows 用 `taskkill /T /F` 杀进程树(只 `terminate()` 会留下子进程继续占端口, 于是下一次会静默复用旧 `user-data-dir` 里的 localStorage, 验证结果不可信)。
 
 ## 软链接映射
 
