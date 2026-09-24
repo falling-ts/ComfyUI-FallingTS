@@ -80,6 +80,21 @@ const BLANK_GRAPH = {
 const STARTUP_WINDOW_MS = 20000;
 const bootAt = Date.now();
 
+/**
+ * 用户是否已经碰过页面。
+ * 启动自动打开一定发生在任何交互之前; 一旦用户点过/按过键, 之后的加载都算用户意图
+ * (例如 legacy 菜单的 "Load default workflow?" 按钮也是零实参调 loadGraphData)。
+ */
+let userInteracted = false;
+window.addEventListener('pointerdown', () => (userInteracted = true), {
+  capture: true,
+  once: true,
+});
+window.addEventListener('keydown', () => (userInteracted = true), {
+  capture: true,
+  once: true,
+});
+
 /** 已挂前哨的 store(避免重复包装) */
 const sentinelInstalled = new WeakSet();
 
@@ -227,9 +242,11 @@ function classifyAutoOpen(args) {
 
   // (b) 页面启动时自动打开默认/空白工作流
   if (!OPTIONS.suppressOnStartup) return null;
+  if (userInteracted) return null;
   if (ws.activeWorkflow) return null;
   if ((ws.openWorkflows?.length ?? 0) > 0) return null;
-  // 零实参调用在整个前端只有启动这一处
+  // 零实参调用在启动路径之外只有 legacy 菜单的 "Load default workflow?" 按钮, 已被上面的
+  // userInteracted 挡掉
   if (args.length === 0) return 'startup';
   // 未完成新手引导时的启动分支: loadBlankWorkflow() → loadGraphData(blankGraph)
   if (Date.now() - bootAt < STARTUP_WINDOW_MS && isEmptyGraph(graphData)) {

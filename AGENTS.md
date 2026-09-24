@@ -233,14 +233,14 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 **实现(包 `app.loadGraphData` —— 打开工作流的唯一入口, 内部经 `afterLoadNewGraph` → `activateLoadedWorkflow` → `createNewTemporary` 建标签)**:
 
 1. **识别关闭最后一个**: 给 `workflowDraftV2` store 的 `removeDraft` 挂前哨 —— 上游在塞默认工作流之前**同步**调它, 且它只被 `close`/`delete` 调用; 判定条件 `openWorkflows.length === 1 && openWorkflows[0].path === 被移除的 path`。标记只保留一个事件循环拍(`setTimeout(…, 0)` 清), 因为其它调用点(`discardStartupBlankDraft`)后面不跟加载, 不会误伤。
-2. **识别启动自动打开**: 零实参的 `loadGraphData()` 在整个前端**只有启动那一处**(其余调用都至少带图数据); 另有未完成新手引导时的 `loadBlankWorkflow() → loadGraphData(空白图)`, 用"启动 20s 时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。
+2. **识别启动自动打开**: 零实参的 `loadGraphData()` 在启动路径之外只有 legacy 菜单的 `Load default workflow?` 按钮; 另有未完成新手引导时的 `loadBlankWorkflow() → loadGraphData(空白图)`, 用"启动 20s 时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。两者都再加一道 **`userInteracted`**(首次 `pointerdown`/`keydown` 即置真)—— 启动自动打开必然发生在任何交互之前, 一旦用户碰过页面, 之后的加载都算用户意图(否则刷新后 20 秒内按 Ctrl+N「New Blank Workflow」会被误拦)。
 3. **拦截后绝不新建标签**: 把**当前活动工作流**当作第 4 实参传进去 —— `activateLoadedWorkflow` 里的 `workflowStore.openWorkflow()` 会因 `isActive()` 直接返回, 不走 `createNewTemporary`(与 `workflow_reload_button.js` 注释里记的坑同源), 同时把载荷换成 `blankGraph` 让画布清空。
 4. **收尾**: 关完之后 `activeWorkflow` 仍指着那个已不在 `openWorkflows` 里的旧对象, 用一次性 `setTimeout` 兜底置空(前端源码里 `activeWorkflow` 到处都有 `?.` / `if (!activeWorkflow) return` 守卫, `useWorkflowPersistenceV2` 的 `restoreState` 也显式处理空值, 所以 `null` 是安全状态)。
 5. ⚠️ `blankCanvas()` 必须用官方的 `app.isGraphReady` 判据 —— 直接读 `app.rootGraph` 会在图未初始化时打一行 `console.error('ComfyApp graph accessed before initialization')`。
 
 **调试**: URL 加 `?noAutoWorkflow=off` 可临时停用本扩展做对照。
 **验证**: `scripts\_verify-no-auto-workflow.py`(无头 chromium + CDP 真跑; `--off` 跑基线对照, `--port N` 换端口)。基线(停用)实测: 启动后 `open=['workflows/Unsaved Workflow.json']`, 关掉最后一个后仍残留 1 个;启用后两处都是 `open=[] / active=null / nodes=0`。
-⚠️ 跑该脚本前确认没有残留的 headless chromium 占着调试端口 —— `cdp.py` 的 `start()` 现在会先探测端口, `close()` 在 Windows 用 `taskkill /T /F` 杀进程树(只 `terminate()` 会留下子进程继续占端口, 于是下一次会静默复用旧 `user-data-dir` 里的 localStorage, 验证结果不可信)。
+⚠️ 跑该脚本前确认没有残留的 headless chromium 占着调试端口 —— 根仓库 `scripts\cdp.py` 的 `start()` 现在会先探测端口(占用就直接报错), `close()` 在 Windows 除 `taskkill /T /F` 外还**按 `--user-data-dir` 兜底杀**。只 `terminate()`/`taskkill` Popen 的 pid 都不够: chrome 会自我重启, 真正持有调试端口的常是另一个进程, 于是浏览器活下来继续占端口, 下一次会静默复用旧 profile 里的 localStorage, 验证结果不可信(实测踩过两次)。
 
 ## 软链接映射
 
