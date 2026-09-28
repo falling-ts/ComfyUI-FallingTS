@@ -65,10 +65,18 @@ function triggerRename(node, ref) {
 async function renameMask(node, imageRef) {
   let resp;
   try {
+    // workflow_id 取根图 id: 后端 _last_output 的键是 "<工作流根 id>::<节点 id>",
+    // 不带就拿不到该节点缓存的 filename_prefix(= 行 ID), 成品会退化成 mask-{ts}。
+    // 必须取 app.rootGraph —— 取 node.graph 在子图里会拿到别的 id。
+    const workflowId = app.rootGraph?.id ?? null;
     resp = await fetch("/fallingts_mask/rename", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ node_id: String(node.id), image_ref: imageRef }),
+      body: JSON.stringify({
+        node_id: String(node.id),
+        image_ref: imageRef,
+        workflow_id: workflowId,
+      }),
     });
   } catch (err) {
     console.warn("[FallingTS] 遮罩整理请求失败:", err);

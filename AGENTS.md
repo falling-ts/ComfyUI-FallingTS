@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 15 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 18 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
@@ -49,6 +49,10 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSVideoComponentsNode 视频拆解 (参考视频 → 帧/音频/帧率/位深/色彩空间; None 安全替代核心 GetVideoComponents: video 可选, None 时全部输出 None 且**不 sticky 回放**)
 ├── h3-guide/
 │   └── nodes.py                # FallingTSH3AddGuideNode H3 引导锚定 (None 安全替代核心 MiniMaxH3AddGuide: image 与 audio 同为 None 时**原样透传 positive**, 关键帧列因此可留空; 有值时直接委派 `MiniMaxH3AddGuide.execute`, 不复制其实现)
+├── world-refine/
+│   └── nodes.py                # FallingTSWorldRefinePLYNode (节点 id `WorldRefinePLY`) 世界重建精修 → 落临时 PNG(+可选相机先验 JSON) → 用 HYWM2 隔离环境的解释器跑 `scripts\refine_0034_gs.py` (504 前馈 + 2% 尺度过滤 + 3DGS 全参数精修[去多视图双重曝光]) → 取回 stdout 的 `[OUT]` 路径交给 PLY 视口。主进程只做编排(**故意不放 comfy-env.toml**, gsplat 只在 hywm2-nodes 里), 图里只有一次前馈不与图内重建抢显存
+├── world-panorama/
+│   └── nodes.py                # 360° 视频 → 横向展开长图 (`WorldSurroundPanorama`: 按画面位移自适应抽帧步长 + **自适应补密(治不均匀转速: 静止段/甩镜段)** + 一圈闭环吸附(需首末帧几何重合) + ORB/RANSAC 纯偏航单应与重叠区光度一致性定焦距 + 逐像素 winner-take-all(不帧间平均) + 上行=天/自动裁黑边; 近静止直接报错) + 长图 → 视角批与**精确位姿** (`WorldPanoramaViews`: w2c 外参/内参, 外参口径同 HYWM2SamplePanorama; 等距圆柱竖直朝向按世界地图口径修正, 多 v_range/v_center 竖向范围)
 ├── fonts/
 │   └── Alibaba-PuHuiTi-Heavy.ttf  # CJK 字体 (随包, 合成节点标注渲染用)
 ├── preview-image/
@@ -66,7 +70,7 @@ ComfyUI-FallingTS/
 ├── mask-rename/
 │   └── nodes.py                # 遮罩编辑器文件整理:包装 /upload/image 路由 + POST /fallingts_mask/rename
 └── web/
-    └── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
+    ├── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
         ├── assets_tab_rename.js        # 媒体资产面板「已导入」→「已保存」
         ├── mask-rename.js              # PreviewImageSave 遮罩编辑器保存联动
         ├── md_table.js                 # MarkDown 数据表前端 (选文件/内嵌表格弹窗)
@@ -85,6 +89,9 @@ ComfyUI-FallingTS/
         ├── table_lookup.js             # 通用表格 Excel 式控件
         ├── no_auto_workflow.js         # 真正"不打开任何工作流": 关掉最后一个不再残留未保存工作流 + 启动不自动打开
         └── workflow_reload_button.js   # 刷新工作流按钮
+    └── viewer/                 # 独立三维场景查看页(静态 HTML,不经前端打包): 取 /history 里的 GLB 网格 → three.js + 指针锁定第一人称漫游
+        ├── scene-walk.html
+        └── vendor/             # three.js 与 GLTFLoader / BufferGeometryUtils / PointerLockControls 的 .mjs 副本(各自保留 MIT 许可证头)
 ```
 
 ## 节点一览
@@ -106,6 +113,9 @@ ComfyUI-FallingTS/
 | audio-trim | FallingTSAudioTrim | 音频截段 (节点内波形拖两侧把手选区 → 点「截段」累积多段 → 点「完成」按段输出 audio_1..audio_N; 未「完成」时用 ExecutionBlocker 阻断下游, 只发预览事件供试听与切段; 同样带「保存」与内置播放器; 输出 1 + 64 槽) |
 | video-components | FallingTSVideoComponents | 视频拆解 (参考视频 → 帧序列/音频/帧率/位深/色彩空间, **None 安全替代核心 GetVideoComponents**: 核心节点的 `video` 是 required 且 execute 内直接调 `video.get_components()`, 收到 None 抛 `AttributeError: 'NoneType' object has no attribute 'get_components'`; 本节点 `video` 为 **optional**, None (mdtable 空 `<Video N>` 字段 / 上游无值) 时**全部输出 None 且不报错**, 下游 H3 Ref2VA 的 `ref_video_N` 是可选输入, None 被其内部 `if video_frames is None: continue` 安全跳过; **不做 sticky 回放** —— None 在此表示"该行没有视频参考", 回放上一次的视频会让生成张冠李戴。3020-参考场景 / 4030-参考视频 各 3 处已换用) |
 | h3-guide | FallingTSH3AddGuide | H3 引导锚定 (**None 安全替代核心 MiniMaxH3AddGuide**: 核心节点在 image 与 audio 同为 None 时直接抛 `ValueError("MiniMaxH3AddGuide needs an image or an audio to anchor")`, 而 mdtable 空列按"可选输入惯例"输出 None、`execution.py` 又把上游 None 原样传给下游(`input_data_all[x] = obj`, 不走 `mark_missing`), 于是 N 路引导串联时只要有一列留空就整图失败; 本节点空输入时**原样透传 positive**(等价于该列无锚点), 有值时**直接委派 `MiniMaxH3AddGuide.execute`** 不复制其实现 —— 锚定语义与官方完全一致。4025-关键帧视频 的 9 路引导链已换用, 空槽因此可留空 (首帧 / 尾帧固定槽位照常参与, 只是两端都应填写); **并带同帧去重** —— 4025 的帧索引由「首帧硬钉第 0 帧 + 中间帧逐列 `关键帧n所在秒数` 换算 (`max(0, min(round(秒数 x 24), length - 1))`) + 尾帧取 `length - 1`」确定, 两个中间帧秒数相同或换算后落在同一帧时会撞在同一帧, 本节点发现本次图片锚点与上游某槽撞帧时**撤掉本次图片锚点并告警**(仅撤图片 `latent`, 同帧音频锚点保留), 避免同一时刻钉上两个互相矛盾的画面致物件漂移) |
+| world-refine | WorldRefinePLY | 世界重建精修 (md 表的 8 视图批 → **504 前馈 + 2% 尺度过滤 + 3DGS 全参数精修** → 一个最高质量 `.ply` 的路径; 节点在主进程只做编排: 按 8 张图的**内容哈希**落 `temp\worldrefine\<hash>\00..07.png` → 用 HYWM2 隔离环境的解释器跑 `scripts\refine_0034_gs.py` → 取回 stdout 的 `[OUT] ` 路径; **故意不放 `comfy-env.toml`**, 因为 gsplat 只在 `hywm2-nodes` 环境里, 而图内 `HYWM2Reconstruct` 先装模型再测空闲显存只能拿 406; 这样图里**只有一次前馈**、不与图内重建抢 8GB 显存。`images` 批序必须是 前面/前右/右面/右后/后面/后左/左面/左前, 张数≠8 才报错; `images=None` → 回放上次产出的 PLY(无产出输出空串, 下游视口显示 not found 不崩)。⚠️ 依赖三个绝对路径(节点源文件 / `hywm2-nodes\python.exe` / 精修脚本), 0034 生成器已加存在性校验; 改本节点后必须**重启 ComfyUI**)。⚠️ **子进程 stdout 必须钉 UTF-8**(2026-09-28 实测): Windows 上 stdout 接到管道时 Python 退回 GBK, 而产物路径带中文(`output\0034_世界模型\`), 父进程按 UTF-8 解出来是 `\ufffd` ⇒ `os.path.isfile` 为假、节点误报「脚本没报出 PLY 路径」; **此时脚本其实已成功写出 PLY** —— 只按产物文件验收会误判 PASS, 必须查 `/history` 的 `status.status_str`。三保险: 子进程 env 带 `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`、脚本自己 `sys.stdout.reconfigure(encoding="utf-8")`、`[OUT] ` 解析失败时回退 `--asset-dir`/`--out-name` 约定路径 —— 于是**不依赖启动 ComfyUI 时带没带 UTF-8 环境**。⚠️ **`f_dc_*` 是 SH 的 DC 系数, 不是 RGB** —— 落盘必须写 `sh[:, 0, :]` 原值, 因为读取端一律再算一次 `0.5 + C0*f_dc`(本插件自己的 `process_ply_to_splat`、浏览器视口 mkkellogg、核心 `RenderSplat` 都是这个口径); 传已经 `*C0+0.5` 过的 RGB 进去 = 变换做两遍, 整间书房被抬到中灰(实测 8 张参考图均值 `[0.165,0.136,0.101]` → PLY 解码成 `[0.556,0.546,0.535]`, 亮度 +0.41、饱和度只剩 1/3.5), 视口里就是"参考图的颜色没进世界模型"一片发白。参数 **9** 个: 步数 / mode(**默认 `all`**) / **几何信任域 `reg`**(仅 mode=all 时生效: 上游推理**不做跨视图融合** —— `rasterization.py:240-242` 在 `is_inference` 直接 return, 把体素合并 / 置信度过滤短路掉, 每个视图按自己的深度 + 自己预测的位姿反投影(`:522`)⇒ 每个可见表面 2 层壳, 这就是视口里的"影像重叠/重影"; 只修外观(mode=appearance)冻结几何去不掉, mode=all 才会把壳收拢, 但几何动多了门框/墙角会出"焦边暗斑", reg 0→10 的取舍实测见 `docs\HY-World-2.0-ComfyUI可行性-2026-09-27.md` §8.7, 默认 3.0) / 透明度信任域 / **颜色信任域**(每步只监督 1 个视角, 个别高斯会被撑成彩虹色去凑那一个视角, DC-only 渲染里就是墙角上的粉/绿噪点; 0.5 把"饱和度>0.3"从 3.07% 压到 1.58%) / 前馈长边 / 颜色监督长边 / 剪枝阈值 / 重算前馈) **+ 2 个可选先验输入** `extrinsics`([N,4,4] w2c, 上游 `WorldPanoramaViews`)/ `intrinsics`([3,3] 或 [N,3,3]): 接了就把位姿作为相机先验注入前馈(`cond_flags=[cam,0,intr]`), 位姿**不再由模型预测** —— 这是从源头消重影的入口。节点把 w2c 逐视角取逆落成 `prior_camera.json`(口径同 HYWM2 `_dump_camera_priors_json`), 脚本带 `--prior-camera` 传给 `pipe._run_inference`; **先验内容也进缓存哈希**(换先验必然重跑前馈), 脚本还会打印「先验生效度: 预测位姿 vs 注入先验的旋转/平移偏差」(实测 6 视角全景: 旋转偏差中位 1.16°、最大 1.77°, 平移 0.0088) —— 这是判断先验有没有真的约束住位姿头的量化指标。视图数不再死钉 8: `>=2` 即可(接全景视角批时是 6/12/21…), 无先验且 ≠8 时告警。`gt` 也要跟着改(全景路径 = 视角边长 952) |
+| world-panorama | WorldSurroundPanorama | 360° 视频 → **横向展开长图**(等距圆柱条带, 上行=天) + `valid_band`(有效竖向跨度) + `v_center`(竖向中心) + `report`。`mode=equirect`(真 360 相机导出)直接抽帧; `mode=unfold`/`auto` 走旋转展开 —— **2026-09-28 v2 重做**: ① 粗采样估「每帧画面位移」→ 按 `target_shift_percent`(默认 12% 画面宽)**自动定抽帧步长**(转得快少抽/转得慢多抽, **末帧必采到**), 再**自适应补密**: 只对「几何模型解不出(匹配不足/RANSAC 失败) 或 位移超上限(3× 目标)」的相邻采样对插中间帧(专治"长静止段 + 甩镜段"这类不均匀转速), 静止段保守抽稀(位移<0.5px 才丢, 至少留 8 帧)。⚠️ **补密判据别用"单应内点比例"**: 真实素材帧间有内容漂移/运动模糊, 比例常年 0.24~0.37 却几何完好 —— 拿比例<0.40 触发会给 0031 平白补 11 帧、f 311.8→332.4px、与源帧 NCC 0.74→0.51; 也不能只看位移中位数(88° 错配对会给出 13.7px 的"正常"值 ⇒ 补密永不触发)。首末采样帧**几何重合**(匹配≥40 + 单应内点比例≥0.3 + 内点中位位移 <0.35×典型帧间位移 + 在解出的 f 下对应点转角 <5°)才判定「整整一圈」并把总转角吸附成 360°(实测 0031 逐帧位移累积只有 311°, 吸附后与独立 ORB 曲线一致; 只用位移中位数会被误匹配骗过 ⇒ 低纹理素材把 200° 弧**静默**拉成 360°、漂移 31.8°); **吸附窗口不能靠 `|span−2π|<10°`**(48 帧素材采样弧 352.4° 被拉成 360° ⇒ 尺度错 2.15%、中段漂移 3.1°、NCC 0.572); 整段累计横向位移 <6% 画面宽(近乎静止) ⇒ **直接报错**「不是环绕镜头」; ② 相邻帧 ORB + RANSAC 纯偏航单应 → 用**对应点纯旋转一致性**(Δ 的鲁棒相对离散度 + 竖直残差, 无量纲 ⇒ 不会退化成「f 越大越好」) 与**相邻帧重叠区稠密光度一致性**联立定焦距, 闭环值/单对单应只作交叉校验(实测 0031: 光度 311.8px / 对应点 295.8 / 闭环 290.7 / 单对单应 380.1 —— 单应受平移污染会高估 22%); ③ **逐像素 winner-take-all**: 每个输出像素只取光学轴夹角最小的那一帧, 从不做帧间平均 ⇒ 结构上不可能有重影; 换帧处只对**低频**羽化(`seam_feather` 默认 7px, 高频仍来自唯一那一帧), 帧间亮度差用相邻帧曝光链(链式偏差不在 2%~12% 时自动关闭, 免得把噪声当曝光漂移); ④ 输出**紧贴有效带的横条**(不再输出 2:1 画布 —— 旋转视频只有 ±36° 有数据, v1 的 2:1 上下各 30% 是纯黑), 没被完全覆盖的行自动裁掉 ⇒ 一条黑边都没有; ⑤ **竖直朝向改回世界地图口径**(第 0 行 = 仰角 +band/2): v1 的行映射把源图下方放到第 0 行 ⇒ 长图**倒立**(实测帧 0 同角度区: 正放 NCC 0.16 / 上下翻转 0.52)。实测 0031 旋镜视频(832x480/24fps/243 帧, **转速不均匀**: 前 24 帧只转 8°、末 24 帧 转 39°): 抽 21→20 帧(步长 12, 8.4px/帧), f=311.8px → h_fov 106.3°, 长图 **2939x592 = 8.16px/度**(v1 只有 5.76), 有效带 72.6°, **空白 0%**, 对齐残差 2.7/255; 与源帧同内容处 NCC **0.74**(v1 0.55)、拉普拉斯锐度 **12.3 vs 2.9(4.3 倍)**; 在整圈 9 个位置扫偏航峰值与独立 ORB 位移曲线一致(≤5°)。`video`(VIDEO)/`images`(IMAGE) 二选一, 都为空则全部输出 None(不 sticky) |
+| world-panorama | WorldPanoramaViews | 横向长图 → 一网格透视视角 + **每视角精确 w2c 外参 / 内参**(相机全在球心, 纯旋转 ⇒ 平移恒 0, 外参正交)。外参口径与上游 `HYWM2SamplePanorama` 一致(`f_px=(size/2)/tan(fov/2)`, `cx=cy=(size-1)/2`, 外参取 `R.T`), **等距圆柱的竖直朝向按世界地图口径修正**: `elev=asin(-ry)`、`eq_y=(elev_top-elev)/v_range·(H-1)`(v1/上游那套要求长图上行=地, 拿真 equirect 图会上下颠倒; 本节点与 `WorldSurroundPanorama` **成对**修正, 切出来的视角画面与 v1 **完全一致** —— 老长图+老公式对源帧 0.724、新长图+新公式 0.71)。竖向采样由 `v_center`/`v_range` 决定(接长图的 v_center / valid_band): `step=fov·(1-重叠%)`, `num_h=ceil(360/step)`, **`v_range ≤ fov` 时只切一行**(旋转视频的 valid_band 正是这个量级; 按 `ceil(v_range/step)` 会切出 2 行、每行一半黑边 —— 实测 12 视角时前馈 token 预算只够 406, 改单行 6 视角后涨到 **574**), 否则 `num_v=ceil(v_range/step)`(v_range=150/180 时 3 行, 供真全景用); 竖向档位以 `v_center` 为中心**对称**摆放。⚠️ 长图是 2:1 而 `v_range` 没接到 valid_band 时告警。`panorama` 为空 → images/extrinsics/intrinsics 全 None(不 sticky) |
 
 注:`preview-image` / `preview-video` / `preview-audio` / `audio-trim` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
 
@@ -120,7 +130,7 @@ ComfyUI-FallingTS/
 
 ⚠️ **V3 节点的 hidden 不进 `execute` 实参** —— `execution.py` 的 `get_finalized_class_inputs` 把 hidden 单独摘出,只能经 `cls.hidden.<name>` 取(`HiddenHolder.__getattr__` 对未知键返回 None)。所以 `preview-video` / `preview-audio` 的 `execute` 里**不能**写 `prompt=None` 形参(写了恒为 None, 静默失效),prompt 一律从 `cls.hidden.prompt` 读;`preview-image` 是 V1 节点(`"hidden": {"prompt": "PROMPT"}`),prompt 才是真正的 execute 实参。**加/改任何依赖 hidden 的 V3 节点逻辑前先确认这一点。**
 
-### None 容忍约定(全部 15 节点)
+### None 容忍约定(全部 18 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -136,9 +146,10 @@ ComfyUI-FallingTS/
 - **数据类 —— H3 引导锚定**(h3-guide):`image` 与 `audio` 同为 None 时**原样透传 `positive`**, 等价于"该列没有锚点";有值时直接委派核心 `MiniMaxH3AddGuide.execute`, 不复制其实现。此处**不能沿用 sticky 回放** —— 回放上一次的图会把该列的锚点钉到错误画面上;另有**同帧去重**:委派核心后比对本次新增图片锚点与上游各列的 `resolved_frame_index`(帧号取核心算好的值, 不重复其帧数换算), 撞帧则撤掉本次图片锚点(仅撤 `latent`, 同帧音频锚点保留)并 `logging.warning` 告警 —— 只有本节点能看到整条链累积的 `minimax_keyframes`, 故去重只能在这一层做;
 - **数据类 —— 合成**(composite):total 驱动张数(None → 默认 4, clamp 1..64);image1..64 全部 optional,经 `_first_frame` 统一归一化:None / 空 tuple / list / 零批张量 / 非张量 一律按无值处理 → **该格用底色空白占位**(部分有值时正常合成, 缺格用底色占位);**total 张图全无值 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**(绝不崩溃);label1..64 (节点内表单文本框, 空串 = 不画; None → 各自默认标注);font_size/padding/background_color None → 默认 8.0/6/#000000;
 - **数据类 —— 表格**(table/mdtable):rows/data 为 None → 输出本节点最近一次输出(sticky),从未输出则回退默认表/默认状态;`normalize_table`/`normalize_state` 对 None 回退空表不报错。mdtable 有 `IS_CHANGED(cls, data, **kwargs)` classmethod —— 加隐藏 `id` 输入后引擎会向 `IS_CHANGED` 传入 `id`, 故签名须含 `**kwargs` 吸收(否则崩);
+- **世界模型 —— 360 视频/全景源**(world-panorama 两节点):`video`+`images` 全空 → `panorama=None`;`panorama=None` → `images/extrinsics/intrinsics` 全 None;**故意不做 sticky** —— 回放上一次的长图/视角会把另一段视频的世界模型张冠李戴(与 video-components 同一条理由);`WorldRefinePLY` 则相反: 它是**输出类**节点, `images=None` 时回放**上次产出的 PLY 路径**(无产出则空串, 下游视口显示 not found 不崩), 这样单独点视口节点不会把整条重建链拉回来重跑;
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
-### 前端状态与后端同步约定(全部 15 节点)
+### 前端状态与后端同步约定(全部 18 节点)
 
 **核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
 

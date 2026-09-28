@@ -36,6 +36,12 @@ AudioTrimNode = import_module("audio-trim.nodes").FallingTSAudioTrimNode
 VideoComponentsNode = import_module("video-components.nodes").FallingTSVideoComponentsNode
 # h3-guide 目录名同样含连字符, 需经 importlib 按名加载
 H3AddGuideNode = import_module("h3-guide.nodes").FallingTSH3AddGuideNode
+# world-refine 目录名同样含连字符, 需经 importlib 按名加载(多视图世界重建 + 3DGS 精修 → PLY)
+WorldRefinePLYNode = import_module("world-refine.nodes").FallingTSWorldRefinePLYNode
+# world-panorama 目录名同样含连字符(360° 视频 → 等距圆柱长图 → 带精确位姿的视角批)
+_world_panorama = import_module("world-panorama.nodes")
+WorldSurroundPanoramaNode = _world_panorama.FallingTSWorldSurroundPanoramaNode
+WorldPanoramaViewsNode = _world_panorama.FallingTSWorldPanoramaViewsNode
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +65,9 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSImageComposite": FallingTSImageCompositeNode,
     "FallingTSVideoComponents": VideoComponentsNode,
     "FallingTSH3AddGuide": H3AddGuideNode,
+    "WorldRefinePLY": WorldRefinePLYNode,
+    "WorldSurroundPanorama": WorldSurroundPanoramaNode,
+    "WorldPanoramaViews": WorldPanoramaViewsNode,
     "PreviewVideo": PreviewVideoNode,
     "PreviewImageSave": PreviewImageSaveNode,
     "PreviewAudioSave": PreviewAudioSaveNode,
@@ -77,6 +86,9 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSImageComposite": "FallingTS 四图合成 (2×2 带标注)",
     "FallingTSVideoComponents": "FallingTS 视频拆解 (拆帧/拆音)",
     "FallingTSH3AddGuide": "FallingTS H3 引导锚定 (None 安全)",
+    "WorldRefinePLY": "FallingTS 世界重建精修 PLY (504)",
+    "WorldSurroundPanorama": "FallingTS 360°视频 → 全景长图",
+    "WorldPanoramaViews": "FallingTS 全景 → 视角批 + 位姿",
     "PreviewVideo": "Preview Video (保存)",
     "PreviewImageSave": "Preview Image (保存)",
     "PreviewAudioSave": "Preview Audio (保存)",

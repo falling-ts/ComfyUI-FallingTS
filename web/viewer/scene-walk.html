@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>3D 场景漫游 · ComfyUI GLB 查看器</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: rgba(18, 23, 31, 0.86);
+    --line: rgba(120, 145, 180, 0.28);
+    --fg: #dbe4ef;
+    --dim: #8b9bb0;
+    --accent: #5cc8ff;
+    --ok: #5cd68a;
+    --err: #ff7b72;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  #c { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  #crosshair {
+    position: fixed; left: 50%; top: 50%; width: 14px; height: 14px;
+    margin: -7px 0 0 -7px; pointer-events: none; opacity: 0; transition: opacity .15s;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ""; position: absolute; background: rgba(255,255,255,.75);
+  }
+  #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #crosshair::after { left: 0; top: 6px; width: 14px; height: 2px; }
+  body.locked #crosshair { opacity: 1; }
+
+  #hud {
+    position: fixed; left: 14px; top: 14px; z-index: 10;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; min-width: 300px; max-width: 460px;
+    backdrop-filter: blur(6px); pointer-events: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45);
+  }
+  #hud .title {
+    font-size: 14px; font-weight: 600; color: var(--accent);
+    margin-bottom: 6px; letter-spacing: .5px;
+  }
+  #hud .keys { color: var(--dim); }
+  #hud .keys div { margin: 2px 0; white-space: nowrap; }
+  kbd {
+    display: inline-block; min-width: 18px; padding: 1px 6px; margin-right: 2px;
+    background: #1e2733; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; color: var(--fg); font: 11px/1.5 Consolas, monospace;
+  }
+  #hud .stats {
+    margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line);
+    font-family: Consolas, monospace; font-size: 12px;
+  }
+  #hud .stats b { color: var(--accent); font-weight: 600; }
+  #hud .stats .boost { color: var(--ok); }
+
+  #panel {
+    position: fixed; right: 14px; top: 14px; z-index: 10; width: 336px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; backdrop-filter: blur(6px);
+    box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  body.locked #panel { opacity: .18; pointer-events: none; }
+  #panel h2 {
+    margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--accent);
+    letter-spacing: .5px;
+  }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+  .row.wrap { flex-wrap: wrap; }
+  button {
+    flex: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    background: #22303f; color: var(--fg); border: 1px solid var(--line);
+    font: inherit; transition: background .12s, border-color .12s;
+  }
+  button:hover { background: #2c3d50; border-color: var(--accent); }
+  button:active { background: #1a2530; }
+  button.primary { background: #1d4f6b; border-color: #2f7ea3; }
+  button.primary:hover { background: #23617f; }
+  button[disabled] { opacity: .5; cursor: default; }
+  input[type=text], select {
+    padding: 5px 8px; border-radius: 6px; background: #151d26; color: var(--fg);
+    border: 1px solid var(--line); font: inherit; min-width: 0;
+  }
+  input[type=text]:focus, select:focus { outline: 1px solid var(--accent); }
+  select { cursor: pointer; }
+  label.chk {
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+    color: var(--dim); user-select: none;
+  }
+  label.chk input { accent-color: var(--accent); cursor: pointer; }
+  .hint { color: var(--dim); font-size: 11px; }
+  #status {
+    border-radius: 6px; padding: 7px 9px; font-size: 12px;
+    background: #131a23; border: 1px solid var(--line);
+    word-break: break-all; max-height: 108px; overflow: auto;
+    font-family: Consolas, monospace;
+  }
+  #status.ok  { border-color: rgba(92,214,138,.5); color: var(--ok); }
+  #status.err { border-color: rgba(255,123,114,.5); color: var(--err); }
+  #status.busy { border-color: rgba(92,200,255,.5); color: var(--accent); }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 20; display: flex;
+    align-items: center; justify-content: center; cursor: pointer;
+    background: rgba(8, 11, 15, .55); backdrop-filter: blur(2px);
+    transition: opacity .18s;
+  }
+  body.locked #overlay { opacity: 0; pointer-events: none; }
+  #overlay .card {
+    text-align: center; padding: 22px 34px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--line);
+    box-shadow: 0 10px 40px rgba(0,0,0,.55);
+  }
+  #overlay h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; color: var(--accent); }
+  #overlay p { margin: 4px 0; color: var(--dim); font-size: 13px; }
+  #overlay .big { color: var(--fg); font-size: 15px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="crosshair"></div>
+
+<div id="hud">
+  <div class="title">3D 场景漫游</div>
+  <div class="keys">
+    <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 前后左右移动（沿视线水平方向）</div>
+    <div><kbd>Q</kbd><kbd>E</kbd> 或 <kbd>Space</kbd><kbd>Ctrl</kbd> 下降 / 上升（飞行）</div>
+    <div><kbd>Shift</kbd> 加速 · <kbd>滚轮</kbd> 调节移动速度</div>
+    <div><kbd>鼠标</kbd> 转头 · <kbd>ESC</kbd> 释放指针锁定</div>
+  </div>
+  <div class="stats">
+    <div>移动速度：<b id="spd">—</b> 单位/秒 <span class="boost" id="boost"></span></div>
+    <div>当前模型：<b id="curmodel">未加载</b></div>
+  </div>
+</div>
+
+<div id="panel">
+  <h2>模型加载（GLB 网格）</h2>
+  <div class="row">
+    <button id="btn-latest" class="primary">载入最新</button>
+    <label class="chk"><input type="checkbox" id="auto"> 每 5 秒自动刷新</label>
+  </div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="flypitch"> W/S 跟随俯仰（飞行视角，关掉则贴地平走）</label>
+  </div>
+  <div class="row"><select id="pick" style="flex:1"></select></div>
+  <div class="hint">上面是从 /history 里找到的最近 3D 产物（最新的在最前）。</div>
+  <div class="row wrap">
+    <input type="text" id="fn" placeholder="文件名，如 xxx.glb" style="flex:1 1 100%">
+    <input type="text" id="sub" placeholder="子目录（可空）" style="flex:1 1 42%">
+    <select id="ty" style="flex:1 1 22%">
+      <option value="temp">temp</option>
+      <option value="output">output</option>
+      <option value="input">input</option>
+    </select>
+    <button id="btn-load" style="flex:0 0 auto">载入</button>
+  </div>
+  <div id="status">正在初始化…</div>
+</div>
+
+<div id="overlay">
+  <div class="card">
+    <h1>点击画面开始漫游</h1>
+    <p>进入后鼠标即锁定，移动鼠标转头</p>
+    <p class="big">按 ESC 释放指针锁定</p>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.mjs"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from './vendor/PointerLockControls.mjs';
+import { GLTFLoader } from './vendor/GLTFLoader.mjs';
+
+/* ------------------------------------------------------------------ *
+ * 常量与 DOM
+ * ------------------------------------------------------------------ */
+const MESH_EXT = new Set(['glb', 'gltf']);
+const MAX_TRY = 8;          // 载入最新时最多回退尝试几个候选
+const POLL_MS = 5000;
+
+const canvas    = document.getElementById('c');
+const elStatus  = document.getElementById('status');
+const elSpd     = document.getElementById('spd');
+const elBoost   = document.getElementById('boost');
+const elModel   = document.getElementById('curmodel');
+const elPick    = document.getElementById('pick');
+const elAuto    = document.getElementById('auto');
+const elFn      = document.getElementById('fn');
+const elSub     = document.getElementById('sub');
+const elTy      = document.getElementById('ty');
+const elFly     = document.getElementById('flypitch');
+const btnLatest = document.getElementById('btn-latest');
+const btnLoad   = document.getElementById('btn-load');
+const overlay   = document.getElementById('overlay');
+
+/* ------------------------------------------------------------------ *
+ * 渲染器 / 场景 / 相机
+ * ------------------------------------------------------------------ */
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10151b);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 5000);
+camera.position.set(4, 3, 6);
+
+// 用一张 canvas 渐变当环境贴图（PMREM 在 three 核心里，无需额外文件）
+scene.environment = (() => {
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = 64; cv.height = 32;
+    const g = cv.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 32);
+    grad.addColorStop(0.00, '#e8f0fa');
+    grad.addColorStop(0.48, '#9fb3c8');
+    grad.addColorStop(0.52, '#5c6a79');
+    grad.addColorStop(1.00, '#242a31');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 32);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const rt = pmrem.fromEquirectangular(tex);
+    pmrem.dispose();
+    tex.dispose();
+    return rt.texture;
+  } catch (e) {
+    console.warn('环境贴图生成失败，改用纯灯光：', e);
+    return null;
+  }
+})();
+
+scene.add(new THREE.HemisphereLight(0xdfeaff, 0x2b3038, 1.35));
+scene.add(new THREE.AmbientLight(0xffffff, 0.28));
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.1);
+keyLight.position.set(1, 2, 1.4);
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0xbcd4ff, 0.9);
+fillLight.position.set(-1.4, 0.7, -1);
+scene.add(fillLight);
+
+let grid = null;
+let modelBox = new THREE.Box3();
+let modelCenter = new THREE.Vector3();
+let modelRadius = 1;
+
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const m of mats) {
+      for (const k of Object.keys(m)) {
+        const v = m[k];
+        if (v && v.isTexture) v.dispose();
+      }
+      m.dispose();
+    }
+  });
+}
+
+function rebuildGrid() {
+  if (grid) {
+    scene.remove(grid);
+    grid.geometry.dispose();
+    grid.material.dispose();
+    grid = null;
+  }
+  const size = Math.max(modelRadius * 6, 2);
+  const div = 40;
+  grid = new THREE.GridHelper(size, div, 0x5f7fa6, 0x2c3742);
+  grid.position.set(modelCenter.x, modelBox.min.y, modelCenter.z);
+  scene.add(grid);
+}
+
+/* ------------------------------------------------------------------ *
+ * 第一人称漫游控制
+ * ------------------------------------------------------------------ */
+const controls = new PointerLockControls(camera, renderer.domElement);
+controls.pointerSpeed = 1.0;
+
+const keys = Object.create(null);
+let locked = false;
+
+let baseSpeed = 2;      // 单位/秒
+let speedMin = 0.05;
+let speedMax = 200;
+let speed = 2;
+let boostFactor = 1;
+
+function setSpeed(v) {
+  speed = THREE.MathUtils.clamp(v, speedMin, speedMax);
+  elSpd.textContent = speed >= 100 ? speed.toFixed(0) : speed.toFixed(2);
+}
+
+function clearKeys() {
+  for (const k in keys) keys[k] = false;
+  boostFactor = 1;
+  elBoost.textContent = '';
+}
+
+controls.addEventListener('lock', () => {
+  locked = true;
+  document.body.classList.add('locked');
+  overlay.style.display = 'none';
+});
+controls.addEventListener('unlock', () => {
+  locked = false;
+  document.body.classList.remove('locked');
+  overlay.style.display = '';
+  clearKeys();
+});
+
+canvas.addEventListener('click', () => {
+  if (!locked) controls.lock();
+});
+overlay.addEventListener('click', () => {
+  if (!locked) controls.lock();
+});
+
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+    boostFactor = 4;
+    elBoost.textContent = '（加速 ×4）';
+  }
+});
+window.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+    boostFactor = 1;
+    elBoost.textContent = '';
+  }
+});
+window.addEventListener('blur', clearKeys);
+
+// 滚轮调速（锁定与未锁定都可用）
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const step = e.deltaY > 0 ? 1 / 1.15 : 1.15;
+  setSpeed(speed * step);
+  // 手填输入框也能被滚轮结果同步（方便用户知道当前数值）
+  elSpd.textContent = speed >= 100 ? speed.toFixed(0) : speed.toFixed(2);
+}, { passive: false });
+
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _fwd = new THREE.Vector3();
+const _rgt = new THREE.Vector3();
+
+const _flyFollowPitch = () => elFly.checked; // 关闭时 WASD 贴地平走；开启则跟随俯仰
+
+let lastT = performance.now();
+function tick(now) {
+  const dt = Math.min((now - lastT) / 1000, 0.1);
+  lastT = now;
+
+  if (locked) {
+    const v = speed * boostFactor * dt;
+    _euler.setFromQuaternion(camera.quaternion, 'YXZ');
+
+    if (_flyFollowPitch()) {
+      camera.getWorldDirection(_fwd);
+      _rgt.crossVectors(_fwd, camera.up).normalize();
+      if (!Number.isFinite(_rgt.x) || _rgt.lengthSq() < 1e-6) _rgt.set(1, 0, 0);
+    } else {
+      const yaw = _euler.y;
+      _fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+      _rgt.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    }
+
+    let dx = 0, dy = 0, dz = 0;
+    if (keys['KeyW']) { dx += _fwd.x; dy += _fwd.y; dz += _fwd.z; }
+    if (keys['KeyS']) { dx -= _fwd.x; dy -= _fwd.y; dz -= _fwd.z; }
+    if (keys['KeyD']) { dx += _rgt.x; dz += _rgt.z; }
+    if (keys['KeyA']) { dx -= _rgt.x; dz -= _rgt.z; }
+    if (keys['KeyE'] || keys['Space']) dy += 1;
+    if (keys['KeyQ'] || keys['ControlLeft'] || keys['ControlRight']) dy -= 1;
+
+    if (dx || dy || dz) {
+      const len = Math.hypot(dx, dy, dz);
+      camera.position.x += (dx / len) * v;
+      camera.position.y += (dy / len) * v;
+      camera.position.z += (dz / len) * v;
+    }
+  }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+window.addEventListener('resize', () => {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+});
+
+/* ------------------------------------------------------------------ *
+ * 载入 GLB
+ * ------------------------------------------------------------------ */
+const loader = new GLTFLoader();
+let currentRoot = null;
+let currentKey = null;
+let loadSeq = 0;   // 载入请求序号，保证只有最后一次请求的结果会被应用
+
+function extOf(name) {
+  const i = name.lastIndexOf('.');
+  return i < 0 ? '' : name.slice(i + 1).toLowerCase();
+}
+
+function viewUrl(item) {
+  const q = new URLSearchParams({
+    filename: item.filename,
+    subfolder: item.subfolder || '',
+    type: item.type || 'output'
+  });
+  return '/view?' + q.toString();
+}
+
+// "preview3d_advanced_xxx.glb [temp]"  →  { filename, subfolder, type }
+// "0034_世界模型/foo.glb [output]"     →  同上
+function parseResultString(s) {
+  let type = 'temp';
+  let path = String(s).trim();
+  const m = path.match(/^(.*?)\s*\[([A-Za-z_]+)\]\s*$/);
+  if (m) { path = m[1].trim(); type = m[2]; }
+  path = path.replace(/\\/g, '/');
+  const i = path.lastIndexOf('/');
+  return {
+    filename: i < 0 ? path : path.slice(i + 1),
+    subfolder: i < 0 ? '' : path.slice(0, i),
+    type
+  };
+}
+
+function normalizeItem(it) {
+  if (typeof it === 'string') return parseResultString(it);
+  if (it && typeof it === 'object' && typeof it.filename === 'string') {
+    return {
+      filename: it.filename,
+      subfolder: it.subfolder || '',
+      type: it.type || 'output'
+    };
+  }
+  return null;
+}
+
+function keyOf(it) {
+  return (it.type || '') + '|' + (it.subfolder || '') + '|' + it.filename;
+}
+
+// 从 /history 里抽出所有 3D 网格候选，最新的排最前
+function collectCandidates(history) {
+  const recs = Object.entries(history || {}).map(([pid, rec], idx) => ({
+    pid,
+    rec,
+    seq: Number(rec && rec.prompt && rec.prompt[0]) || idx,
+    idx
+  }));
+  // prompt[0] 是 ComfyUI 的递增提交号，用它排序最可靠
+  recs.sort((a, b) => (a.seq - b.seq) || (a.idx - b.idx));
+
+  const out = [];
+  const seen = new Set();
+
+  const push = (raw, meta) => {
+    const n = normalizeItem(raw);
+    if (!n || !n.filename) return;
+    const ext = extOf(n.filename);
+    if (!MESH_EXT.has(ext)) return;
+    const k = keyOf(n);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ ...n, ext, url: viewUrl(n), ...meta });
+  };
+
+  // 倒序遍历 => 最新的工作流最先被看到
+  for (let i = recs.length - 1; i >= 0; i--) {
+    const { pid, rec, seq } = recs[i];
+    const outputs = (rec && rec.outputs) || {};
+    for (const nodeId of Object.keys(outputs)) {
+      const node = outputs[nodeId] || {};
+      for (const field of ['3d', 'mesh', 'result']) {
+        const arr = node[field];
+        if (!Array.isArray(arr)) continue;
+        for (const it of arr) push(it, { pid, nodeId, seq, field });
+      }
+    }
+  }
+  return out;
+}
+
+function setStatus(msg, kind) {
+  elStatus.textContent = msg;
+  elStatus.className = kind || '';
+  console.log('[scene-walk]', kind || 'info', msg);
+}
+
+function loadUrl(item) {
+  return new Promise((resolve, reject) => {
+    loader.load(
+      item.url || viewUrl(item),
+      (gltf) => resolve(gltf),
+      undefined,
+      (err) => reject(err instanceof Error ? err : new Error(String(err && err.message ? err.message : err)))
+    );
+  });
+}
+
+function applyModel(gltf, item) {
+  if (currentRoot) {
+    scene.remove(currentRoot);
+    disposeTree(currentRoot);
+    currentRoot = null;
+  }
+
+  const root = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+  if (!root) throw new Error('GLB 里没有可用的场景节点');
+
+  root.traverse((o) => {
+    if (!o.isMesh && !o.isPoints && !o.isLine) return;
+    const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const m of mats) {
+      if (!m) continue;
+      // 单面网格漫游时容易看穿，统一双面
+      m.side = THREE.DoubleSide;
+      // 没有贴图却高金属度的材质在纯灯光下会发黑
+      if (typeof m.metalness === 'number' && !m.map && m.metalness > 0.8) m.metalness = 0.2;
+      if (typeof m.roughness === 'number' && m.roughness < 0.05) m.roughness = 0.35;
+      if ('envMapIntensity' in m) m.envMapIntensity = 1.0;
+      m.needsUpdate = true;
+    }
+  });
+
+  currentRoot = root;
+  scene.add(root);
+
+  // 有些 GLB 带相机/灯光节点，关掉以免和第一人称相机打架
+  root.traverse((o) => {
+    if (o.isCamera || o.isLight) o.visible = false;
+  });
+
+  // ---- 按包围盒自动取初始机位 ----
+  modelBox = new THREE.Box3().setFromObject(root);
+  if (modelBox.isEmpty() || !Number.isFinite(modelBox.min.x)) {
+    modelBox.set(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
+  }
+  const size = modelBox.getSize(new THREE.Vector3());
+  modelBox.getCenter(modelCenter);
+  modelRadius = Math.max(size.length() * 0.5, 1e-3);
+
+  const fovV = THREE.MathUtils.degToRad(camera.fov);
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * Math.max(camera.aspect, 0.2));
+  const dist = Math.max(modelRadius / Math.sin(fovV / 2), modelRadius / Math.sin(fovH / 2)) * 1.18;
+
+  const dir = new THREE.Vector3(1, 0.55, 1).normalize();
+  camera.position.copy(modelCenter).addScaledVector(dir, dist);
+  camera.near = Math.max(modelRadius / 2000, 0.01);
+  camera.far = Math.max(modelRadius * 200, 1000);
+  camera.updateProjectionMatrix();
+  camera.lookAt(modelCenter);
+
+  // ---- 速度与场景尺度匹配 ----
+  speedMin = Math.max(modelRadius * 0.02, 0.005);
+  speedMax = Math.max(modelRadius * 20, 1);
+  setSpeed(modelRadius * 0.35);
+
+  rebuildGrid();
+
+  elModel.textContent = item.filename;
+  elModel.title = item.url || viewUrl(item);
+  elFn.value = item.filename;
+  elSub.value = item.subfolder || '';
+  elTy.value = item.type || 'output';
+
+  const info = [
+    `尺寸 ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`,
+    `包围球半径 ${modelRadius.toFixed(2)}`,
+    item.subfolder ? `子目录 ${item.subfolder}` : null,
+    `类型 ${item.type}`
+  ].filter(Boolean).join(' · ');
+
+  setStatus(`✅ 已载入 ${item.filename}\n${info}\n${viewUrl(item)}`, 'ok');
+}
+
+async function loadOne(item, note) {
+  const seq = ++loadSeq;
+  setStatus((note ? note + '\n' : '') + `⏳ 正在载入 ${item.filename} …`, 'busy');
+  const gltf = await loadUrl(item);
+  if (seq !== loadSeq) {
+    // 期间已经有更新的载入请求，丢弃这次迟到的结果（避免旧请求覆盖新模型）
+    const stale = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+    if (stale) disposeTree(stale);
+    return 'superseded';
+  }
+  applyModel(gltf, item);
+  currentKey = keyOf(item);
+  return 'ok';
+}
+
+// 依候选顺序（最新优先）逐个尝试，前面的死链（temp 被清理）自动跳过
+async function loadLatest() {
+  btnLatest.disabled = true;
+  try {
+    setStatus('⏳ 正在查询 /history …', 'busy');
+    const res = await fetch('/history?max_items=20', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`/history 返回 HTTP ${res.status}`);
+    const history = await res.json();
+    const cands = collectCandidates(history);
+    refreshPick(cands);
+
+    if (!cands.length) {
+      setStatus('⚠️ /history 里没有找到 .glb / .gltf 产物。\n请先在 ComfyUI 里跑一次 3D 生成（Preview3D 等），或用手填文件名兜底。', 'err');
+      return;
+    }
+
+    const tried = [];
+    for (const item of cands.slice(0, MAX_TRY)) {
+      try {
+        await loadOne(item, tried.length ? `↩️ 上一个候选加载失败（${tried.join('、')}），回退中…` : '');
+        return;
+      } catch (e) {
+        tried.push(item.filename);
+        console.warn('[scene-walk] 载入失败：', item.filename, e);
+      }
+    }
+    setStatus(`❌ 最近 ${tried.length} 个候选都载入失败（多半是 temp 文件已被清理）：\n${tried.join('\n')}`, 'err');
+  } catch (e) {
+    setStatus('❌ 载入最新失败：' + (e && e.message ? e.message : e), 'err');
+    console.error(e);
+  } finally {
+    btnLatest.disabled = false;
+  }
+}
+
+function refreshPick(cands) {
+  const prev = elPick.value;
+  elPick.innerHTML = '';
+  if (!cands.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = '（未在 /history 里找到 3D 产物）';
+    elPick.appendChild(o);
+    return;
+  }
+  for (const c of cands) {
+    const o = document.createElement('option');
+    o.value = c.url;
+    o.textContent = `${c.filename}  [${c.type}${c.subfolder ? '/' + c.subfolder : ''}]`;
+    o.dataset.filename = c.filename;
+    o.dataset.subfolder = c.subfolder || '';
+    o.dataset.type = c.type || 'output';
+    elPick.appendChild(o);
+  }
+  if (prev && [...elPick.options].some((o) => o.value === prev)) elPick.value = prev;
+}
+
+elPick.addEventListener('change', async () => {
+  const o = elPick.selectedOptions[0];
+  if (!o || !o.value) return;
+  const item = { filename: o.dataset.filename, subfolder: o.dataset.subfolder, type: o.dataset.type, url: o.value };
+  try {
+    await loadOne(item);
+  } catch (e) {
+    setStatus(`❌ 载入失败：${item.filename}\n${e && e.message ? e.message : e}`, 'err');
+  }
+});
+
+btnLatest.addEventListener('click', loadLatest);
+
+btnLoad.addEventListener('click', async () => {
+  const filename = elFn.value.trim();
+  if (!filename) {
+    setStatus('⚠️ 请先填写文件名（可带 .glb 后缀）。', 'err');
+    return;
+  }
+  const item = {
+    filename,
+    subfolder: elSub.value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''),
+    type: elTy.value
+  };
+  item.url = viewUrl(item);
+  try {
+    await loadOne(item);
+  } catch (e) {
+    setStatus(`❌ 载入失败：${filename}\n${item.url}\n${e && e.message ? e.message : e}`, 'err');
+  }
+});
+
+elFn.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') btnLoad.click();
+});
+
+/* ------------------------------------------------------------------ *
+ * 每 5 秒轮询 /history，发现更新的文件就重新载入
+ * ------------------------------------------------------------------ */
+let pollTimer = null;
+let pollBusy = false;
+
+async function pollOnce() {
+  if (pollBusy) return;
+  pollBusy = true;
+  try {
+    const res = await fetch('/history?max_items=20', { cache: 'no-store' });
+    if (!res.ok) return;
+    const history = await res.json();
+    const cands = collectCandidates(history);
+    refreshPick(cands);
+    if (!cands.length) return;
+    const newest = cands[0];
+    if (keyOf(newest) === currentKey) return;
+
+    // 新文件：从最新往下试，失败就退回旧的那个不动
+    for (const item of cands.slice(0, MAX_TRY)) {
+      try {
+        await loadOne(item, '🔄 检测到更新的 3D 产物，自动刷新：');
+        return;
+      } catch (e) {
+        console.warn('[scene-walk] 自动刷新尝试失败：', item.filename, e);
+      }
+    }
+    setStatus('⚠️ 检测到新的 3D 产物，但都载入失败（temp 可能已被清理）。', 'err');
+  } catch (e) {
+    console.warn('[scene-walk] 轮询失败：', e);
+  } finally {
+    pollBusy = false;
+  }
+}
+
+function setPolling(on) {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (on) {
+    pollTimer = setInterval(pollOnce, POLL_MS);
+    pollOnce();
+  }
+}
+elAuto.addEventListener('change', () => setPolling(elAuto.checked));
+
+/* ------------------------------------------------------------------ *
+ * 启动
+ * ------------------------------------------------------------------ */
+setSpeed(2);
+requestAnimationFrame(tick);
+loadLatest();
+
+// 调试钩子：方便在控制台或自动化里检查相机/状态
+window.__sceneWalk = {
+  THREE, scene, camera, renderer, controls,
+  loadLatest,
+  setSpeed,
+  get speed() { return speed; },
+  get locked() { return locked; },
+  get root() { return currentRoot; },
+  get currentKey() { return currentKey; }
+};
+</script>
+</body>
+</html>

@@ -17,7 +17,8 @@
   - output/0010_灰度遮罩/: 成品 {base}.png(遮罩编辑器只服务「灰度遮罩」资源表)
   - input/clipspace/: 遮罩编辑文件(clipspace-*, 可重新编辑)
 
-base 名 = 预览节点 execute 时缓存的 filename_prefix(即 MD 行 ID)。
+base 名 = 前端传入 > 预览节点 execute 时缓存的 filename_prefix(即 MD 行 ID) > 兜底 mask-{ts}。
+⚠️ 该缓存由 preview-image 维护, 键为「<工作流根 id>::<节点 id>」, 必须经其 _cache_get 读。
 """
 
 from __future__ import annotations
@@ -36,8 +37,11 @@ import folder_paths
 logger = logging.getLogger(__name__)
 
 # preview-image 目录名含连字符, 经 importlib 按名加载, 取 _last_output 缓存的 filename_prefix
+# ⚠️ 读缓存一律走 _preview_image._cache_get: preview-image 的键是「<工作流根 id>::<节点 id>」
+# (2026-09-24 加工作流作用域防跨工作流串图), 用裸 node_id 直接 .get() 必然取不到 →
+# base 静默退化成 mask-{ts}, 遮罩成品就不再按行 ID 命名。
 _preview_image = importlib.import_module("preview-image.nodes")
-_last_output = _preview_image._last_output
+_cache_get = _preview_image._cache_get
 
 _CLIPSPACE_PREFIX = "clipspace-painted-masked-"
 # 只允许处理「近期」生成的遮罩文件(防误动历史文件); 传 force=true 可绕过
@@ -166,9 +170,15 @@ async def _rename_mask(request: web.Request) -> web.Response:
         )
 
     # base 名: 前端传入 > 预览节点缓存 filename_prefix > 兜底 mask-{ts}
+    # 缓存键带工作流作用域, 故必须经 _cache_get(node_id, workflow_id) 读
+    # (workflow_id 由前端给 app.rootGraph.id; 未给时 _cache_get 退化为纯节点 id)
     base = _sanitize_base(str(data.get("base") or ""))
     if not base:
-        cached = _last_output.get(node_id) if node_id else None
+        cached = (
+            _cache_get(_last_output, node_id, data.get("workflow_id"))
+            if node_id
+            else None
+        )
         if cached:
             base = _sanitize_base(str(cached.get("filename_prefix") or ""))
     base = base or f"mask-{ts}"
