@@ -36,8 +36,11 @@ from PIL import Image
 from comfy_api.latest import io
 
 PIXI_PY = r"C:\Users\zghyu\AppData\Local\Programs\comfy-env\.pixi\envs\hywm2-nodes\python.exe"
-SCRIPT = r"D:\Comfy\scripts\refine_0034_gs.py"
-PLUGIN_CWD = r"D:\Comfy\custom_nodes\ComfyUI-HYWM2"      # 脚本要的相对 import 根
+# 项目根由本文件位置反推 (realpath 会解开 `ComfyUI\custom_nodes` 那层目录软链),
+# 于是精修脚本与 HYWM2 根目录跟着项目走 —— 项目整体搬家后不必再改这里。
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+SCRIPT = os.path.join(_ROOT, "scripts", "refine_0034_gs.py")
+PLUGIN_CWD = os.path.join(_ROOT, "custom_nodes", "ComfyUI-HYWM2")   # 脚本要的相对 import 根
 TEMP_ROOT = os.path.join(folder_paths.get_temp_directory(), "worldrefine")
 OUT_SUBDIR = "0034_世界模型"
 OUT_NAME = "0034_世界模型_世界3DGS"
