@@ -3,7 +3,7 @@
 
 为什么是"编排"而不是"在节点里算": 精修要 gsplat, 而 gsplat 只存在于 HYWM2 插件的隔离
 环境 (`hywm2-nodes`, cu128) 里 —— 主 venv 是 torch 2.13+cu130, 装不了它。本节点因此在
-主进程 (主 venv) 里只做三件事, 真算交给隔离解释器跑 `scripts\\refine_0034_gs.py`:
+主进程 (主 venv) 里只做三件事, 真算交给隔离解释器跑同目录的 `refine_0034_gs.py`:
 
   ① 把上游来的 IMAGE 批落成临时 PNG (并可选地把 EXTRINSICS/INTRINSICS 先验落成相机 JSON);
   ② 用隔离解释器的 python 跑精修脚本 (它自己做 504 前馈 + 2% 尺度过滤 + 外观精修);
@@ -37,9 +37,11 @@ from comfy_api.latest import io
 
 PIXI_PY = r"C:\Users\zghyu\AppData\Local\Programs\comfy-env\.pixi\envs\hywm2-nodes\python.exe"
 # 项目根由本文件位置反推 (realpath 会解开 `ComfyUI\custom_nodes` 那层目录软链),
-# 于是精修脚本与 HYWM2 根目录跟着项目走 —— 项目整体搬家后不必再改这里。
+# 于是 HYWM2 根目录跟着项目走 —— 项目整体搬家后不必再改这里。
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
-SCRIPT = os.path.join(_ROOT, "scripts", "refine_0034_gs.py")
+# 精修脚本与本文件同目录: 它是本节点的运行期硬依赖, 而根仓库 `scripts\` 只放临时文件
+# (2026-09-30 由那里搬进来, 免得哪天清理临时文件把它一起清掉)。
+SCRIPT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "refine_0034_gs.py")
 PLUGIN_CWD = os.path.join(_ROOT, "custom_nodes", "ComfyUI-HYWM2")   # 脚本要的相对 import 根
 TEMP_ROOT = os.path.join(folder_paths.get_temp_directory(), "worldrefine")
 OUT_SUBDIR = "0034_世界模型"
