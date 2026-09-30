@@ -16,6 +16,10 @@
  * 语义(与后端 pre-run/nodes.py 对齐): 非 0 退出码 / 超时 → **取消本次提交**(等价 pre-commit 拦下 commit)
  * 并弹 error toast; 命令为空 → 完全跳过, 连后端都不请求。
  *
+ * ⚠️ **后端路由不存在(404/405)不算失败**: 前端 js 是从磁盘经 /extensions 即时加载的, 后端插件却要重启
+ *    才注册路由 —— 页面一刷新就会出现"新前端 + 旧后端"。此时**只提示一次并放行**, 绝不拦截:
+ *    本扩展永远不能成为提交链路的故障点(否则用户配了命令又没重启, 每次点运行都被莫名取消)。
+ *
  * 设置项位置: 侧栏「常规 › 其他」面板里, 排在「成功或失败提示音」下面 ——
  *   单元素 category 会被前端 buildTree 变成 root 叶子, 再被 useSettingUI 收进合成的 'Other' 节点;
  *   右栏各组按 sortOrder **降序**排(见 SettingDialog.vue 的 sortedGroups), 故本项 10、提示音那项 20。
@@ -59,18 +63,46 @@ function isDefaultRun(third) {
  * @returns {Promise<{ok:boolean, skipped?:boolean, code?:number|null, output?:string, cwd?:string, ms?:number, timeout?:boolean, error?:string}>}
  */
 async function runPreCommand(command) {
+  let resp;
   try {
-    const resp = await api.fetchApi(ENDPOINT, {
+    resp = await api.fetchApi(ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ command }),
     });
-    const data = await resp.json().catch(() => null);
-    if (data) return data;
-    return { ok: false, error: `HTTP ${resp.status} ${resp.statusText || ""}`.trim() };
   } catch (err) {
     return { ok: false, error: `无法连接后端: ${err?.message || err}` };
   }
+
+  // 路由不存在(前端已更新、后端未重启): 提示一次后放行, 不拦截本次运行
+  if (resp.status === 404 || resp.status === 405) {
+    notifyBackendMissing();
+    return { ok: true, skipped: true, missing: true };
+  }
+
+  const data = await resp.json().catch(() => null);
+  if (data) return data;
+  return { ok: false, error: `HTTP ${resp.status} ${resp.statusText || ""}`.trim() };
+}
+
+/** 后端未加载本插件路由时的**一次性**告警(不拦截运行)。 */
+let backendMissingWarned = false;
+
+function notifyBackendMissing() {
+  if (backendMissingWarned) return;
+  backendMissingWarned = true;
+  console.warn(
+    `[FallingTS.PreRun] 后端路由 ${ENDPOINT} 不存在(404/405): 多半是 ComfyUI 还没重启。` +
+      "本次起跳过运行前命令, 不拦截运行; 重启 ComfyUI 后生效。"
+  );
+  try {
+    app.extensionManager?.toast?.add({
+      severity: "warn",
+      summary: "开始前命令未生效: 需要重启 ComfyUI",
+      detail: "后端还没有加载 pre-run 路由(前端已更新、后端未重启)。本次运行未被拦截。",
+      life: 12000,
+    });
+  } catch { /* toast 服务不可用时忽略(已有 console) */ }
 }
 
 /** 失败时弹提示(toast 不可用则只留控制台)。 */

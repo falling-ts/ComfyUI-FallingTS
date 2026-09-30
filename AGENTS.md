@@ -272,6 +272,9 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 | 成功(exit 0) | `{ok:true, code:0, output, cwd, ms}` | 提交照常进行 |
 | 非 0 退出 | `{ok:false, code:N, output}` | **取消本次运行**(返回 `false`) + error toast(12s, 带命令/退出码/输出尾部) |
 | 超时(600s) | 先 `taskkill /F /T` **杀整棵进程树**(只杀 shell 会留孤儿), `{ok:false, timeout:true}` | 同上, 原因显示「超时」 |
+| **路由不存在(404/405)** | —— 后端根本没加载 | **只提示一次**(console.warn + warn toast)且**放行**, 绝不拦截 |
+
+⚠️ 最后一行是必须的:**前端 js 经 `/extensions` 从磁盘即时加载, 后端路由却要重启才注册** ⇒ 页面一刷新就会出现"新前端 + 旧后端"的混搭。若把 404/405 当失败处理, 用户配了命令又没重启时**每次点运行都会被莫名取消**(本扩展永远不能成为提交链路的故障点)。
 
 **cwd = Comfy 工作区根**(`custom_nodes` 的上一级, 本机 `D:\AI\Comfy`)—— 由本文件位置 realpath 反推(`ComfyUI\custom_nodes` 那层目录软链会被解开), 项目搬家后自动跟随, 不写死盘符; 反推失败(布局被改)则退回进程工作目录并告警。于是 `.venv\Scripts\python.exe scripts\prep.py` 这类相对路径可以直接写。
 
@@ -287,7 +290,9 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 - 离线路由自检 `scripts\_verify-prerun.py`(桩掉 `PromptServer`, 直调 handler): 空/纯空白/非 JSON body → `skipped`; 成功 + 中文输出 + cwd 生效 + 编码兜底; 非 0 退出码透传; 超时(临时把 `_TIMEOUT_S` 改 2s)强杀进程树 —— 5 组全 PASS;
 - 浏览器端到端 `scripts\_verify-prerun-ui.py`(无头 Edge + CDP, 参数 = 目标 URL): 设置项定义/排位 + 真开设置对话框量 `data-setting-id` 元素的 `getBoundingClientRect().top` 判上下 + 四种提交场景。**判"有没有被拦"不能用 `queuePrompt` 的返回值** —— 空白画布上原生 `queuePrompt` 本身就返回 `false`, 会假阳性; 用两个探针: ① `promptQueueing` 事件(原生入口被走到 ⇒ 包装放行)、② `/fallingts_prerun/run` 请求数(前置命令是否被请求) + 命令自己写标记文件验落盘。实测(2026-09-30, 前端包 1.52.7): 空命令 `reqs=0 / fired=1`; 失败 `reqs=1 / fired=0 / 标记落盘 / 返回 false`; 成功 `reqs=1 / fired=1 / 标记落盘`; partial `reqs=0 / fired=1 / 无标记`; 「其它」里 `提示音 top=220` < `开始前命令 top=877`, 输入框 placeholder 与 tooltip 均在。
+- 混搭场景(新前端 + 旧后端)`scripts\_verify-prerun-noroute.py`(直接打**没重启**的实例): 请求过后端(405)但**不拦截**(`fired=1`)、后端确实没执行(无标记文件)、console.warn 与 warn toast 各只 1 次且第二次提交不再提示 —— 实测打 8188(旧后端)全 PASS;
 - ⚠️ 验证脚本要用**独立端口**(如 `--cpu --port 8189`)的临时实例: 主实例若由**提权 shell** 启动, 非提权会话 `taskkill` 会 `Access is denied`,`comfy-server.sh` 的停旧服务**静默失败**、而它的"端口已监听"判据会被**旧进程**满足 ⇒ 报告"就绪"但实际跑的还是旧代码(实测踩过: 新实例 `Port 8188 is already in use` 死在日志里, 路由一直 405)。启动临时实例时还要注意它日志里的 `Database is locked. Another ComfyUI process is already using this database.`(共享同一个 user 库, 不影响只读验证)。
+- ⚠️ 脚本收尾**按 `--user-data-dir` 兜底杀浏览器时, 匹配串必须只命中 `msedge.exe`**: 早先写成 `CommandLine -like '*prerun-*'` 会把**调用方 shell 自己**(命令行里含脚本名)一起杀掉, 连带 dsh 的作业进程(报 `Windows Job runner exited with exit code 4294967295`)。
 
 ## 软链接映射
 
