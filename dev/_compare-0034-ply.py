@@ -100,11 +100,12 @@ def to_uint8(t):
 
 views = [("训练机位0", torch.linalg.inv(c2w[0])[None]), ("远机位(look-at)", torch.linalg.inv(far)[None])]
 
+# 曾经还有一组对照「C 旧精修 eff504(未过滤, 反面教材)」, 取自
+# `backups\backup-0034-旧未过滤精修-20260927\`; 该备份已于 2026-09-30 随 `backups\` 整体清空删除 ——
+# 要复现这组反面教材只能重新跑一次未过滤精修。
 sets = [
     ("A 图内母版 eff406(已过滤)", PLY_A),
     ("B 脚本基线 eff504(已过滤)", PLY_B),
-    ("C 旧精修 eff504(未过滤,反面教材)",
-     str(_COMFY / "backups" / "backup-0034-旧未过滤精修-20260927" / "0034_世界模型_世界3DGS_精修-未过滤版.ply")),
     ("E 精修 eff504(已过滤+加固)", PLY_C),
 ]
 

@@ -30,9 +30,10 @@ r"""Generate workflows/0034_世界模型.json (frontend format) + its API prompt
   落到宿主 output 目录的 `0034_世界模型\` 子目录(供 viewer 的 /view URL 使用), 中间图只进 `temp\`。
 - 布局: 说明卡片独占最左列, **md 表独占第二列**(规则 3), 之后是数据流各列。
 修改历史: 旧版「单图 → TripoSplat 物体级 3DGS」、「单图 → DA3 网格」、「DA3 网格支路并存」、
-  「HYWM2 三导出支路」、「HYWM2 只留 PLY 导出」的快照分别在
-  backups\backup-make-0034-*-20260927-*.py / backups\backup-0034_世界模型.json-20260927-*.json。
-  三改(当前)前的快照在 backups\backup-*-20260927-去非PLY导出前.*。
+  「HYWM2 三导出支路」、「HYWM2 只留 PLY 导出」的快照曾放在
+  `backups\backup-make-0034-*-20260927-*.py` 与 `backups\backup-0034_世界模型.json-20260927-*.json`,
+  「三改」前的快照在 `backups\backup-*-20260927-去非PLY导出前.*` —— **这些快照已于 2026-09-30 随
+  `backups\` 整体清空删除**(该目录此后只作修改前的临时暂存, 不留档), 旧版实现只能查 git 历史。
 """
 import pathlib as _pathlib
 _COMFY = _pathlib.Path(__file__).resolve().parent.parent.parent.parent   # 项目根
