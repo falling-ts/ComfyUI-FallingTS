@@ -261,7 +261,7 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 需求: **每次「点击运行」或按 Ctrl+Enter 提交之前**, 先在宿主上执行一条在系统设置里配置的命令; 配置为空则跳过。
 
-**开箱可测**: 工作区根有个现成的测试脚本 `test-start-command.py` —— 每次提交前在**系统右下角弹一条通知**(标题 `Comfy 开始前命令`, 正文带时间/PID/备注), 设置里填 `.venv\Scripts\python.exe test-start-command.py` 即可验证整条链路。参数: `--note 文字`(附在正文末尾, 便于区分是哪次触发的) / `--title 文字` / `--no-notify`(只打印不弹窗) / `--fail N`(故意返回非 0, 验「取消本次运行」那条路径)。脚本经**后台 PowerShell 的 WinRT 原生 Toast** 弹通知(失败退回托盘气泡), **不装任何第三方库**, 并且**永远退出 0**(除显式 `--fail`)—— 非 0 会被后端当成前置命令失败而拦掉运行, "通知没弹出来"这种小事不该连带拦掉工作流; 痕迹写入 `logs\test-start-command.log`。
+**开箱可测**: 工作区根有个现成的测试脚本 `test-start.py` —— 每次提交前**打开系统记事本, 里面写着「Comfy 开始了」**, 设置里填 `.venv\Scripts\python.exe test-start.py` 即可验证整条链路。脚本先把这句话写进 `logs\test-start.txt`(UTF-8 **带 BOM**, 记事本据此认编码, 中文不乱码 —— 无 BOM 的 UTF-8 在老版记事本上会按 ANSI/GBK 解读), 再用后台 `notepad.exe` 打开它; 不装任何第三方库, **不 `wait()` 记事本退出**, 且**子进程三根标准流都接 `DEVNULL`** —— 后端是**用管道读命令输出**的, 记事本若继承了管道写端, 本脚本即使已经退出, 后端仍要一直等到管道 EOF(= 关掉记事本)才提交, 表现为「运行」永远转圈; 并且**永远退出 0** —— 非 0 会被后端当成前置命令失败而拦掉运行, "记事本没弹出来"这种小事不该连带拦掉工作流。⚠️ 2026-09-30 由 `test-start-command.py`(右下角弹 WinRT 通知, 带 `--note/--title/--no-notify/--fail`)换成现在这个; 仍要测「前置命令失败 → 取消本次运行」那条路径, 把命令临时换成 `cmd /c exit 1` 即可。
 
 **挂点选 `app.queuePrompt`(前端唯一提交入口)**: 运行按钮 `ComfyQueueButton` → 命令 `Comfy.QueuePrompt` → `app.queuePrompt(0, batchCount, {intent})`; Ctrl+Enter 就是这条命令的默认键位; Shift+运行 = `Comfy.QueuePromptFront`(排到队首)同样走它。所以包装一处即可覆盖两种触发方式, 不必逐个挂按钮/键位(与 `proceed.js` / `preview-video.js` / `route.js` / `fanout.js` 的包装链叠加, 顺序无关)。
 
