@@ -20,7 +20,7 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix`+`filename_suffix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
 | Video components | `FallingTSVideoComponents` | `FallingTS/Utility` | Splits a reference video into frames/audio/fps/bit depth/color space (**None-safe**, replacing the core `GetVideoComponents`): `video` is an **optional input**, so when it is unwired or None (empty mdtable field / no upstream value) **all outputs are None and nothing crashes**, letting the downstream H3 Ref2VA skip that reference slot as "no reference"; the core node raises AttributeError on None, so workflows whose `<Video N>` column may be left empty need this node |
 
-### Web frontend enhancements (14, ready to use on install, no configuration)
+### Web frontend enhancements (15, ready to use on install, no configuration)
 
 | File | Function |
 |------|------|
@@ -39,6 +39,7 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | `web/js/media_lightbox_zoom.js` | Image lightbox zoom: wheel/drag/double-click/`+/−/0` shortcuts |
 | `web/js/assets_tab_rename.js` | Rename the media assets panel "Imported" tab to "Saved" |
 | `web/js/workflow_reload_button.js` | A "reload workflow" button on the run panel; reloads the current workflow from disk |
+| `web/js/pre_run_command.js` | **Pre-run command**: a text setting ("开始前命令") under **Settings → General › Other**, right below the task-tone panel; before every Run / Ctrl+Enter submit, the configured command is executed on the host (cwd = Comfy workspace root). Empty = skipped; non-zero exit code or timeout **cancels the run**. Partial submits (Continue / frame-grab) are not affected |
 
 ---
 
@@ -195,6 +196,27 @@ The mirror of many-to-one selection: many-to-one is "multi-group multi-input →
 - HTTP route: `POST /preview-audio/save/{node_id}` (body: `filename_prefix`/`filename_suffix`/`filename_prefix_linked`/`filename_suffix_linked`/`format`/`quality`);
 - The frontend `web/js/preview-audio.js` appends a "Save" button.
 
+### 7. Pre-run command (`pre_run_command.js` + `pre-run/nodes.py`)
+
+**Purpose**: run a shell command on the host **before every submit**, so that input files / caches / helper scripts are refreshed before ComfyUI starts sampling. Configured in the UI, no workflow node needed.
+
+**Setting**: **Settings → General › Other → 开始前命令** (a single-line text input, directly below the "成功或失败提示音" panel; both are floating single-element categories, ordered by `sortOrder` — tone = 20, pre-run = 10, rendered descending). Placeholder shows an example; the tooltip documents cwd / timeout / log location.
+
+**Semantics** (same spirit as a git `pre-commit` hook):
+
+| Case | Backend | Frontend |
+|------|---------|----------|
+| command empty / whitespace only | `{ok:true, skipped:true}`, nothing is executed | request is not even sent; the run proceeds |
+| exit code 0 | `{ok:true, code:0, output, cwd, ms}` | the run proceeds |
+| non-zero exit code | `{ok:false, code:N, output}` | **the run is cancelled** (returns `false`) + error toast with the command/exit code/output tail |
+| timeout (600 s) | whole process tree is killed (`taskkill /F /T`), `{ok:false, timeout:true}` | same as above, reported as "超时" |
+
+**Hook point**: `app.queuePrompt` — the single submit entry point of the frontend. The Run button (`Comfy.QueuePrompt`) and Ctrl+Enter both go through it, so both triggers are covered by one wrapper. It is invoked **only for a default Run**; partial submits (Continue / frame-grab, which pass explicit `queueNodeIds`) are skipped on purpose.
+
+**Working directory**: the Comfy workspace root (the parent of `custom_nodes`, e.g. `D:\AI\Comfy`), derived from this file's realpath — a project move is followed automatically, no hard-coded drive letter. Relative paths like `.venv\Scripts\python.exe scripts\prep.py` therefore work as-is.
+
+**HTTP route**: `POST /fallingts_prerun/run` (body `{"command": "..."}`). Child output is decoded by trying `utf-8` → locale → Windows `oem` → `mbcs` (a `cmd` builtin writes GBK to a pipe even when `PYTHONUTF8=1` is inherited). The command line, exit code, duration and output are written to the ComfyUI log. **Restart ComfyUI after changing the backend; a hard browser refresh is enough for the JS.**
+
 ---
 
 ## Installation
@@ -253,6 +275,8 @@ ComfyUI-FallingTS/
 ├── preview-image/    # image preview-save node (always preview temp + click "Save" to write output, same name overwritten)
 │   ├── nodes.py      #   PreviewImageSave + HTTP route (/preview-image/save)
 │   └── __init__.py
+├── pre-run/          # pre-run command backend (no nodes): POST /fallingts_prerun/run
+│   └── nodes.py      #   runs the configured command in the workspace root, skips when empty, blocks the submit on non-zero/timeout
 ├── web/js/           # frontend extensions (loaded at runtime by ComfyUI via /extensions, not part of the frontend build)
 ├── locales/          # i18n translations (zh/nodeDefs.json, node and control display names)
 └── README.md

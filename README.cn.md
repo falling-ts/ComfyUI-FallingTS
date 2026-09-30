@@ -20,7 +20,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+`filename_suffix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
 | 视频拆解 | `FallingTSVideoComponents` | `FallingTS/工具` | 把参考视频拆成 帧序列/音频/帧率/位深/色彩空间(**None 安全**,核心 `GetVideoComponents` 的替代):`video` 是**可选输入**,未连接或为 None(mdtable 空字段/上游无值)时**全部输出 None 且不报错**,让下游 H3 Ref2VA 的参考视频位按"无参考"跳过;核心节点收到 None 会 AttributeError,故 `<Video N>` 参考列允许留空的工作流须用本节点 |
 
-### Web 前端增强(13 个,安装即用,无需配置)
+### Web 前端增强(15 个,安装即用,无需配置)
 
 | 文件 | 功能 |
 |------|------|
@@ -38,6 +38,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/media_lightbox_zoom.js` | 图片灯箱缩放:滚轮/拖拽/双击/`+/−/0` 快捷键 |
 | `web/js/assets_tab_rename.js` | 媒体资产面板「已导入」标签改为「已保存」 |
 | `web/js/workflow_reload_button.js` | 运行面板"刷新工作流"按钮,磁盘重载当前工作流 |
+| `web/js/pre_run_command.js` | **运行前命令**:系统设置「常规 › 其它」里的文本框(紧挨提示音面板下方);每次「运行 / Ctrl+Enter」提交前先在宿主上执行配置的命令(cwd = Comfy 工作区根)。留空则跳过;非 0 退出码或超时**取消本次运行**。继续/截帧这类局部提交不触发 |
 
 ---
 
@@ -193,6 +194,27 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 - 多段波形时 `{prefix}{suffix}_{i}`(仍无 5 位补零序号),`%batch_num%` 可替换;
 - HTTP 路由:`POST /preview-audio/save/{node_id}`(body: `filename_prefix`/`filename_suffix`/`filename_prefix_linked`/`filename_suffix_linked`/`format`/`quality`);
 - 前端 `web/js/preview-audio.js` 追加「保存」按钮。
+
+### 7. 运行前命令(`pre_run_command.js` + `pre-run/nodes.py`)
+
+**用途**:每次提交**之前**先在宿主上跑一条命令,用于刷新输入文件 / 缓存 / 辅助脚本, 再让 ComfyUI 开始采样。在界面里配置, 不需要工作流节点。
+
+**设置位置**:**系统设置 → 常规 › 其它 → 「开始前命令」**(单行文本框, 正好在「成功或失败提示音」面板下面 —— 两者都是单元素 category 浮到「其它」的独立项, 按 `sortOrder` 降序排: 提示音 20、开始前命令 10)。输入框有示例占位符, 问号 tooltip 里写明 cwd / 超时 / 日志位置。
+
+**语义**(照 git 的 `pre-commit` 钩子):
+
+| 情况 | 后端 | 前端 |
+|------|------|------|
+| 命令为空/纯空白 | `{ok:true, skipped:true}`, 什么都不执行 | **连请求都不发**, 直接放行本次运行 |
+| 退出码 0 | `{ok:true, code:0, output, cwd, ms}` | 提交照常进行 |
+| 非 0 退出码 | `{ok:false, code:N, output}` | **取消本次运行**(返回 `false`)+ error toast(带命令/退出码/输出尾部) |
+| 超时(600s) | 先 `taskkill /F /T` **杀整棵进程树**, `{ok:false, timeout:true}` | 同上, 原因显示「超时」 |
+
+**挂点**:`app.queuePrompt` —— 前端唯一的提交入口。运行按钮(`Comfy.QueuePrompt`)与 Ctrl+Enter 都走它, 所以一处包装即覆盖两种触发方式;**只对「默认 Run」生效**, 继续/截帧那类带显式 `queueNodeIds` 的 partial 提交故意跳过。
+
+**工作目录**:Comfy 工作区根(`custom_nodes` 的上一级, 本机 `D:\AI\Comfy`), 由本文件位置 realpath 反推 —— 项目搬家后自动跟随, 不写死盘符。因此 `.venv\Scripts\python.exe scripts\prep.py` 这类相对路径可直接写。
+
+**HTTP 路由**:`POST /fallingts_prerun/run`(body `{"command": "..."}`)。子进程输出逐个候选编码严格试解(`utf-8` → 本地编码 → Windows `oem` → `mbcs`)—— `cmd` 内建命令即使是 `PYTHONUTF8=1` 也会把 GBK 写进管道。命令原文、退出码、耗时与输出都进 ComfyUI 日志。**改后端后必须重启 ComfyUI;前端 js 强刷即可。**
 
 ---
 

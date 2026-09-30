@@ -37,6 +37,9 @@ WorldRefinePLYNode = import_module("world-refine.nodes").FallingTSWorldRefinePLY
 # mask-rename 目录名含连字符: 注册 /fallingts_mask/rename 路由 + 包装 /upload/image(遮罩整理), 无节点
 import_module("mask-rename.nodes")
 
+# pre-run 目录名含连字符: 注册 /fallingts_prerun/run 路由(运行前命令: Run/Ctrl+Enter 提交前执行), 无节点
+import_module("pre-run.nodes")
+
 __all__ = [
     "WEB_DIRECTORY",
     "NODE_CLASS_MAPPINGS",

@@ -486,6 +486,9 @@ app.registerExtension({
         name: "成功或失败提示音",
         type: renderNotifyPanel,
         category: ["成功或失败提示音"],
+        // 右栏各分组按 sortOrder 降序排(SettingDialog.vue 的 sortedGroups):
+        // 本项 20 高于「开始前命令」的 10, 提示音因此固定排在它上面。
+        sortOrder: 20,
         tooltip: "任务完成/失败时在浏览器播放一声提示音(Web Audio 前端合成)；文字颜色随主题自动反色",
       });
     } catch { /* 设置面板不可用时功能静默降级 */ }

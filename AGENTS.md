@@ -69,6 +69,8 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSAudioTrimNode 音频截段 (波形拖选区 → 多段输出 + 保存)
 ├── mask-rename/
 │   └── nodes.py                # 遮罩编辑器文件整理:包装 /upload/image 路由 + POST /fallingts_mask/rename
+├── pre-run/
+│   └── nodes.py                # 运行前命令后端: POST /fallingts_prerun/run (工作区根 cwd 执行命令, 空则跳过, 非0/超时即拦截本次提交)
 └── web/
     ├── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
         ├── assets_tab_rename.js        # 媒体资产面板「已导入」→「已保存」
@@ -88,6 +90,7 @@ ComfyUI-FallingTS/
         ├── composite.js                # 多图合成: total 决定左侧图端口 image1..imageN + 节点内 label1..labelN 标注表单文本框 (按 total 自动扩充) + 旧版 7 槽 / 中间版 12 槽 widgets_values 加载时自动迁移
         ├── table_lookup.js             # 通用表格 Excel 式控件
         ├── no_auto_workflow.js         # 真正"不打开任何工作流": 关掉最后一个不再残留未保存工作流 + 启动不自动打开
+        ├── pre_run_command.js          # 运行前命令: 系统设置「其它」里的输入框 + 包装 queuePrompt(默认 Run 前先执行, 非0/超时即取消本次运行)
         └── workflow_reload_button.js   # 刷新工作流按钮
     └── viewer/                 # 独立三维场景查看页(静态 HTML,不经前端打包): 取 /history 里的 GLB 网格 → three.js + 指针锁定第一人称漫游
         ├── scene-walk.html
@@ -252,6 +255,39 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 **调试**: URL 加 `?noAutoWorkflow=off` 可临时停用本扩展做对照。
 **验证**: `scripts\_verify-no-auto-workflow.py`(无头 chromium + CDP 真跑; `--off` 跑基线对照, `--port N` 换端口)。基线(停用)实测: 启动后 `open=['workflows/Unsaved Workflow.json']`, 关掉最后一个后仍残留 1 个;启用后两处都是 `open=[] / active=null / nodes=0`。
 ⚠️ 跑该脚本前确认没有残留的 headless chromium 占着调试端口 —— 根仓库 `scripts\cdp.py` 的 `start()` 现在会先探测端口(占用就直接报错), `close()` 在 Windows 除 `taskkill /T /F` 外还**按 `--user-data-dir` 兜底杀**。只 `terminate()`/`taskkill` Popen 的 pid 都不够: chrome 会自我重启, 真正持有调试端口的常是另一个进程, 于是浏览器活下来继续占端口, 下一次会静默复用旧 profile 里的 localStorage, 验证结果不可信(实测踩过两次)。
+
+### 「运行前命令」(`pre-run/nodes.py` + `pre_run_command.js`,2026-09-30)
+
+需求: **每次「点击运行」或按 Ctrl+Enter 提交之前**, 先在宿主上执行一条在系统设置里配置的命令; 配置为空则跳过。
+
+**挂点选 `app.queuePrompt`(前端唯一提交入口)**: 运行按钮 `ComfyQueueButton` → 命令 `Comfy.QueuePrompt` → `app.queuePrompt(0, batchCount, {intent})`; Ctrl+Enter 就是这条命令的默认键位; Shift+运行 = `Comfy.QueuePromptFront`(排到队首)同样走它。所以包装一处即可覆盖两种触发方式, 不必逐个挂按钮/键位(与 `proceed.js` / `preview-video.js` / `route.js` / `fanout.js` 的包装链叠加, 顺序无关)。
+
+**只对「默认 Run」生效**(第三参没有显式 `queueNodeIds`): 继续/截帧那类 partial 提交是"往下跑一段", 每截一帧都重跑一次前置命令会很莫名其妙(例如重复拷贝输入文件)。判据 `isDefaultRun(third)`: `undefined|null` → 真、数组看长度、对象看 `queueNodeIds?.length`。要改成"任何提交都执行"就去掉这个判断。
+
+**语义照 git 的 pre-commit 钩子**(后端 `POST /fallingts_prerun/run`, body `{command}`):
+
+| 情况 | 后端 | 前端 |
+|------|------|------|
+| 命令为空/纯空白(含 body 不是 JSON) | `{ok:true, skipped:true}`, **什么都不执行** | **连请求都不发**(本地判空直接放行) |
+| 成功(exit 0) | `{ok:true, code:0, output, cwd, ms}` | 提交照常进行 |
+| 非 0 退出 | `{ok:false, code:N, output}` | **取消本次运行**(返回 `false`) + error toast(12s, 带命令/退出码/输出尾部) |
+| 超时(600s) | 先 `taskkill /F /T` **杀整棵进程树**(只杀 shell 会留孤儿), `{ok:false, timeout:true}` | 同上, 原因显示「超时」 |
+
+**cwd = Comfy 工作区根**(`custom_nodes` 的上一级, 本机 `D:\AI\Comfy`)—— 由本文件位置 realpath 反推(`ComfyUI\custom_nodes` 那层目录软链会被解开), 项目搬家后自动跟随, 不写死盘符; 反推失败(布局被改)则退回进程工作目录并告警。于是 `.venv\Scripts\python.exe scripts\prep.py` 这类相对路径可以直接写。
+
+⚠️ **子进程输出必须逐个候选编码严格试解, 不能只试 `utf-8` + `locale.getpreferredencoding()`**: 后者受 `PYTHONUTF8=1` 影响会变成 utf-8, 而 `cmd` 的**内建命令**(`echo`/`dir`)写进管道时用的是控制台代码页(简中 = GBK) ⇒ 中文提示语会解成 `\ufffd`。候选表 = `utf-8` → 本地编码 → Windows 的 `oem`(输出代码页) → `mbcs`(ANSI), 全失败才 `errors="replace"` 兜底; 同时给子进程钉 `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`。实测: 带 `PYTHONUTF8=1` 时 GBK 字节 **PASS**(修前 FAIL)。
+
+**设置项位置(系统设置 → 常规 › 其它 → 提示音下面)**:
+
+- 单元素 `category`(如 `["开始前命令"]`)会被前端 `buildTree` 变成 **root 叶子**, 再被 `useSettingUI` 收进合成的 `Other` 节点 ⇒ 侧栏「其它」分类里的**独立一项**; 一个叶子只能装一个设置, 所以"排在提示音下面"**必须另起一个 category**, 不能塞进提示音那个分类;
+- 右栏各分组按 `SettingDialog.vue` 的 `sortedGroups` 以 **`sortOrder` 降序**排 ⇒ 提示音 `sortOrder: 20`(2026-09-30 补), 开始前命令 `sortOrder: 10`, 于是**提示音在上、开始前命令在下**;
+- 设置项用内置 `type: "text"`(前端 `FormItem` 对未知 type 一律回退 `InputText`), 自带标签/问号 tooltip/持久化, 无需自绘 HTML; `attrs.placeholder` 给示例, `attrs.style` 限宽。
+
+**验证**(改后端后**必须重启 ComfyUI**; 前端 js 只需强刷):
+
+- 离线路由自检 `scripts\_verify-prerun.py`(桩掉 `PromptServer`, 直调 handler): 空/纯空白/非 JSON body → `skipped`; 成功 + 中文输出 + cwd 生效 + 编码兜底; 非 0 退出码透传; 超时(临时把 `_TIMEOUT_S` 改 2s)强杀进程树 —— 5 组全 PASS;
+- 浏览器端到端 `scripts\_verify-prerun-ui.py`(无头 Edge + CDP, 参数 = 目标 URL): 设置项定义/排位 + 真开设置对话框量 `data-setting-id` 元素的 `getBoundingClientRect().top` 判上下 + 四种提交场景。**判"有没有被拦"不能用 `queuePrompt` 的返回值** —— 空白画布上原生 `queuePrompt` 本身就返回 `false`, 会假阳性; 用两个探针: ① `promptQueueing` 事件(原生入口被走到 ⇒ 包装放行)、② `/fallingts_prerun/run` 请求数(前置命令是否被请求) + 命令自己写标记文件验落盘。实测(2026-09-30, 前端包 1.52.7): 空命令 `reqs=0 / fired=1`; 失败 `reqs=1 / fired=0 / 标记落盘 / 返回 false`; 成功 `reqs=1 / fired=1 / 标记落盘`; partial `reqs=0 / fired=1 / 无标记`; 「其它」里 `提示音 top=220` < `开始前命令 top=877`, 输入框 placeholder 与 tooltip 均在。
+- ⚠️ 验证脚本要用**独立端口**(如 `--cpu --port 8189`)的临时实例: 主实例若由**提权 shell** 启动, 非提权会话 `taskkill` 会 `Access is denied`,`comfy-server.sh` 的停旧服务**静默失败**、而它的"端口已监听"判据会被**旧进程**满足 ⇒ 报告"就绪"但实际跑的还是旧代码(实测踩过: 新实例 `Port 8188 is already in use` 死在日志里, 路由一直 405)。启动临时实例时还要注意它日志里的 `Database is locked. Another ComfyUI process is already using this database.`(共享同一个 user 库, 不影响只读验证)。
 
 ## 软链接映射
 
