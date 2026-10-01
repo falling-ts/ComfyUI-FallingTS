@@ -43,6 +43,16 @@ logger = logging.getLogger(__name__)
 _preview_image = importlib.import_module("preview-image.nodes")
 _cache_get = _preview_image._cache_get
 
+# ⚠️ 缓存**本体**也必须一并取到: 只 import `_cache_get` 而漏 `_last_output`, 读缓存处就会抛
+# `NameError: name '_last_output' is not defined` → 路由 500 → 前端 `!resp.ok` 分支只 console.warn
+# (没有绿色提示)、成品也不落 0010_灰度遮罩。2026-10-01 实测就是这个漏名字把整条整理链打断的。
+# 注意**不能用 `getattr(...) or {}`** —— 空 dict 是 falsy, 会在启动时把引用换成新对象,
+# 而 preview-image 是往原对象里写(`_last_output[key] = ...`), 换掉引用后永远读不到缓存。
+_last_output = getattr(_preview_image, "_last_output", None)
+if not isinstance(_last_output, dict):
+    logger.warning("preview-image 未提供 _last_output 缓存, 遮罩成品将退化为 mask-{ts} 命名")
+    _last_output = {}
+
 _CLIPSPACE_PREFIX = "clipspace-painted-masked-"
 # 只允许处理「近期」生成的遮罩文件(防误动历史文件); 传 force=true 可绕过
 _RECENT_MS = 10 * 60 * 1000
@@ -145,8 +155,8 @@ async def _rename_mask(request: web.Request) -> web.Response:
     body: {"node_id": "前端节点 id", "image_ref": "clipspace-painted-masked-1754976000123.png", "base": "可选覆盖"}
     返回: {"ok": true,
            "edit_ref": {"filename": "clipspace-painted-masked-{ts}.png", "subfolder": "clipspace", "type": "input"},
-           "out_ref": {"filename": "{base}.png", "subfolder": "0010_灰度遮罩", "type": "output"},
-           "copied": bool}
+           "out_ref": {"filename": "{base}.png", "subfolder": "0010_灰度遮罩", "type": "output"}}
+    ok:false + 非 200 表示确实没整理成功(前端据此弹红色提示, 不再静默)。
     """
     try:
         data = await request.json()
@@ -173,12 +183,14 @@ async def _rename_mask(request: web.Request) -> web.Response:
     # 缓存键带工作流作用域, 故必须经 _cache_get(node_id, workflow_id) 读
     # (workflow_id 由前端给 app.rootGraph.id; 未给时 _cache_get 退化为纯节点 id)
     base = _sanitize_base(str(data.get("base") or ""))
-    if not base:
-        cached = (
-            _cache_get(_last_output, node_id, data.get("workflow_id"))
-            if node_id
-            else None
-        )
+    if not base and node_id:
+        # 读缓存失败只该让命名退化, 不该把整个路由打成 500:
+        # 500 会被前端当成「整理失败」→ 连复制都不做, 用户看到的只有控制台一行警告。
+        try:
+            cached = _cache_get(_last_output, node_id, data.get("workflow_id"))
+        except Exception as e:
+            logger.warning("读预览缓存取 base 失败(node_id=%s): %s", node_id, e)
+            cached = None
         if cached:
             base = _sanitize_base(str(cached.get("filename_prefix") or ""))
     base = base or f"mask-{ts}"
@@ -193,18 +205,26 @@ async def _rename_mask(request: web.Request) -> web.Response:
     if not os.path.isfile(src):
         return web.json_response({"ok": False, "error": "找不到对应遮罩文件"}, status=400)
 
-    copied = False
     out_dir = os.path.join(output_dir, _MASK_TABLE_DIR)
     try:
         os.makedirs(out_dir, exist_ok=True)
     except OSError as e:
         logger.warning("创建遮罩成品目录失败 %s: %s", out_dir, e)
+        return web.json_response(
+            {"ok": False, "error": f"无法创建成品目录 {_MASK_TABLE_DIR}: {e}"}, status=500
+        )
+
     out_file = os.path.join(out_dir, f"{base}.png")
     try:
         shutil.copyfile(src, out_file)
-        copied = True
     except OSError as e:
+        # 复制失败**不能**回 ok:true —— 前端会弹绿色「已整理」而成品根本没落盘, 用户以为存上了、
+        # 实际丢图。失败就报失败, 让用户看到。
         logger.warning("复制成品失败 %s: %s", out_file, e)
+        return web.json_response(
+            {"ok": False, "error": f"复制成品到 {_MASK_TABLE_DIR}/{base}.png 失败: {e}"},
+            status=500,
+        )
 
     edit_ref = {
         "filename": f"clipspace-painted-masked-{ts}.png",
@@ -213,6 +233,4 @@ async def _rename_mask(request: web.Request) -> web.Response:
     }
     # subfolder 必须与写入位置一致, 否则前端 /view?subfolder= 取不到图
     out_ref = {"filename": f"{base}.png", "subfolder": _MASK_TABLE_DIR, "type": "output"}
-    return web.json_response(
-        {"ok": True, "edit_ref": edit_ref, "out_ref": out_ref, "copied": copied}
-    )
+    return web.json_response({"ok": True, "edit_ref": edit_ref, "out_ref": out_ref})

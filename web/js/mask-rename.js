@@ -40,6 +40,27 @@ function isFreshClipspace(filename) {
 }
 
 /**
+ * 弹提示(toast 服务不可用时忽略, 只留控制台 —— 绝不能因为提示失败把整理流程打断)。
+ *
+ * @param {string} severity "success" | "error" | "warn"
+ * @param {string} summary 标题
+ * @param {string} [details] 细节(失败原因等)
+ * @returns {void}
+ */
+function notify(severity, summary, details) {
+  try {
+    app.extensionManager?.toast?.add?.({
+      severity,
+      summary,
+      details,
+      life: severity === "error" ? 12000 : 4000,
+    });
+  } catch {
+    /* toast 不可用: 控制台已有记录 */
+  }
+}
+
+/**
  * 触发整理(带防重入标记)。
  *
  * @param {LGraphNode} node 节点
@@ -80,11 +101,16 @@ async function renameMask(node, imageRef) {
     });
   } catch (err) {
     console.warn("[FallingTS] 遮罩整理请求失败:", err);
+    notify("error", "遮罩整理失败: 请求发不出去", String(err?.message ?? err));
     return;
   }
   const data = await resp.json().catch(() => null);
   if (!resp.ok || !data?.ok) {
-    console.warn("[FallingTS] 遮罩整理失败:", data?.error ?? resp.status);
+    // 失败必须弹出来: 曾经这里只 console.warn, 后端 500 时用户看不到任何提示
+    // (2026-10-01 后端 NameError 就是这么静默的)。
+    const reason = data?.error ?? `HTTP ${resp.status}`;
+    console.warn("[FallingTS] 遮罩整理失败:", reason);
+    notify("error", "遮罩整理失败: 成品未写入 0010_灰度遮罩", reason);
     return;
   }
 
@@ -107,14 +133,14 @@ async function renameMask(node, imageRef) {
   node.setDirtyCanvas?.(true, true);
   app.graph?.setDirtyCanvas?.(true, true);
 
-  app.extensionManager?.toast?.add?.({
-    severity: "success",
-    summary: data.out_ref?.filename
+  notify(
+    "success",
+    data.out_ref?.filename
       ? `已整理: 编辑文件→clipspace, 成品→${
           data.out_ref.subfolder ? `${data.out_ref.subfolder}/` : ""
         }${data.out_ref.filename}`
-      : "遮罩文件已整理",
-  });
+      : "遮罩文件已整理"
+  );
 }
 
 app.registerExtension({
