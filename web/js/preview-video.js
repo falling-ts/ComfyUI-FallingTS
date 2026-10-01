@@ -1003,13 +1003,13 @@ app.registerExtension({
           });
           const data = await resp.json().catch(() => null);
           if (!resp.ok) {
-            app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "保存失败" });
+            app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "保存失败", life: 3000});
             return;
           }
-          app.extensionManager.toast.add({ severity: "success", summary: data?.message ?? "已保存" });
+          app.extensionManager.toast.add({ severity: "success", summary: data?.message ?? "已保存", life: 3000});
         } catch (err) {
           console.error("[FallingTS] 保存失败:", err);
-          app.extensionManager.toast.add({ severity: "error", summary: "保存失败: 无法连接后端" });
+          app.extensionManager.toast.add({ severity: "error", summary: "保存失败: 无法连接后端", life: 3000});
         }
       });
       styleSaveButton(node);
@@ -1059,7 +1059,7 @@ app.registerExtension({
           });
           if (!resp.ok) {
             const data = await resp.json().catch(() => null);
-            app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "截帧失败" });
+            app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "截帧失败", life: 3000});
             return;
           }
           // 后端返回 PNG 字节 + X-Frame-Index 帧号(1-based)
@@ -1068,7 +1068,7 @@ app.registerExtension({
           const url = URL.createObjectURL(blob);
 
           if ((frameList.state.frames.length) >= MAX_FRAMES) {
-            app.extensionManager.toast.add({ severity: "warn", summary: `已达截帧上限 ${MAX_FRAMES} 张` });
+            app.extensionManager.toast.add({ severity: "warn", summary: `已达截帧上限 ${MAX_FRAMES} 张`, life: 3000});
             URL.revokeObjectURL(url);
             return;
           }
@@ -1097,7 +1097,7 @@ app.registerExtension({
           }, 150);
         } catch (err) {
           console.error("[FallingTS] 截帧失败:", err);
-          app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端" });
+          app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端", life: 3000});
         }
       });
       styleFrameButton(node);
@@ -1119,7 +1119,7 @@ app.registerExtension({
               await fetch("/preview-video/reset", { method: "POST" });
             } catch { /* 忽略 */ }
             await app.queuePrompt(0, 1);
-            app.extensionManager.toast.add({ severity: "info", summary: "已开始生成视频, 播放后可截帧" });
+            app.extensionManager.toast.add({ severity: "info", summary: "已开始生成视频, 播放后可截帧", life: 3000});
             return;
           }
           // 有帧: 置 done(后端校验有帧且同步前端帧号) -> partial 提交只跑下游
@@ -1130,12 +1130,12 @@ app.registerExtension({
             body: JSON.stringify({ frames: fnos }),
           });
           if (!resp.ok) {
-            app.extensionManager.toast.add({ severity: "error", summary: "完成失败: 后端无响应" });
+            app.extensionManager.toast.add({ severity: "error", summary: "完成失败: 后端无响应", life: 3000});
             return;
           }
           const data = await resp.json().catch(() => null);
           if (!data?.done) {
-            app.extensionManager.toast.add({ severity: "warning", summary: "请先截帧再点完成" });
+            app.extensionManager.toast.add({ severity: "warning", summary: "请先截帧再点完成", life: 3000});
             return;
           }
           // 释放上一段用过的生成模型内存(可选, 失败不影响)
@@ -1153,10 +1153,10 @@ app.registerExtension({
             return;
           }
           await submitPartial(node, targets);
-          app.extensionManager.toast.add({ severity: "success", summary: "已完成, 截帧输出到下游" });
+          app.extensionManager.toast.add({ severity: "success", summary: "已完成, 截帧输出到下游", life: 3000});
         } catch (err) {
           console.error("[FallingTS] 完成失败:", err);
-          app.extensionManager.toast.add({ severity: "error", summary: "完成失败: 无法连接后端" });
+          app.extensionManager.toast.add({ severity: "error", summary: "完成失败: 无法连接后端", life: 3000});
         }
       });
       styleDoneButton(node);

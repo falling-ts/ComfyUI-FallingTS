@@ -32,7 +32,7 @@ const HIT = 8;
  * @returns {void}
  */
 function toast(severity, summary) {
-  app.extensionManager?.toast?.add({ severity, summary });
+  app.extensionManager?.toast?.add({ severity, summary, life: 3000});
 }
 
 /**

@@ -1093,16 +1093,16 @@ function createMdTableWidget(node, inputName, inputData) {
       }
       if (data.unavailable) {
         // headless: 无桌面会话, 系统对话框弹不出 -> 内嵌文件浏览兜底
-        app.extensionManager.toast.add({ severity: "info", summary: "服务器无桌面会话, 改用内嵌文件浏览" });
+        app.extensionManager.toast.add({ severity: "info", summary: "服务器无桌面会话, 改用内嵌文件浏览", life: 3000});
         openBrowseForNode(initialBrowseDir());
         return;
       }
       if (!data.cancelled) {
-        app.extensionManager.toast.add({ severity: "error", summary: data.error || "选择文件失败" });
+        app.extensionManager.toast.add({ severity: "error", summary: data.error || "选择文件失败", life: 3000});
       }
     } catch (err) {
       console.error("[FallingTS.MdTable] 选择文件失败:", err);
-      app.extensionManager.toast.add({ severity: "error", summary: "选择文件失败: 无法连接后端" });
+      app.extensionManager.toast.add({ severity: "error", summary: "选择文件失败: 无法连接后端", life: 3000});
     } finally {
       busy = false;
       btnPick.textContent = "📁 选择md文件";
@@ -1119,7 +1119,7 @@ function createMdTableWidget(node, inputName, inputData) {
   btnOpen.addEventListener("click", async () => {
     if (busy) return;
     if (!state.md_path) {
-      app.extensionManager.toast.add({ severity: "warning", summary: "请先选择 md 文件" });
+      app.extensionManager.toast.add({ severity: "warning", summary: "请先选择 md 文件", life: 3000});
       return;
     }
     busy = true;
@@ -1127,7 +1127,7 @@ function createMdTableWidget(node, inputName, inputData) {
     try {
       const r = await readMd(state.md_path);
       if (!r.ok) {
-        app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败" });
+        app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败", life: 3000});
         return;
       }
       openModal(r.fields, r.rows, (row) => {
@@ -1142,7 +1142,7 @@ function createMdTableWidget(node, inputName, inputData) {
       }, state.selected.id);
     } catch (err) {
       console.error("[FallingTS.MdTable] 读取失败:", err);
-      app.extensionManager.toast.add({ severity: "error", summary: "读取 md 文件失败" });
+      app.extensionManager.toast.add({ severity: "error", summary: "读取 md 文件失败", life: 3000});
     } finally {
       busy = false;
       btnOpen.textContent = "🗂 打开数据";
@@ -1153,11 +1153,11 @@ function createMdTableWidget(node, inputName, inputData) {
   btnRefresh.addEventListener("click", async () => {
     if (busy) return;
     if (!state.md_path) {
-      app.extensionManager.toast.add({ severity: "warning", summary: "请先选择 md 文件" });
+      app.extensionManager.toast.add({ severity: "warning", summary: "请先选择 md 文件", life: 3000});
       return;
     }
     if (!state.selected.id) {
-      app.extensionManager.toast.add({ severity: "warning", summary: "还没有选择数据, 请先「打开数据」选一行" });
+      app.extensionManager.toast.add({ severity: "warning", summary: "还没有选择数据, 请先「打开数据」选一行", life: 3000});
       return;
     }
     busy = true;
@@ -1165,14 +1165,14 @@ function createMdTableWidget(node, inputName, inputData) {
     try {
       const r = await readMd(state.md_path);
       if (!r.ok) {
-        app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败" });
+        app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败", life: 3000});
         return;
       }
       // 匹配按 trim 后的 ID 找 (md 手改可能留空格)
       const targetId = String(state.selected.id).trim();
       const row = r.rows.find((x) => String(x.id).trim() === targetId);
       if (!row) {
-        app.extensionManager.toast.add({ severity: "error", summary: `md 文件中找不到 ID「${state.selected.id}」(可能已被删除)` });
+        app.extensionManager.toast.add({ severity: "error", summary: `md 文件中找不到 ID「${state.selected.id}」(可能已被删除)`, life: 3000});
         return;
       }
       state.fields = r.fields;
@@ -1182,7 +1182,7 @@ function createMdTableWidget(node, inputName, inputData) {
       emitDirty();
     } catch (err) {
       console.error("[FallingTS.MdTable] 刷新失败:", err);
-      app.extensionManager.toast.add({ severity: "error", summary: "刷新失败: 无法连接后端" });
+      app.extensionManager.toast.add({ severity: "error", summary: "刷新失败: 无法连接后端", life: 3000});
     } finally {
       busy = false;
       btnRefresh.textContent = "🔄 刷新";
@@ -1199,7 +1199,7 @@ function createMdTableWidget(node, inputName, inputData) {
   async function loadFromFile(path) {
     const r = await readMd(path);
     if (!r.ok) {
-      app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败" });
+      app.extensionManager.toast.add({ severity: "error", summary: r.error || "读取失败", life: 3000});
       return;
     }
     state.md_path = path;

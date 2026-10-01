@@ -173,12 +173,12 @@ app.registerExtension({
         const resp = await fetch(`/proceed/continue/${node.id}`, { method: "POST" });
         if (!resp.ok) {
           const data = await resp.json().catch(() => null);
-          app.extensionManager.toast.add({ severity: "warning", summary: data?.message ?? "没有上游数据, 请先运行到该节点" });
+          app.extensionManager.toast.add({ severity: "warning", summary: data?.message ?? "没有上游数据, 请先运行到该节点", life: 3000});
           return;
         }
       } catch (err) {
         console.error("[FallingTS] 继续失败:", err);
-        app.extensionManager.toast.add({ severity: "error", summary: "继续失败: 无法连接后端" });
+        app.extensionManager.toast.add({ severity: "error", summary: "继续失败: 无法连接后端", life: 3000});
         return;
       }
 

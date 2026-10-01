@@ -100,7 +100,7 @@ function notifyBackendMissing() {
       severity: "warn",
       summary: "开始前命令未生效: 需要重启 ComfyUI",
       detail: "后端还没有加载 pre-run 路由(前端已更新、后端未重启)。本次运行未被拦截。",
-      life: 12000,
+      life: 3000,
     });
   } catch { /* toast 服务不可用时忽略(已有 console) */ }
 }
@@ -113,7 +113,7 @@ function notifyFailure(title, detail) {
       severity: "error",
       summary: title,
       detail: String(detail || "").slice(-600),
-      life: 12000,
+      life: 3000,
     });
   } catch { /* toast 服务不可用时忽略(已有 console) */ }
 }

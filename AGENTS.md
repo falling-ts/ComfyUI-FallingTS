@@ -177,6 +177,7 @@ ComfyUI-FallingTS/
   - `audio-trim` → `refreshWaveform()`:GET `/audio-trim/waveform/{id}` 一次拿回 peaks + segments;
   - `preview-video` → `restoreFrames()`:GET `/preview-video/state/{id}` 拿帧号, 再逐个 POST `/preview-video/frame/{id}`(`append=false`)取 PNG 转 blob URL;
 - 界面态同步要**双向且含空值**: `Array.isArray(data.segments)` 为真就写回(即便是空数组), 否则删光段后刷新会残留旧列表。
+- ⚠️ **每一个 `app.extensionManager.toast.add({...})` 都必须显式带 `life: 3000`** —— PrimeVue 的 `ToastMessage` 只在 `message.life` 为真时才起定时器(`vendor-primevue-*.js`:`this.message.life&&(this.closeTimeout=setTimeout(...))`), **没有默认值**;漏写 `life` 的 toast 会永久挂在右上角不消失(2026-10-01 实测: 本插件原有 29 处漏写, 全是「保存/截帧/完成/继续」的成功与失败提示)。插件自绘的右下角 toast(`task_notify.js`)同样按 3000ms 收口。
 
 #### 后端(`nodes.py`)要求
 
@@ -273,7 +274,7 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 |------|------|------|
 | 命令为空/纯空白(含 body 不是 JSON) | `{ok:true, skipped:true}`, **什么都不执行** | **连请求都不发**(本地判空直接放行) |
 | 成功(exit 0) | `{ok:true, code:0, output, cwd, ms}` | 提交照常进行 |
-| 非 0 退出 | `{ok:false, code:N, output}` | **取消本次运行**(返回 `false`) + error toast(12s, 带命令/退出码/输出尾部) |
+| 非 0 退出 | `{ok:false, code:N, output}` | **取消本次运行**(返回 `false`) + error toast(带命令/退出码/输出尾部; 2026-10-01 起统一 `life: 3000`, 原为 12000) |
 | 超时(600s) | 先 `taskkill /F /T` **杀整棵进程树**(只杀 shell 会留孤儿), `{ok:false, timeout:true}` | 同上, 原因显示「超时」 |
 | **路由不存在(404/405)** | —— 后端根本没加载 | **只提示一次**(console.warn + warn toast)且**放行**, 绝不拦截 |
 

@@ -53,7 +53,7 @@ function notify(severity, summary, details) {
       severity,
       summary,
       details,
-      life: severity === "error" ? 12000 : 4000,
+      life: 3000,
     });
   } catch {
     /* toast 不可用: 控制台已有记录 */

@@ -213,7 +213,7 @@ function showToast(kind, title, detail) {
   void el.offsetHeight; // force reflow → 进入动画
   el.style.opacity = "1";
   el.style.transform = "translateX(0) scale(1)";
-  el._timer = window.setTimeout(() => dismissToast(el), 6000);
+  el._timer = window.setTimeout(() => dismissToast(el), 3000);
   el.addEventListener("click", () => {
     window.clearTimeout(el._timer);
     dismissToast(el);
