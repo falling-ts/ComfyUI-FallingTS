@@ -71,7 +71,9 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # 遮罩编辑器文件整理:包装 /upload/image 路由 + POST /fallingts_mask/rename
 ├── pre-run/
 │   └── nodes.py                # 运行前命令后端: POST /fallingts_prerun/run (工作区根 cwd 执行命令, 空则跳过, 非0/超时即拦截本次提交)
-├── dev/                        # **开发/验收工具链**(30 个脚本, 不参与 ComfyUI 加载): 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检。**根仓库 `scripts\` 只放临时文件(随时可清空), 凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
+├── auto-unload/
+│   └── nodes.py                # 跑完自动卸载模型后端: POST /fallingts_auto_unload/unload (队列为空时逐出全部已加载模型释放显存, 否则跳过; 直调内置按钮同款核心函数, 不用 /free 置旗)
+├── dev/                        # **开发/验收工具链**(31 个脚本, 不参与 ComfyUI 加载): 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检、跑完自动卸载的离线自检。**根仓库 `scripts\` 只放临时文件(随时可清空), 凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
 └── web/
     ├── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
         ├── assets_tab_rename.js        # 媒体资产面板「已导入」→「已保存」
@@ -92,6 +94,7 @@ ComfyUI-FallingTS/
         ├── table_lookup.js             # 通用表格 Excel 式控件
         ├── no_auto_workflow.js         # 真正"不打开任何工作流": 关掉最后一个不再残留未保存工作流 + 启动不自动打开
         ├── pre_run_command.js          # 运行前命令: 系统设置「其它」里的输入框 + 包装 queuePrompt(默认 Run 前先执行, 非0/超时即取消本次运行)
+        ├── auto_unload.js              # 跑完自动卸载模型: 系统设置「其它」里的开关 + execution_success 后触发后端卸载(队列非空后端自跳过)
         └── workflow_reload_button.js   # 刷新工作流按钮
     └── viewer/                 # 独立三维场景查看页(静态 HTML,不经前端打包): 取 /history 里的 GLB 网格 → three.js + 指针锁定第一人称漫游
         ├── scene-walk.html
@@ -297,6 +300,29 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 - 混搭场景(新前端 + 旧后端)`custom_nodes\ComfyUI-FallingTS\dev\_verify-prerun-noroute.py`(直接打**没重启**的实例): 请求过后端(405)但**不拦截**(`fired=1`)、后端确实没执行(无标记文件)、console.warn 与 warn toast 各只 1 次且第二次提交不再提示 —— 实测打 8188(旧后端)全 PASS;
 - ⚠️ 验证脚本要用**独立端口**(如 `--cpu --port 8189`)的临时实例: 主实例若由**提权 shell** 启动, 非提权会话 `taskkill` 会 `Access is denied`,`comfy-server.sh` 的停旧服务**静默失败**、而它的"端口已监听"判据会被**旧进程**满足 ⇒ 报告"就绪"但实际跑的还是旧代码(实测踩过: 新实例 `Port 8188 is already in use` 死在日志里, 路由一直 405)。启动临时实例时还要注意它日志里的 `Database is locked. Another ComfyUI process is already using this database.`(共享同一个 user 库, 不影响只读验证)。
 - ⚠️ 脚本收尾**按 `--user-data-dir` 兜底杀浏览器时, 匹配串必须只命中 `msedge.exe`**: 早先写成 `CommandLine -like '*prerun-*'` 会把**调用方 shell 自己**(命令行里含脚本名)一起杀掉, 连带 dsh 的作业进程(报 `Windows Job runner exited with exit code 4294967295`)。
+
+### 「跑完自动卸载模型」(`auto-unload/nodes.py` + `auto_unload.js`,2026-10)
+
+需求: **每次工作流跑完(成功)且队列为空时**, 自动卸载全部已加载模型, 释放显存(等效内置「卸载模型」按钮, 但自动触发)。
+
+**为什么不用内置的 `POST /free`**: /free 只是**置旗**(`unload_models`), 旗标在 prompt 主循环里**下一次 prompt 执行完之后**才被消费 ⇒ 单次"跑完"永远不会生效。故自建路由直调旗标最终调用的核心函数: `comfy.model_management.unload_all_models()`(对每个设备 `free_memory(1e30)` 强逐全部已加载模型, 逐不动就逐能逐的, 不抛异常) → `gc.collect()` → `soft_empty_cache()`(sync + empty_cache + ipc_collect)。
+
+**挂点**: 前端总线 `execution_success` 事件(每个 prompt 成功完成后触发, 含继续/截帧的 partial 提交) → `POST /fallingts_auto_unload/unload`。后端是"卸不卸"的唯一裁决者:
+
+- 队列非空(`PromptQueue.get_tasks_remaining() > 0`, 多任务连跑) → `{skipped: true}`, 只有最后一个真正卸载, 避免中途把模型逐掉导致下一个任务被迫重新加载;
+- 队列为空 → 工作线程池里卸载(逐大模型 + empty_cache 可能耗时数秒, 不能阻塞 aiohttp 事件循环), 返回 `freed_mb/free_mb/ms`(`get_free_memory` 前后差值), 前端弹 info toast(`life: 3000`), 结果同时落 `logging`(`[FallingTS.AutoUnload]` 行, 写 `comfyui.log`)。
+
+**只监听 success**: 失败/中断时保留模型, 下次重试不必重新加载(大模型重载约 60s)。时序安全: `execution_success` 到达浏览器时该 prompt 已被 `task_done` 从队列 pop、`queue_updated` 已推送, 与执行线程无竞态; 唯一竞态是"跑完立刻又提交新任务", 最坏情况 = 新任务的模型多加载一次(与内置按钮在运行中被点击等效), 不崩溃。
+
+**404/405 处理**同运行前命令: 前端 js 经 `/extensions` 从磁盘即时加载, 后端路由却要重启才注册 ⇒ "新前端 + 旧后端"混搭时**只提示一次并放行**。
+
+**设置项**: 系统设置 → 常规 › 其它 → 「跑完自动卸载模型」(内置 `type: "boolean"`, 默认开, 单元素 category + `sortOrder: 5` ⇒ 排在「开始前命令」(10) 下面; 提示音 20 > 开始前命令 10 > 本项 5)。
+
+**验证**(改后端后**必须重启 ComfyUI**; 前端 js 只需强刷):
+
+- 离线路由自检 `dev\_verify-auto-unload.py`(桩掉 `PromptServer` 与 `model_management`, 直调 handler): 队列非空 → `skipped` 且**完全不调用**卸载; 队列为空 → 卸载 + 显存差值正确 + 调用顺序 `unload → soft_empty_cache`; 逐不动(空闲不涨)时 `freed_mb` 不为负 —— 全 PASS;
+- 真实实例(8189 临时实例, `--cpu`): `/extensions` 含 `auto_unload.js`; 提交 prompt 后紧循环打路由, 同时抓到 `(skipped, remaining=1)` 与真正卸载两种状态; 日志出现 `[FallingTS.AutoUnload] 已卸载全部模型` 行。
+- ⚠️ 主实例(8188)重启前跑的是旧后端: 强刷页面后前端会提示一次「自动卸载模型未生效」, 属预期, 重启即好。
 
 ## 软链接映射
 

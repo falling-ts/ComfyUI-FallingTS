@@ -40,6 +40,9 @@ import_module("mask-rename.nodes")
 # pre-run 目录名含连字符: 注册 /fallingts_prerun/run 路由(运行前命令: Run/Ctrl+Enter 提交前执行), 无节点
 import_module("pre-run.nodes")
 
+# auto-unload 目录名含连字符: 注册 /fallingts_auto_unload/unload 路由(跑完自动卸载模型: 队列为空时逐出全部模型), 无节点
+import_module("auto-unload.nodes")
+
 __all__ = [
     "WEB_DIRECTORY",
     "NODE_CLASS_MAPPINGS",
