@@ -548,7 +548,7 @@ async function restoreFrames(node, frameList) {
       const resp = await fetch(ROUTE + "/frame/" + node.id, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "frame", frame_index: fno, append: false }),
+        body: JSON.stringify({ mode: "frame", frame_index: fno, append: false, ...nodePayload(node) }),
       });
       if (!resp.ok) continue;
       const blob = await resp.blob();
@@ -595,6 +595,20 @@ function currentPlaybackSeconds(node) {
     console.warn("[FallingTS] 读取播放时间失败, 取 0 秒:", err);
     return 0;
   }
+}
+
+/**
+ * 取节点上「视频 / 名称 / 序列号」三个值, 随截帧与保存帧请求一起发给后端。
+ *
+ * 后端在帧缓存为空时(重启 ComfyUI / 还没跑过本节点)靠这里的 video 现场拆帧 ——
+ * 用户既然能在节点里播放视频, 就不该被「请先运行到该节点」挡住。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {object} {video, name, sequence}
+ */
+function nodePayload(node) {
+  const read = (name) => node.widgets?.find((w) => w.name === name)?.value ?? "";
+  return { video: read("video"), name: read("name"), sequence: read("sequence") };
 }
 
 app.registerExtension({
@@ -679,7 +693,7 @@ app.registerExtension({
           const resp = await fetch(ROUTE + "/frame/" + node.id, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ position_seconds: positionSeconds }),
+            body: JSON.stringify({ position_seconds: positionSeconds, ...nodePayload(node) }),
           });
           if (!resp.ok) {
             const data = await resp.json().catch(() => null);

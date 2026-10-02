@@ -36,6 +36,9 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
 6. **截帧/完成/选中帧输出**(自 PreviewVideo 迁移; 预览视频节点只保留「保存」):
    - 执行时把视频编码到 temp 并 UI.PreviewVideo 让前端播放, 同时 get_components() 拆出
      帧集合缓存; 前端「截帧」按钮按播放时间取帧, 「完成」后输出 image_1..image_N;
+   - ⚠️ **截帧不要求先跑过本节点**: 帧缓存只在进程内存里, 缓存为空时(重启 ComfyUI /
+     刚选好或上传视频还没执行)截帧路由会按请求带来的 video 值**现场拆帧**(懒解码)建好
+     缓存 —— 用户既然能在节点上播放视频, 就该能直接截帧(旧行为报「请先运行到该节点」);
    - 未「完成」时输出全部 ExecutionBlocker(None) 阻断下游(到本节点停下, 等截帧);
    - fingerprint_inputs 纳入选中帧/完成状态/重置代际, 使 partial 提交时本节点必然重跑;
      已完成且已有缓存时 execute 直接取缓存输出, 不重新解码视频。
@@ -44,6 +47,7 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
 from __future__ import annotations
 
 import io as _io
+import logging
 import os
 import random
 import re
@@ -187,6 +191,92 @@ def _png_bytes(frame) -> bytes:
     buf = _io.BytesIO()
     Image.fromarray(arr).save(buf, format="PNG", compress_level=1)
     return buf.getvalue()
+
+
+def _resolve_video_path(value) -> str | None:
+    """把节点上的视频值解析成绝对路径(纯文件名 / 相对 output 的子目录 / 上传到 input 的文件)。
+
+    值默认按 output 解析(与 execute 口径一致); output 里找不到再退回 input —— 上传按钮把
+    文件写进 input 目录, 而未跑过本节点时缓存里没有解析好的路径。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    bases = (folder_paths.get_output_directory(), folder_paths.get_input_directory())
+    for base in bases:
+        try:
+            path = folder_paths.get_annotated_filepath(text, default_dir=base)
+        except Exception:
+            continue
+        if os.path.isfile(path):
+            return path
+    for base in bases:
+        path = os.path.join(base, text)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _decode_frames(loaded) -> dict:
+    """拆出视频的帧集合/音轨/帧率, 失败只记日志并三项置空(不抛)。
+
+    核心 get_components() 一次性解出帧与音轨: 拆不出帧时音轨同样没有, 故这里三项一起兜底;
+    调用方(截帧 vs 普通执行)各自决定拿不到帧时是报错还是照常输出。
+    """
+    try:
+        components = loaded.get_components()
+        return {
+            "images": components.images,
+            "audio": components.audio,
+            "fps": float(components.frame_rate) if components.frame_rate else 0.0,
+        }
+    except Exception as e:
+        logging.warning("[FallingTS] 视频拆帧失败: %s", e)
+        return {"images": None, "audio": None, "fps": 0.0}
+
+
+def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str = "") -> tuple[dict | None, str]:
+    """按节点上选中的视频现场拆帧并建缓存(截帧/保存帧路由的「懒解码」兜底)。
+
+    为什么需要: execute 的帧缓存只在进程内存里 —— 重启 ComfyUI、或用户刚在节点上选好/
+    上传视频还没跑过本节点时缓存是空的, 而此时前端播放器已经就绪、播放位置也读得到, 却点
+    不了「截帧」(旧行为报「请先运行到该节点」)。这里按请求带来的视频值当场解码一次。
+
+    ⚠️ 缓存**不写预览文件**(file 留空): 前端此时已有播放器, preview-url 不应谎报地址;
+    「完成」时的 partial 提交因此走完整 execute 路径(重新解码并照旧继承 selected_frames)。
+
+    返回 (缓存, 错误信息); 成功时错误信息为空串。
+    """
+    path = _resolve_video_path(video_value)
+    if not path:
+        return None, f"找不到视频文件 {video_value!r}"
+    try:
+        loaded = InputImpl.VideoFromFile(path)
+    except Exception as e:
+        return None, f"打开视频失败: {e}"
+    parts = _decode_frames(loaded)
+    if parts["images"] is None:
+        return None, "视频拆帧失败(帧集合为空)"
+
+    try:
+        sequence_value = int(str(sequence).strip() or 0)
+    except ValueError:
+        sequence_value = 0
+
+    cache = {
+        "video": loaded,
+        "name": name,
+        "sequence": max(0, sequence_value),
+        "path": path,
+        "file": "",
+        "subfolder": "",
+        "images": parts["images"],
+        "audio": parts["audio"],
+        "fps": parts["fps"],
+        "selected_frames": [],
+    }
+    _last_output[nid] = cache
+    return cache, ""
 
 
 # ─── 节点 ──────────────────────────────────────────────────────────────────
@@ -345,15 +435,8 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         )
 
         # 拆出帧集合缓存(截帧数据源): images = [N,H,W,C] 张量
-        try:
-            components = loaded.get_components()
-            images = components.images
-            audio = components.audio
-            fps = float(components.frame_rate) if components.frame_rate else 0.0
-        except Exception:
-            images = None
-            audio = None
-            fps = 0.0
+        parts = _decode_frames(loaded)
+        images, audio, fps = parts["images"], parts["audio"], parts["fps"]
 
         try:
             sequence_value = int(str(sequence).strip() or 0)
@@ -455,20 +538,32 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
 
 
 async def _handle_frame(request: web.Request) -> web.Response:
-    """按前端播放时间/帧号从缓存帧集合取该帧, 编码 PNG 返回并追加到选中帧列表。"""
-    nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid)
-    if not cache or cache.get("images") is None:
-        return web.json_response(
-            {"status": "error", "message": "没有可截帧的视频数据, 请先运行到该节点"}, status=400
-        )
-    images = cache["images"]
-    total = len(images)
+    """按前端播放时间/帧号从缓存帧集合取该帧, 编码 PNG 返回并追加到选中帧列表。
 
+    缓存缺失时先按请求带来的视频值现场拆帧(懒解码)再取帧 —— 不必先运行到本节点:
+    用户刚选好/上传视频、或 ComfyUI 重启后缓存为空时, 前端播放器仍在播放, 截帧应照常可用。
+    """
+    nid = request.match_info["node_id"].strip()
     try:
         data = await request.json()
     except Exception:
         data = {}
+
+    cache = _last_output.get(nid)
+    if not cache or cache.get("images") is None:
+        cache, err = _build_cache_from_file(
+            nid, data.get("video"), str(data.get("name") or ""), str(data.get("sequence") or "")
+        )
+        if cache is None:
+            return web.json_response(
+                {
+                    "status": "error",
+                    "message": f"没有可截帧的视频数据({err}); 请在节点里选择或上传视频",
+                },
+                status=400,
+            )
+    images = cache["images"]
+    total = len(images)
 
     mode = str(data.get("mode", "time"))
     append = bool(data.get("append", True))
@@ -601,16 +696,22 @@ async def _handle_save_frames(request: web.Request) -> web.Response:
     编号撞上已存在的文件时顺延到下一个空号, 不覆盖已有产物。
     """
     nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid)
-    if not cache or cache.get("images") is None:
-        return web.json_response(
-            {"status": "error", "message": "没有可保存的帧, 请先运行到该节点再截帧"}, status=400
-        )
-
     try:
         data = await request.json()
     except Exception:
         data = {}
+
+    cache = _last_output.get(nid)
+    if not cache or cache.get("images") is None:
+        # 与截帧同一套懒解码兜底: 缓存为空(重启 / 未跑过)时按节点上的视频现场拆帧
+        cache, err = _build_cache_from_file(
+            nid, data.get("video"), str(data.get("name") or ""), str(data.get("sequence") or "")
+        )
+        if cache is None:
+            return web.json_response(
+                {"status": "error", "message": f"没有可保存的帧({err}); 请先在节点里选择视频并截帧"},
+                status=400,
+            )
 
     images = cache["images"]
     total = len(images)
