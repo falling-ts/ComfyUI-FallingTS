@@ -498,7 +498,71 @@ def fix_0035() -> dict:
 
     wf["last_link_id"] = max((l[0] for l in wf["links"]), default=wf.get("last_link_id", 0))
     relink(wf)
+    layout_0035(wf)
     return wf
+
+
+# ─── 0035 布局: 四列网格(同列左对齐 / 行距 60 / 列距 80) ────────────────────
+
+
+GAP_X = 80  # 列间净距
+GAP_Y = 60  # 行间净距
+
+
+def layout_0035(wf: dict) -> None:
+    """0035 的节点布局: 加载视频 → 8 个单图保存 → 2 个合成 → 2 个合成预览。
+
+    - 每列内左边缘严格对齐, 行距 = GAP_Y, 列与列之间净距 = GAP_X(都落在 (50, 100) 内);
+    - 8 个单图保存统一成同一尺寸(原来手工拖得高低不齐 ⇒ 同列右缘参差、还有 20~30px 的重叠);
+    - 加载节点的 y 与列 2 最下面那个合成对齐, 见文件末尾那段的注释(端口顺序要求);
+    - 该函数只动 pos/size, 连线与端口顺序一概不碰(端口顺序自检在 check() 里)。
+    """
+    by_id = {n["id"]: n for n in wf["nodes"]}
+    loader = node_of(wf, 18)
+
+    # 8 个单图保存: 按加载节点 image_1..N 的连线顺序(与端口自上而下的顺序一致)
+    singles = []
+    for o in loader.get("outputs") or []:
+        if not str(o.get("name", "")).startswith("image_"):
+            continue
+        for lid in o.get("links") or []:
+            link = next(l for l in wf["links"] if l[0] == lid)
+            singles.append(by_id[link[3]])
+
+    def titled(node_type: str, keyword: str) -> dict:
+        return next(n for n in wf["nodes"] if n["type"] == node_type and keyword in (n.get("title") or ""))
+
+    comp4, comp8 = titled("FallingTSImageComposite", "截帧合成"), titled("FallingTSImageComposite", "八向合成")
+    prev4, prev8 = titled("PreviewImageSave", "截帧合成"), titled("PreviewImageSave", "八向合成")
+
+    # 列 0: 加载视频(整图的起点); x 固定在最左, y 在末尾按端口顺序约束统一设置
+    loader_w = loader["size"][0]
+
+    # 列 1: 8 个单图保存, 统一尺寸 + 等行距
+    single_w = max(n["size"][0] for n in singles)
+    single_h = max(n["size"][1] for n in singles)
+    x1 = loader_w + GAP_X
+    for i, n in enumerate(singles):
+        n["size"] = [single_w, single_h]
+        n["pos"] = [x1, i * (single_h + GAP_Y)]
+    col1_h = len(singles) * single_h + (len(singles) - 1) * GAP_Y
+
+    # 列 2/3: 合成与合成预览, 两列各自从 y=0 起排(行距 GAP_Y)
+    x2 = x1 + single_w + GAP_X
+    y = 0
+    for n in (comp4, comp8):
+        n["pos"] = [x2, y]
+        y += n["size"][1] + GAP_Y
+    x3 = x2 + max(n["size"][0] for n in (comp4, comp8)) + GAP_X
+    y = 0
+    for n in (prev4, prev8):
+        n["pos"] = [x3, y]
+        y += n["size"][1] + GAP_Y
+
+    # 列 0 的 y = 列 2 最下面那个合成的 y: 合成预览(列 3)的两个输入里 images 在上、filename_prefix 在下,
+    # images 的上游是合成节点、filename_prefix 的上游是本加载节点 —— 只有 y(合成) <= y(加载),
+    # 进这两条端口的线才不上下颠倒(布局规范第 2 条, 三条以上的分发线则不受此限)。
+    loader["pos"] = [0, comp8["pos"][1]]
 
 
 # ─── 清空 0040..0044 的 PreviewVideo 尾部 ───────────────────────────────────
@@ -802,7 +866,7 @@ def main() -> None:
     problems = []
     for name, wf in results.items():
         problems += integrity(name, wf)
-        if name in ("0050_视频拆帧", "0051_视频拆音", "0070_截取声音"):
+        if name in ("0035_场景截帧", "0050_视频拆帧", "0051_视频拆音", "0070_截取声音"):
             problems += check(name, wf)
         save(name, wf)
         types = {}
