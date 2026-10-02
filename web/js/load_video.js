@@ -273,7 +273,7 @@ function createFrameListWidget(node) {
  * 同步选中帧状态: 更新 total 下限 + 按 total 对齐输出端口数量。
  *
  * total 规则(与 composite 同款): 最小 = max(1, 选中数);
- * 输出端口数 = 2(video + audio) + total 个 image。
+ * 输出端口数 = 3(video + audio + prefix) + total 个 image。
  *
  * @param {LGraphNode} node 节点对象
  * @param {object} state 选中帧列表状态 {frames: [{url, fno}]}
@@ -293,8 +293,8 @@ function syncFrameState(node, state) {
   }
 
   const total = Math.max(1, Number(totalWidget?.value) || 1);
-  const target = 2 + total;
-  const startIdx = 2; // 0=video, 1=audio 两个固定端口
+  const target = 3 + total;
+  const startIdx = 3; // 0=video, 1=audio, 2=prefix(文件名前缀) 三个固定端口
   // 只删"无链接"的尾部端口: 带链接的端口强删会让前端重建链接时报
   // "Cannot set properties of undefined"(与 route/fanout/composite 同款保护)。
   while ((node.outputs?.length ?? 0) > target) {
@@ -305,11 +305,17 @@ function syncFrameState(node, state) {
   while ((node.outputs?.length ?? 0) < target) {
     node.addOutput("image_" + (node.outputs.length - startIdx + 1), "IMAGE");
   }
-  // 端口 1 固定是 audio(后端 schema 的顺序); 老存档里这里可能是旧的 image_1, 一并纠正
+  // 端口 1/2 固定是 audio / prefix(后端 schema 的顺序); 老存档里这里可能是旧的 image_1/image_2,
+  // 一并纠正(否则选中帧会被当成字符串端口, 且少一个前缀端口)
   if (node.outputs?.[1]) {
     node.outputs[1].name = "audio";
     node.outputs[1].label = "audio";
     node.outputs[1].type = "AUDIO";
+  }
+  if (node.outputs?.[2]) {
+    node.outputs[2].name = "prefix";
+    node.outputs[2].label = "文件名前缀";
+    node.outputs[2].type = "STRING";
   }
   for (let i = startIdx; i < (node.outputs?.length ?? 0); i++) {
     const fno = state.frames[i - startIdx]?.fno ?? (i - startIdx + 1);
@@ -800,7 +806,7 @@ app.registerExtension({
       // 备用视频播放器: 页面刷新后原生 UI.PreviewVideo 不重发, 由 restoreVideo 补上
       node._fallingtsVideoFallback = createVideoFallbackWidget(node);
 
-      // 新拖入的节点: 直接裁到 2(video+audio)+total 个 image
+      // 新拖入的节点: 直接裁到 3(video+audio+prefix)+total 个 image
       if ((node.outputs ?? []).length > 0) syncFrameState(node, { frames: [] });
       fitHeight(node);
 

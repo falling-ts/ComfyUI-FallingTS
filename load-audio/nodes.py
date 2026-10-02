@@ -19,7 +19,10 @@ r"""FallingTS 加载音频 (来自输出)。
 3. **remote 不设 control_after_refresh** —— 刷新按钮与跑完自动刷新只重新拉候选列表,
    不把已选值换成候选首项(候选按 mtime 倒序 ⇒ 刚产出的音频必然夺走选中权)。
 
-4. **节点内试听**(与「预览音频」同一套"执行前后都能听"的体验, 但走前端原生音频控件):
+4. **「序列号_名称」前缀输出**: `prefix`(STRING) = `<序列号>_<名称>`(口径见 output_subdir.sequence_prefix),
+   接各预览保存节点的 `filename_prefix` —— 截取/拆音这类工作流不再需要 md 数据表提供文件名前缀。
+
+5. **节点内试听**(与「预览音频」同一套"执行前后都能听"的体验, 但走前端原生音频控件):
    声明一个 AUDIO_UI 输入 ⇒ 前端 Comfy.AudioWidget 的 AUDIO_UI 工厂给节点挂上
    <audio controls> DOM 播放器(页面刷新后靠 onGraphConfigured 按已选值重建, 不依赖一次性事件);
    执行时再发 UI.PreviewAudio ⇒ 跑完播放器自动指向本次解码出来的音频。
@@ -41,7 +44,7 @@ import folder_paths
 from comfy_api.latest import IO, UI
 from comfy_extras.nodes_audio import load
 
-from output_subdir import next_sequence, sequence_dir
+from output_subdir import next_sequence, sequence_dir, sequence_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +145,7 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
 
         返回:
             IO.Schema: node_id/display_name/category/description, 输入 name + sequence + audio,
-            输出 audio, hidden 含 prompt+extra_pnginfo+unique_id,
+            输出 audio + prefix(序列号_名称), hidden 含 prompt+extra_pnginfo+unique_id,
             标记 is_output_node=True(节点自带试听播放器, 单独 Run 即可加载并播放)。
         """
         files = _list_relative(folder_paths.get_output_directory())
@@ -201,7 +204,16 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],
             is_output_node=True,
-            outputs=[IO.Audio.Output("audio", tooltip="加载的音频(供下游试听/截段/保存)。")],
+            outputs=[
+                IO.Audio.Output("audio", tooltip="加载的音频(供下游试听/截段/保存)。"),
+                # 端口名保持 ASCII(前端 load_audio.js 给它挂中文 label「文件名前缀」);
+                # 不设 display_name —— 设了 object_info 的 output_name 与前端端口名都会变成中文,
+                # 与「加载视频」的同一端口不一致
+                IO.String.Output(
+                    "prefix",
+                    tooltip="「序列号_名称」: 接各预览保存节点的 filename_prefix。",
+                ),
+            ],
         )
 
     @classmethod
@@ -215,10 +227,12 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
             sequence (str, 默认 ""): 配套编号(同上)。
 
         返回:
-            IO.NodeOutput: 音频对象 {"waveform": BxCxN, "sample_rate": int} + UI.PreviewAudio。
+            IO.NodeOutput: 音频对象 {"waveform": BxCxN, "sample_rate": int} + 「序列号_名称」前缀 +
+            UI.PreviewAudio。
         """
+        prefix = sequence_prefix(sequence, name)
         if audio_in is not None:
-            return IO.NodeOutput(audio_in, ui=UI.PreviewAudio(audio_in, cls=cls))
+            return IO.NodeOutput(audio_in, prefix, ui=UI.PreviewAudio(audio_in, cls=cls))
         if not audio:
             raise ValueError("FallingTS 加载音频: 没有选择音频(下拉), 也没有连接 audio_in")
 
@@ -228,7 +242,7 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
         waveform, sample_rate = load(audio_path)
         audio_obj = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
         # 发预览事件: 前端 AUDIO_UI 播放器据此把播放源指向本次解码出来的音频
-        return IO.NodeOutput(audio_obj, ui=UI.PreviewAudio(audio_obj, cls=cls))
+        return IO.NodeOutput(audio_obj, prefix, ui=UI.PreviewAudio(audio_obj, cls=cls))
 
     @classmethod
     def fingerprint_inputs(cls, audio=None, audio_in=None, **kwargs):

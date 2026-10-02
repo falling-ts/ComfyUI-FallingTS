@@ -111,7 +111,8 @@ def main() -> None:
               and combo[1].get("audio_upload") is True
               and (combo[1].get("remote") or {}).get("route") == "/fallingts_load_audio/files",
               combo[1] if isinstance(combo, list) and len(combo) > 1 else combo)
-        check("输出 = audio", node.get("output_name") == ["audio"], node.get("output_name"))
+        check("输出 = audio + prefix(文件名前缀)",
+              node.get("output_name") == ["audio", "prefix"], node.get("output_name"))
 
         files = get("/fallingts_load_audio/files")
         check("候选含数字目录内部音频", SUB_VALUE in files, files[:6])

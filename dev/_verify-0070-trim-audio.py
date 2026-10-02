@@ -113,10 +113,12 @@ def main():
         prompt = {
             "1": {"class_type": "LoadAudio", "inputs": {"audio": PROBE}},
             "2": {"class_type": "FallingTSLoadAudio",
-                  "inputs": {"audio_in": ["1", 0], "audio": "", "name": "探针", "sequence": "00000"}},
+                  "inputs": {"audio_in": ["1", 0], "audio": "", "name": "截取探针", "sequence": "12"}},
             "3": {"class_type": "PreviewAudioSave",
                   "inputs": {"audio": ["2", 0], "filename_prefix": "probe", "filename_suffix": "",
                              "format": "flac", "quality": "128k"}},
+            # 4: 核心 PreviewAny 把 prefix 回显到 history 的 ui.text(端到端验证「序列号_名称」)
+            "4": {"class_type": "PreviewAny", "inputs": {"source": ["2", 1]}},
         }
         res = post("/prompt", {"prompt": prompt, "client_id": "verify-0070"})
         pid = res.get("prompt_id")
@@ -134,6 +136,8 @@ def main():
                   (hist or {}).get("status", {}).get("status_str") == "success" and bool(outs.get("3", {}).get("audio")),
                   {"status": (hist or {}).get("status", {}).get("status_str"), "node3": outs.get("3")})
             check("audio_in 直通: 本节点发 UI.PreviewAudio", bool(outs.get("2", {}).get("audio")), outs.get("2"))
+            text = ((outs.get("4") or {}).get("text") or [None])[0]
+            check("加载音频的 prefix 输出 = 序列号_名称", text == "00012_截取探针", text)
 
     # ── 前端: 0070 工作流加载后的连线与控件值 ──
     edge = next((p for p in EDGE if pathlib.Path(p).is_file()), None)
@@ -202,23 +206,22 @@ def main():
           };
         })()
         """ % lit)
-        check("0070 节点集 = MD/加载音频/截取音频/3×预览/说明", dump["count"] == 8
-              and sorted(dump["titles"]) == sorted(["MD 数据表 (截取声音)", "Reroute", "音频 加载/试听",
-                                                    "截取音频", "截取音频预览-1", "截取音频预览-2", "截取音频预览-3", "使用说明"]),
+        check("0070 节点集 = 加载音频/截取音频/3×预览/说明(无数据表)", dump["count"] == 6
+              and sorted(dump["titles"]) == sorted(["音频 加载/试听", "截取音频",
+                                                    "截取音频预览-1", "截取音频预览-2", "截取音频预览-3", "使用说明"]),
               dump["titles"])
-        want = {"MD 数据表 (截取声音).原声音": "音频 加载/试听.audio_in",
-                "MD 数据表 (截取声音).ID": "Reroute.",
-                "音频 加载/试听.audio": "截取音频.audio",
+        want = {"音频 加载/试听.audio": "截取音频.audio",
                 "截取音频.audio_1": "截取音频预览-1.audio",
                 "截取音频.audio_2": "截取音频预览-2.audio",
                 "截取音频.audio_3": "截取音频预览-3.audio",
-                "Reroute.": "截取音频.filename_prefix",
+                "音频 加载/试听.prefix": "截取音频.filename_prefix",
                 }
         got = {(l["from"], l["to"]) for l in dump["links"]}
         missing = [k for k, v in want.items() if (k, v) not in got]
         check("0070 关键连线正确", not missing, {"missing": missing, "all": sorted(got)})
-        check("0070 Reroute 分发 4 个 filename_prefix",
-              len([l for l in dump["links"] if l["from"] == "Reroute." and l["to"].endswith("filename_prefix")]) == 4,
+        check("0070 加载音频 prefix 分发 4 个 filename_prefix",
+              len([l for l in dump["links"] if l["from"] == "音频 加载/试听.prefix"
+                   and l["to"].endswith("filename_prefix")]) == 4,
               [l for l in dump["links"] if l["to"].endswith("filename_prefix")])
         check("加载音频控件值 = 空音频/序列号 00000",
               (dump["lvWidgets"] or {}).get("audio") == "" and (dump["lvWidgets"] or {}).get("sequence") == "00000",

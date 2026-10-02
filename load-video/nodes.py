@@ -25,6 +25,11 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
     该输出**不受「完成」门控**(只有 image_1..N 被门控), 于是「加载视频 → 音频后处理」这条链
     在未点「完成」时就能跑通。
 
+4b. **「序列号_名称」前缀输出**: `prefix`(STRING) = `<序列号>_<名称>`(口径见
+    output_subdir.sequence_prefix), 接各预览保存节点的 `filename_prefix` —— 拆帧/拆音/截取
+    这类"表驱动"工作流不再需要 md 数据表提供文件名前缀。与 `audio` 一样**不受「完成」门控**
+    (拆音链在未截帧时也要能落盘)。
+
 5. **「原视频」可外部传入**: 可选 VIDEO 输入 `video_in`(数据表「原视频」列等)—— 连上就用它,
     不连则用自身下拉(下拉是 COMBO, 前端不允许把 VIDEO/STRING 连进 COMBO, 故另开这一个口)。
 
@@ -54,7 +59,7 @@ import folder_paths
 from comfy_api.latest import IO, Types, UI, InputImpl
 from comfy_execution.graph_utils import ExecutionBlocker
 
-from output_subdir import next_sequence, safe_dir_name, sequence_dir
+from output_subdir import next_sequence, safe_dir_name, safe_file_token, sequence_dir, sequence_prefix
 
 _NODE_NAME = "FallingTSLoadVideo"
 
@@ -63,9 +68,6 @@ MAX_FRAMES = 64
 
 # 资源表目录口径: 数字开头 + 下划线(0035_场景截帧 / 0010_灰度遮罩 …)
 _NUMERIC_DIR_RE = re.compile(r"^\d+_")
-
-# 目录名/文件名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
-_UNSAFE_CHARS = '<>:"/\\|?*'
 
 # 最近一次加载/预览的缓存: node_id -> {"video","images","fps","file","selected_frames",...}
 _last_output: dict[str, dict] = {}
@@ -158,12 +160,7 @@ async def _handlenext_sequence(request: web.Request) -> web.Response:
 
 def _sanitize_name(name) -> str:
     """清洗「名称」: 去扩展名、路径分隔与非法字符, 返回安全的纯文件名(不含扩展名)。"""
-    text = os.path.splitext(str(name or ""))[0]
-    text = text.replace("/", "-").replace("\\", "-")
-    for ch in _UNSAFE_CHARS:
-        text = text.replace(ch, "-")
-    text = re.sub(r"[\r\n\t ]+", "-", text.strip())
-    return text.strip(" .-")[:120]
+    return safe_file_token(os.path.splitext(str(name or ""))[0])
 
 
 # ─── 帧工具(与 preview-video 同实现) ───────────────────────────────────────
@@ -204,7 +201,7 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
 
         返回:
             IO.Schema: node_id/display_name/category/description, 输入 name + sequence + video +
-            video_in(可选), 输出 video + audio + image_1..image_MAX_FRAMES,
+            video_in(可选), 输出 video + audio + prefix(序列号_名称) + image_1..image_MAX_FRAMES,
             hidden 含 prompt+extra_pnginfo+unique_id,
             标记 is_output_node=True(有 UI 预览, 且是截帧后 partial 提交的锚点)。
         """
@@ -212,6 +209,12 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         outputs = [
             IO.Video.Output("video", tooltip="加载的视频(原样透传, 供下游拆解/编辑)。"),
             IO.Audio.Output("audio", tooltip="视频的音轨(拆音用; 不受「完成」门控)。"),
+            # 端口名保持 ASCII(前端 load_video.js 给它挂中文 label「文件名前缀」); 不设 display_name,
+            # 否则 object_info 的 output_name 与前端端口名都会变成中文, 与「加载音频」的同一端口不一致
+            IO.String.Output(
+                "prefix",
+                tooltip="「序列号_名称」: 接各预览保存节点的 filename_prefix(不受「完成」门控)。",
+            ),
         ]
         outputs += [
             IO.Image.Output(
@@ -280,28 +283,34 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         - 未「完成」: 解码视频并编码到 temp 预览, 拆帧缓存, 音轨照常输出, 但视频与选中帧
           输出 ExecutionBlocker(None) 阻断下游(合成/保存都不跑, "到本节点就停下, 等截帧"),
           UI.PreviewVideo 照常发出 —— 拆音不需要截帧, 故音频不受「完成」门控;
-        - 「完成」: 输出视频 + 音轨 + 选中帧 image_1..image_MAX_FRAMES(未选中槽 None)。
+        - 「完成」: 输出视频 + 音轨 + 前缀 + 选中帧 image_1..image_MAX_FRAMES(未选中槽 None)。
+
+        无论走哪条路径都输出 `prefix` =「序列号_名称」: 它只是文件名, 与截帧无关 —— 拆音链
+        (加载视频 → 音频截段 → 预览音频) 在未点「完成」时也要能拿到前缀落盘。
 
         参数:
             video (str | None): 视频文件名(相对 output, 形如 0035_场景截帧/00001_陈落.mp4)。
             video_in (Video | None): 外部传入的视频(数据表「原视频」列等), 有值时优先于 video。
-            name (str, 默认 ""): 保存帧的文件名。
-            sequence (str, 默认 ""): 保存帧的编号(5 位文本, 如 "00005"; 缓存起来供「保存帧」兜底)。
+            name (str, 默认 ""): 「名称」: 保存帧的文件名, 同时进 prefix。
+            sequence (str, 默认 ""): 「序列号」(5 位文本, 如 "00005"; 同时进 prefix, 并缓存起来供「保存帧」兜底)。
 
         返回:
-            IO.NodeOutput: 视频 + 音轨 + 64 个选中帧槽(未选中/未完成时按上述语义填)。
+            IO.NodeOutput: 视频 + 音轨 + 前缀 + 64 个选中帧槽(未选中/未完成时按上述语义填)。
         """
         nid = getattr(cls.hidden, "unique_id", None)
         nid_str = str(nid) if nid else ""
         # V3 节点的 hidden 不进 execute 实参(execution.py 的 get_finalized_class_inputs 单独摘出),
         # prompt 只能经 cls.hidden 取, 缓存下来供「保存帧」解析产物子目录名。
         prompt = getattr(cls.hidden, "prompt", None)
+        # 「序列号_名称」文件名前缀(独立于视频, 任何分支都照常输出)
+        prefix = sequence_prefix(sequence, name)
 
         cached = _last_output.get(nid_str)
         if nid_str in _done and cached and cached.get("file"):
             return IO.NodeOutput(
                 cached.get("video"),
                 cached.get("audio"),
+                prefix,
                 *_frames_from_cache(cached, cached.get("selected_frames") or []),
                 ui=UI.PreviewVideo([UI.SavedResult(cached["file"], cached.get("subfolder") or "", IO.FolderType.temp)]),
             )
@@ -320,9 +329,9 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
             loaded = InputImpl.VideoFromFile(video_path)
 
         width, height = loaded.get_dimensions()
-        prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
+        temp_prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
         full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            prefix,
+            temp_prefix,
             folder_paths.get_temp_directory(),
             width,
             height,
@@ -368,16 +377,18 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
 
         ui = UI.PreviewVideo([UI.SavedResult(file, subfolder, IO.FolderType.temp)])
         if nid_str not in _done:
-            # 未「完成」: 视频与选中帧阻断下游, 音轨照常输出(拆音不需要截帧), 预览照发
+            # 未「完成」: 视频与选中帧阻断下游, 音轨与前缀照常输出(拆音不需要截帧), 预览照发
             return IO.NodeOutput(
                 ExecutionBlocker(None),
                 audio,
+                prefix,
                 *([ExecutionBlocker(None)] * MAX_FRAMES),
                 ui=ui,
             )
         return IO.NodeOutput(
             loaded,
             audio,
+            prefix,
             *_frames_from_cache(_last_output[nid_str], selected_frames),
             ui=ui,
         )

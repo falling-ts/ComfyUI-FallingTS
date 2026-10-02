@@ -45,4 +45,15 @@ check("加载音频: 已连线 audio_in 放过", audio.FallingTSLoadAudioNode.va
 check("加载音频: 未连线未选择 → 提示", isinstance(audio.FallingTSLoadAudioNode.validate_inputs(audio="", input_types={}), str))
 check("加载视频: 已连线 video_in 放过", video.FallingTSLoadVideoNode.validate_inputs(video="", input_types={"video_in": "VIDEO"}) is True)
 check("加载视频: 未连线未选择 → 提示", isinstance(video.FallingTSLoadVideoNode.validate_inputs(video="", input_types={}), str))
+
+# 文件名前缀 =「序列号_名称」(两个加载节点的 prefix 输出; 口径同 output_subdir.sequence_prefix)
+import output_subdir
+pfx = output_subdir.sequence_prefix
+check("前缀: 序列号 + 名称", pfx("00005", "夜雨") == "00005_夜雨", pfx("00005", "夜雨"))
+check("前缀: 序列号补零", pfx("7", "夜雨") == "00007_夜雨", pfx("7", "夜雨"))
+check("前缀: 序列号留空按 00000", pfx("", "夜雨") == "00000_夜雨", pfx("", "夜雨"))
+check("前缀: 只有序列号(不补下划线)", pfx("00005", "") == "00005", pfx("00005", ""))
+check("前缀: 都为空 → 00000", pfx("", "") == "00000", repr(pfx("", "")))
+check("前缀: 名称里的非法字符被清洗", pfx("1", "a/b:c") == "00001_a-b-c", pfx("1", "a/b:c"))
+check("前缀: 序列号非数字时原样用", pfx("五", "夜雨") == "五_夜雨", pfx("五", "夜雨"))
 sys.exit(1 if fails else 0)

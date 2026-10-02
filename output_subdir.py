@@ -83,6 +83,46 @@ def next_sequence(directory) -> int:
     return highest + 1
 
 
+def safe_file_token(name) -> str:
+    """把「名称」清洗成可安全用作文件名一段的字符串。
+
+    参数:
+        name (str|None): 用户输入的原始名称(可能带路径分隔或 Windows 非法字符)。
+
+    返回:
+        str: 清洗后的文件名段(空白折叠成 "-", 首尾的 ". -" 去掉, 最长 120); 空串表示没有可用名称。
+    """
+    text = str(name or "")
+    text = text.replace("/", "-").replace("\\", "-")
+    for ch in _UNSAFE_CHARS:
+        text = text.replace(ch, "-")
+    text = re.sub(r"[\r\n\t ]+", "-", text.strip())
+    return text.strip(" .-")[:120]
+
+
+def sequence_prefix(sequence, name) -> str:
+    """文件名前缀 =「序列号_名称」(加载节点输出给各预览保存节点的 filename_prefix)。
+
+    序列号按 5 位补零, 空值/非法值按 0 处理(与「保存帧」落盘的 <序列号>_<名称>.png 同口径:
+    没填编号就是 00000); 名称为空时只给序列号(不补下划线, 免得出现 "00005_")。
+
+    参数:
+        sequence (str|int|None): 序列号(通常形如 "00005", 非数字则原样清洗后使用)。
+        name (str|None): 名称(如 "夜雨"), 由 safe_file_token 清洗。
+
+    返回:
+        str: "00005_夜雨"; 名称为空时 "00005"; 名称为空且序列号也清洗成空串时 ""。
+    """
+    token = safe_file_token(name)
+    try:
+        seq = "%05d" % max(0, int(str(sequence).strip() or 0))
+    except (TypeError, ValueError):
+        seq = safe_file_token(sequence)
+    if not token:
+        return seq
+    return seq + "_" + token if seq else token
+
+
 def sequence_dir(workflow_name, prompt=None, directory=None) -> str:
     """解析编号/产物所在目录的**绝对路径**(子目录名按 resolve_subdir 口径取)。
 

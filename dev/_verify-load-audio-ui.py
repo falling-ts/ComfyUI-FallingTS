@@ -131,7 +131,7 @@ def main():
         check("输入 = audio_in/name/sequence/audio/audioUI/upload",
               info["inputs"] == ["audio_in:AUDIO", "name:STRING", "sequence:STRING", "audio:COMBO",
                                  "audioUI:AUDIO_UI", "upload:AUDIOUPLOAD"], info["inputs"])
-        check("输出 = audio:AUDIO", info["outputs"] == ["audio:AUDIO"], info["outputs"])
+        check("输出 = audio:AUDIO + prefix:STRING(文件名前缀)", info["outputs"] == ["audio:AUDIO", "prefix:STRING"], info["outputs"])
 
         # 序列号: 新节点会自动向后端取一次
         seq = cdp.js("(window.__node.widgets.find(w => w.name === 'sequence') || {}).value")
@@ -160,7 +160,8 @@ def main():
                                    {"name": "sequence", "type": "STRING", "widget": {"name": "sequence"}, "link": None},
                                    {"name": "audio", "type": "COMBO", "widget": {"name": "audio"}, "link": None},
                                    {"name": "upload", "type": "IMAGEUPLOAD", "widget": {"name": "upload"}, "link": None}],
-             "outputs": [{"name": "audio", "type": "AUDIO", "slot_index": 0, "links": []}],
+             "outputs": [{"name": "audio", "type": "AUDIO", "slot_index": 0, "links": []},
+                         {"name": "prefix", "type": "STRING", "slot_index": 1, "links": []}],
              "properties": {"Node name for S&R": "FallingTSLoadAudio"},
              "widgets_values": ["name-a", "00007", "0060_背景音乐/_probe_tmp_audio.mp3", None, None, None, None],
              "widgets_values_named": {"name": "name-a", "sequence": "00007",

@@ -4,15 +4,21 @@
 四件事(幂等, 可反复跑):
 
 1. 0050_视频拆帧: 用 FallingTSLoadVideo(加载视频) 取代核心 GetVideoComponents,
-   并照搬「0044_参考视频」PreviewVideo 之后的三个 PreviewImageSave(首帧/关键帧/尾帧);
-   视频来源 = MD 表「原视频」列 → 加载视频的可选输入 video_in
-   (下拉是 COMBO, 前端不允许把 VIDEO 连进 COMBO, 故节点另开了一个 VIDEO 口)。
+   并照搬「0044_参考视频」PreviewVideo 之后的三个 PreviewImageSave(首帧/关键帧/尾帧)。
 2. 0051_视频拆音: 加载视频的 audio 输出 → FallingTSAudioTrim(波形截段) →
    三个 PreviewAudioSave(音频处理链同样来自「0044_参考视频」尾部)。
-3. 0070_截取声音: 用 FallingTSLoadAudio(加载音频) 取音频 —— MD 表「原声音」列接它的
-   audio_in(与 video_in 同一套: 下拉是 COMBO, 连不进 AUDIO), 再走同一条截取链
+3. 0070_截取声音: 用 FallingTSLoadAudio(加载音频) 取音频 → 同一条截取链
    (FallingTSAudioTrim → 多个 PreviewAudioSave, 即「截取音频预览」)。
-4. 0040..0044: 删掉 PreviewVideo 之后的截帧链(首帧/关键帧/尾帧保存)与整条截音链
+4. 0035_场景截帧: 补齐 video/audio/prefix 输出端口(+ 老存档的选中帧端口整体后移), 并把
+   文件名前缀接到十个保存节点上、后缀补下划线。0035 的结构自 2026-10-02 起由本函数维护 ——
+   原来"从 0030 的 PreviewVideo 尾部搬运"的 make-0035-scene.py 已退休(0030 尾部已清空)。
+
+**这三个工作流不要 md 数据表节点**(2026-10-02): 源文件由加载节点自身的下拉给出(节点本身
+就是"起始的加载"), 文件名前缀 = 加载节点的 prefix 输出「序列号_名称」(见
+output_subdir.sequence_prefix), 一条线分发给本图所有预览/保存节点 —— 前缀不再来自 MD 表的 ID 列。
+故成品目录退回工作流名(0050_视频拆帧/ 等), 与「没有 md 表就退回工作流名」的既有口径一致。
+
+5. 0040..0044: 删掉 PreviewVideo 之后的截帧链(首帧/关键帧/尾帧保存)与整条截音链
    (截段 + 三个音频保存) + 分发文件名前缀的 Reroute; 预览视频节点只留 video 输出,
    文件名前缀改为 MD 表 ID 直连(与 0030/0031/0032 已完成的清理同口径)。
 
@@ -110,25 +116,6 @@ def io(name, kind, link=None, widget=True) -> dict:
     return item
 
 
-def reroute(pos, order) -> dict:
-    return {
-        "id": 0,
-        "type": "Reroute",
-        "pos": list(pos),
-        "size": [75, 26],
-        "flags": {},
-        "order": order,
-        "mode": 0,
-        "inputs": [{"name": "", "type": "*", "widget": {"name": "value"}, "link": None}],
-        "outputs": [{"name": "", "type": "STRING", "slot_index": 0, "links": []}],
-        "properties": {
-            "showOutputText": False,
-            "horizontal": False,
-            "ue_properties": {"widget_ue_connectable": {}, "version": "7.8", "input_ue_unconnectable": {}},
-        },
-    }
-
-
 def md_note(node_id: int, text: str, pos, size, order) -> dict:
     return {
         "id": node_id,
@@ -153,10 +140,12 @@ def md_note(node_id: int, text: str, pos, size, order) -> dict:
 
 
 def load_video_node(pos, size, order, frames: int) -> dict:
-    """加载视频节点: 输入端插 video_in(VIDEO), 输出端 video + audio + image_1..N。
+    """加载视频节点: 输入端插 video_in(VIDEO), 输出端 video + audio + prefix + image_1..N。
 
     输入顺序按运行时实测顺序 —— 可选输入 video_in 排在 required 之前:
-    video_in / name / sequence / video / upload。
+    video_in / name / sequence / video / upload;
+    输出顺序 video(0) / audio(1) / prefix(2) / image_1..(3 起) —— 前端的 syncFrameState
+    按 startIdx=3 增删选中帧端口, prefix 必须排在选中帧之前, 否则会被它裁掉。
     """
     n = {
         "id": 0,
@@ -170,6 +159,14 @@ def load_video_node(pos, size, order, frames: int) -> dict:
         "outputs": [
             {"localized_name": "video", "name": "video", "type": "VIDEO", "slot_index": 0, "links": []},
             {"localized_name": "audio", "name": "audio", "type": "AUDIO", "slot_index": 1, "links": []},
+            {
+                "localized_name": "prefix",
+                "label": "文件名前缀",
+                "name": "prefix",
+                "type": "STRING",
+                "slot_index": 2,
+                "links": [],
+            },
         ],
         "title": "视频 加载/截帧",
         "properties": {
@@ -341,84 +338,74 @@ def audio_trim() -> dict:
 
 def build_0050() -> dict:
     wf = load("0050_视频拆帧")
-    md = place(node_of(wf, 1), 1, (0, 0), (480, 570), title="MD 数据表 (视频拆帧)", order=0)
     nodes = [
-        md,
-        place(reroute((560, 0), 1), 2, (560, 0), (75, 26), order=1),
-        place(load_video_node((715, 0), (930, 1300), 2, 3), 3, (715, 0), (930, 1300), order=2),
-        place(preview_image_save("首帧", "预览保存-首帧"), 4, (1725, 0), (640, 760), order=3),
-        place(preview_image_save("关键帧", "预览保存-关键帧"), 5, (1725, 820), (640, 760), order=4),
-        place(preview_image_save("尾帧", "预览保存-尾帧"), 6, (1725, 1640), (640, 760), order=5),
-        md_note(7, 
+        place(load_video_node((0, 0), (930, 1300), 0, 3), 1, (0, 0), (930, 1300), order=0),
+        place(preview_image_save("_首帧", "预览保存-首帧"), 2, (1010, 0), (640, 760), order=1),
+        place(preview_image_save("_关键帧", "预览保存-关键帧"), 3, (1010, 820), (640, 760), order=2),
+        place(preview_image_save("_尾帧", "预览保存-尾帧"), 4, (1010, 1640), (640, 760), order=3),
+        md_note(5,
             "## 视频拆帧\n\n"
-            "- 用「加载视频」(FallingTSLoadVideo) 载入原视频: 视频来源 = MD 表的 原视频 列, 接在节点的 video_in 上\n"
+            "- 「加载视频」(FallingTSLoadVideo) 自己就是起点: 在它的下拉里选 output 里的原视频(点「刷新」重扫候选)\n"
             "- 点「截帧」在播放位置取帧(可删/可多次), 点「完成」把选中帧输出到下游\n"
             "- 选中帧 1/2/3 → 首帧/关键帧/尾帧 三个「预览保存」; 单帧也能用节点自带的「保存帧」直接存\n"
-            "- 文件名前缀 = MD 表格 ID(由 Reroute 分发到三个保存节点)\n"
-            "- 拆音见 0051_视频拆音",
-            (-600, 0), (520, 760), 6,
+            "- 文件名前缀 = 加载视频的「文件名前缀」输出(序列号_名称, 一条线分发给三个保存节点); 后缀区分首帧/关键帧/尾帧\n"
+            "- 本工作流不读数据表; 拆音见 0051_视频拆音",
+            (-600, 0), (520, 760), 4,
         ),
     ]
     links = [
-        [1, 1, 1, 3, 0, "VIDEO"],
-        [2, 1, 0, 2, 0, "STRING"],
-        [3, 3, 2, 4, 0, "IMAGE"],
-        [4, 3, 3, 5, 0, "IMAGE"],
-        [5, 3, 4, 6, 0, "IMAGE"],
-        [6, 2, 0, 4, 1, "STRING"],
-        [7, 2, 0, 5, 1, "STRING"],
-        [8, 2, 0, 6, 1, "STRING"],
+        [1, 1, 3, 2, 0, "IMAGE"],
+        [2, 1, 4, 3, 0, "IMAGE"],
+        [3, 1, 5, 4, 0, "IMAGE"],
+        [4, 1, 2, 2, 1, "STRING"],
+        [5, 1, 2, 3, 1, "STRING"],
+        [6, 1, 2, 4, 1, "STRING"],
     ]
     wf["nodes"] = nodes
     wf["links"] = links
     wf["groups"] = []
-    wf["last_node_id"] = 7
-    wf["last_link_id"] = 8
-    wf["extra"] = {"ds": {"scale": 0.45, "offset": [2257.777777777778, 544]}, "ue_links": []}
+    wf["last_node_id"] = 5
+    wf["last_link_id"] = 6
+    wf["extra"] = {"ds": {"scale": 0.55, "offset": [1000, 700]}, "ue_links": []}
     relink(wf)
     return wf
 
 
 def build_0051() -> dict:
     wf = load("0051_视频拆音")
-    md = node_of(wf, 1)
-    place(md, 1, (0, 0), (480, 570), order=0)
     nodes = [
-        md,
-        place(reroute((560, 0), 1), 2, (560, 0), (75, 26), order=1),
-        place(load_video_node((715, 0), (930, 1300), 2, 1), 3, (715, 0), (930, 1300), order=2),
-        place(audio_trim(), 4, (1725, 0), (660, 660), order=3),
-        place(preview_audio_save("预览音频-1"), 5, (2465, 0), (660, 660), order=4),
-        place(preview_audio_save("预览音频-2"), 6, (2465, 720), (660, 660), order=5),
-        place(preview_audio_save("预览音频-3"), 7, (2465, 1440), (660, 660), order=6),
-        md_note(8, 
+        place(load_video_node((0, 0), (930, 1300), 0, 1), 1, (0, 0), (930, 1300), order=0),
+        place(audio_trim(), 2, (1010, 0), (660, 660), order=1),
+        place(preview_audio_save("预览音频-1"), 3, (1750, 0), (660, 660), order=2),
+        place(preview_audio_save("预览音频-2"), 4, (1750, 720), (660, 660), order=3),
+        place(preview_audio_save("预览音频-3"), 5, (1750, 1440), (660, 660), order=4),
+        md_note(6,
             "## 视频拆音\n\n"
-            "- 用「加载视频」(FallingTSLoadVideo) 载入原视频: 视频来源 = MD 表的 原视频 列, 接在节点的 video_in 上\n"
+            "- 「加载视频」(FallingTSLoadVideo) 自己就是起点: 在它的下拉里选 output 里的原视频(点「刷新」重扫候选)\n"
             "- 加载视频直接输出 audio 音轨(拆音不需要截帧, 不受「完成」门控)\n"
             "- 音轨进「音频截段」: 波形上拖两侧把手选区 → 点「截段」累积(可多段) → 点「完成」输出 截段 1/2/3\n"
             "- 三段各接一个「预览音频」, 可试听并点「保存」落盘\n"
-            "- 文件名前缀 = MD 表格 ID(由 Reroute 分发)",
-            (-600, 0), (520, 760), 7,
+            "- 文件名前缀 = 加载视频的「文件名前缀」输出(序列号_名称, 一条线分发给截段与三个预览)\n"
+            "- 本工作流不读数据表",
+            (-600, 0), (520, 760), 5,
         ),
     ]
     links = [
-        [1, 1, 1, 3, 0, "VIDEO"],
-        [2, 1, 0, 2, 0, "STRING"],
-        [3, 3, 1, 4, 0, "AUDIO"],
-        [4, 2, 0, 4, 1, "STRING"],
-        [5, 2, 0, 5, 1, "STRING"],
-        [6, 2, 0, 6, 1, "STRING"],
-        [7, 2, 0, 7, 1, "STRING"],
-        [8, 4, 1, 5, 0, "AUDIO"],
-        [9, 4, 2, 6, 0, "AUDIO"],
-        [10, 4, 3, 7, 0, "AUDIO"],
+        [1, 1, 1, 2, 0, "AUDIO"],
+        [2, 1, 2, 2, 1, "STRING"],
+        [3, 1, 2, 3, 1, "STRING"],
+        [4, 1, 2, 4, 1, "STRING"],
+        [5, 1, 2, 5, 1, "STRING"],
+        [6, 2, 1, 3, 0, "AUDIO"],
+        [7, 2, 2, 4, 0, "AUDIO"],
+        [8, 2, 3, 5, 0, "AUDIO"],
     ]
     wf["nodes"] = nodes
     wf["links"] = links
     wf["groups"] = []
-    wf["last_node_id"] = 8
-    wf["last_link_id"] = 10
-    wf["extra"] = {"ds": {"scale": 0.45, "offset": [2133.3333333333335, 596.0000542534722]}, "ue_links": []}
+    wf["last_node_id"] = 6
+    wf["last_link_id"] = 8
+    wf["extra"] = {"ds": {"scale": 0.55, "offset": [1100, 700]}, "ue_links": []}
     relink(wf)
     return wf
 
@@ -427,6 +414,15 @@ def build_0051() -> dict:
 
 
 def fix_0035() -> dict:
+    """0035: 端口规范化(video/audio/prefix + 选中帧) + 文件名前缀接到每个保存节点。
+
+    ① 节点 18 的输入/输出按当前 schema 重写 —— video(0) / audio(1) / prefix(2) /
+       image_1..N(3 起): 老存档里没有音频/前缀口、选中帧从端口 1 起, 这里按**输出名**
+       把连线搬到新槽位(重跑不叠加);
+    ② 每个 PreviewImageSave 的 filename_prefix 改接加载视频的 prefix 输出(「序列号_名称」),
+       后缀补一个下划线(前缀与后缀之间也要有分隔: 00001_陈落_前面.png);
+    ③ 「输出帧数」控件对齐到实际选中帧端口数(前端 syncFrameState 按 3 + total 增删端口)。
+    """
     wf = load("0035_场景截帧")
     n = node_of(wf, 18)
     n["inputs"] = [
@@ -436,13 +432,19 @@ def fix_0035() -> dict:
         io("video", "COMBO"),
         io("upload", "IMAGEUPLOAD"),
     ]
+    frames = [o for o in n["outputs"] if str(o.get("name", "")).startswith("image_")]
     outs = [
-        {"localized_name": "video", "name": "video", "type": "VIDEO", "slot_index": 0, "links": []},
-        {"localized_name": "audio", "name": "audio", "type": "AUDIO", "slot_index": 1, "links": []},
+        {"localized_name": "video", "name": "video", "type": "VIDEO", "links": []},
+        {"localized_name": "audio", "name": "audio", "type": "AUDIO", "links": []},
+        {
+            "localized_name": "prefix",
+            "label": "文件名前缀",
+            "name": "prefix",
+            "type": "STRING",
+            "links": [],
+        },
     ]
-    for o in n["outputs"]:
-        if not str(o.get("name", "")).startswith("image_"):
-            continue
+    for o in frames:
         outs.append(
             {
                 "label": o.get("label") or o["name"],
@@ -454,13 +456,47 @@ def fix_0035() -> dict:
         )
     for slot, o in enumerate(outs):
         o["slot_index"] = slot
-    # 按输出名把连线搬到新槽位(音频插在 slot 1 ⇒ 选中帧整体后移一位; 重跑不叠加)
+    # 按输出名把连线搬到新槽位(audio/prefix 插在前面 ⇒ 选中帧整体后移; 重跑不叠加)
     new_slot = {o["name"]: slot for slot, o in enumerate(outs)}
     old_names = {slot: o.get("name") for slot, o in enumerate(n["outputs"])}
     for link in wf["links"]:
         if link[1] == 18 and link[2] in old_names:
             link[2] = new_slot.get(old_names[link[2]], link[2])
     n["outputs"] = outs
+
+    # 「输出帧数」= 选中帧端口数
+    values = n.get("widgets_values") or []
+    named = n.get("widgets_values_named")
+    if isinstance(named, dict):
+        named["输出帧数"] = len(frames)
+    if len(values) > 10:
+        values[10] = len(frames)
+    n["widgets_values"] = values
+
+    # 每个保存节点: filename_prefix 改接 prefix 输出; 后缀补下划线
+    saves = node_by_type(wf, "PreviewImageSave")
+    save_ids = {s["id"] for s in saves}
+    wf["links"] = [
+        l for l in wf["links"] if not (l[3] in save_ids and l[4] == 1)
+    ]
+    next_link = max((l[0] for l in wf["links"]), default=0) + 1
+    for s in saves:
+        wf["links"].append([next_link, 18, 2, s["id"], 1, "STRING"])
+        next_link += 1
+        named_s = s.get("widgets_values_named")
+        if not isinstance(named_s, dict):
+            continue
+        suffix = str(named_s.get("filename_suffix") or "")
+        if suffix and not suffix.startswith("_"):
+            suffix = "_" + suffix
+        named_s["filename_suffix"] = suffix
+        vals = s.get("widgets_values") or []
+        if len(vals) > 1:
+            vals[0] = ""  # 前缀已改连线, 控件值不再参与提交
+            vals[1] = suffix
+        s["widgets_values"] = vals
+
+    wf["last_link_id"] = max((l[0] for l in wf["links"]), default=wf.get("last_link_id", 0))
     relink(wf)
     return wf
 
@@ -658,10 +694,11 @@ def check(name: str, wf: dict) -> list:
 
 
 def load_audio_node(pos, size, order, title: str) -> dict:
-    """加载音频节点: 输入端 audio_in(AUDIO) + name/sequence/audio/audioUI/upload。
+    """加载音频节点: 输入端 audio_in(AUDIO) + name/sequence/audio/audioUI/upload, 输出 audio + prefix。
 
     输入顺序按运行时实测顺序 —— 可选输入排在 required 之前:
-    audio_in / name / sequence / audio / audioUI / upload。
+    audio_in / name / sequence / audio / audioUI / upload;
+    输出 audio(0) / prefix(1) —— prefix = 「序列号_名称」, 接各预览保存节点的 filename_prefix。
     """
     n = {
         "id": 0,
@@ -680,7 +717,15 @@ def load_audio_node(pos, size, order, title: str) -> dict:
             io("upload", "IMAGEUPLOAD"),
         ],
         "outputs": [
-            {"localized_name": "audio", "name": "audio", "type": "AUDIO", "slot_index": 0, "links": []}
+            {"localized_name": "audio", "name": "audio", "type": "AUDIO", "slot_index": 0, "links": []},
+            {
+                "localized_name": "prefix",
+                "label": "文件名前缀",
+                "name": "prefix",
+                "type": "STRING",
+                "slot_index": 1,
+                "links": [],
+            },
         ],
         "title": title,
         "properties": {
@@ -705,46 +750,41 @@ def load_audio_node(pos, size, order, title: str) -> dict:
 def build_0070() -> dict:
     """0070_截取声音: MD 表(原声音) → 加载音频 → 截取音频(截段) → 多个截取音频预览。"""
     wf = load("0070_截取声音")
-    md = node_of(wf, 1)
-    place(md, 1, (0, 0), (480, 570), order=0)
     nodes = [
-        md,
-        place(reroute((560, 0), 1), 2, (560, 0), (75, 26), order=1),
-        place(load_audio_node((715, 0), (930, 640), 2, "音频 加载/试听"), 3, (715, 0), (930, 640), order=2),
-        place(audio_trim(), 4, (1725, 0), (660, 660), order=3),
-        place(preview_audio_save("截取音频预览-1"), 5, (2465, 0), (660, 660), order=4),
-        place(preview_audio_save("截取音频预览-2"), 6, (2465, 720), (660, 660), order=5),
-        place(preview_audio_save("截取音频预览-3"), 7, (2465, 1440), (660, 660), order=6),
+        place(load_audio_node((0, 0), (930, 640), 0, "音频 加载/试听"), 1, (0, 0), (930, 640), order=0),
+        place(audio_trim(), 2, (1010, 0), (660, 660), order=1),
+        place(preview_audio_save("截取音频预览-1"), 3, (1750, 0), (660, 660), order=2),
+        place(preview_audio_save("截取音频预览-2"), 4, (1750, 720), (660, 660), order=3),
+        place(preview_audio_save("截取音频预览-3"), 5, (1750, 1440), (660, 660), order=4),
         md_note(
-            8,
+            6,
             "## 截取声音\n\n"
-            "- 音频来源 = MD 表的 原声音 列, 接在「加载音频」节点的 audio_in 上(也随时能在节点下拉里手选 output 里的音频)\n"
+            "- 「加载音频」(FallingTSLoadAudio) 自己就是起点: 在它的下拉里选 output 里的音频(点「刷新」重扫候选)\n"
             "- 加载音频直接输出 audio(节点内可试听)\n"
             "- 音频进「截取音频」: 波形上拖两侧把手选区 → 点「截段」累积(可多段) → 点「完成」输出 截段 1/2/3\n"
             "- 每段各接一个「截取音频预览」, 可试听并点「保存」落盘; 段数不够时把该节点的「输出段数」调大即可\n"
-            "- 文件名前缀 = MD 表格 ID(由 Reroute 分发)",
-            (-600, 0), (520, 760), 7,
+            "- 文件名前缀 = 加载音频的「文件名前缀」输出(序列号_名称, 一条线分发给截取音频与三个预览)\n"
+            "- 本工作流不读数据表",
+            (-600, 0), (520, 760), 5,
         ),
     ]
-    nodes[3]["title"] = "截取音频"
+    nodes[1]["title"] = "截取音频"
     links = [
-        [1, 1, 1, 3, 0, "AUDIO"],
-        [2, 1, 0, 2, 0, "STRING"],
-        [3, 3, 0, 4, 0, "AUDIO"],
-        [4, 2, 0, 4, 1, "STRING"],
-        [5, 2, 0, 5, 1, "STRING"],
-        [6, 2, 0, 6, 1, "STRING"],
-        [7, 2, 0, 7, 1, "STRING"],
-        [8, 4, 1, 5, 0, "AUDIO"],
-        [9, 4, 2, 6, 0, "AUDIO"],
-        [10, 4, 3, 7, 0, "AUDIO"],
+        [1, 1, 0, 2, 0, "AUDIO"],
+        [2, 1, 1, 2, 1, "STRING"],
+        [3, 1, 1, 3, 1, "STRING"],
+        [4, 1, 1, 4, 1, "STRING"],
+        [5, 1, 1, 5, 1, "STRING"],
+        [6, 2, 1, 3, 0, "AUDIO"],
+        [7, 2, 2, 4, 0, "AUDIO"],
+        [8, 2, 3, 5, 0, "AUDIO"],
     ]
     wf["nodes"] = nodes
     wf["links"] = links
     wf["groups"] = []
-    wf["last_node_id"] = 8
-    wf["last_link_id"] = 10
-    wf["extra"] = {"ds": {"scale": 0.45, "offset": [2257.777777777778, 544]}, "ue_links": []}
+    wf["last_node_id"] = 6
+    wf["last_link_id"] = 8
+    wf["extra"] = {"ds": {"scale": 0.55, "offset": [1100, 700]}, "ue_links": []}
     relink(wf)
     return wf
 

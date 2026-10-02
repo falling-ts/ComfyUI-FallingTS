@@ -204,6 +204,13 @@ app.registerExtension({
         node.widgets.splice(node.widgets.indexOf(seqWidget) + 1, 0, refreshBtn);
       }
 
+      // 输出端口 1 是 prefix(「序列号_名称」): 前端按 schema 的 display_name 命名端口, 这里统一成
+      // name=prefix / label=文件名前缀(与「加载视频」一致, 后续按端口名引用时不会两处不一致)
+      if (node.outputs?.[1]) {
+        node.outputs[1].name = "prefix";
+        node.outputs[1].label = "文件名前缀";
+      }
+
       // ── 下拉候选: 点开/点节点即自动刷新(见 load_combo_refresh.js) ──
       armComboRefresh(node, "audio");
 
