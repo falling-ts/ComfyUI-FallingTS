@@ -242,8 +242,8 @@ def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str 
     上传视频还没跑过本节点时缓存是空的, 而此时前端播放器已经就绪、播放位置也读得到, 却点
     不了「截帧」(旧行为报「请先运行到该节点」)。这里按请求带来的视频值当场解码一次。
 
-    ⚠️ 缓存**不写预览文件**(file 留空): 前端此时已有播放器, preview-url 不应谎报地址;
-    「完成」时的 partial 提交因此走完整 execute 路径(重新解码并照旧继承 selected_frames)。
+    顺手把视频编码一份到 temp(与 execute 同口径): 页面刷新后 `restoreVideo` 能重建播放器,
+    「完成」时的 partial 提交也能直接命中 execute 的缓存快速路径(不必再解码一遍)。
 
     返回 (缓存, 错误信息); 成功时错误信息为空串。
     """
@@ -263,13 +263,38 @@ def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str 
     except ValueError:
         sequence_value = 0
 
+    # 顺手编码一份预览到 temp(与 execute 同口径): ① 页面刷新后 restoreVideo 能重建播放器;
+    # ② 「完成」时 partial 提交可直接命中 execute 的缓存快速路径, 不必再解码一遍。
+    # 编码失败不影响截帧(只是没有预览), 故单独兜底。
+    file = ""
+    subfolder = ""
+    try:
+        width, height = loaded.get_dimensions()
+        temp_prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
+        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+            temp_prefix,
+            folder_paths.get_temp_directory(),
+            width,
+            height,
+        )
+        ext = Types.VideoContainer.get_extension("mp4")
+        file = f"{filename}_{counter:05}_.{ext}"
+        loaded.save_to(
+            os.path.join(full_output_folder, file),
+            format=Types.VideoContainer.MP4,
+            codec=Types.VideoCodec.AUTO,
+        )
+    except Exception as e:
+        logging.warning("[FallingTS] 懒解码时编码预览失败(不影响截帧): %s", e)
+        file, subfolder = "", ""
+
     cache = {
         "video": loaded,
         "name": name,
         "sequence": max(0, sequence_value),
         "path": path,
-        "file": "",
-        "subfolder": "",
+        "file": file,
+        "subfolder": subfolder,
         "images": parts["images"],
         "audio": parts["audio"],
         "fps": parts["fps"],

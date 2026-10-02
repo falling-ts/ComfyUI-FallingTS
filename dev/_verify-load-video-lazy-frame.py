@@ -148,6 +148,23 @@ def main() -> int:
         check("⑥ /state: 243 帧 + 已选 [121]", st.get("total_frames") == 243 and st.get("selected_frames") == [121],
               st)
 
+        # ⑥b 懒解码同时编码了 temp 预览 → preview-url 可用(页面刷新后播放器能重建)
+        pv = get_json(base + "/fallingts_load_video/preview-url/18")
+        url_path = pv.get("url") or ""
+        status_pv, ctype = 0, ""
+        if pv.get("status") == "ok" and url_path:
+            with urllib.request.urlopen(base + url_path, timeout=60) as pr:
+                status_pv = pr.status
+                ctype = pr.headers.get("Content-Type", "")
+                pr.read(64)
+        check("⑥b 懒解码后有可播放预览 URL", status_pv == 200 and "video" in ctype,
+              {"preview": pv, "status": status_pv, "content_type": ctype})
+
+        # ⑥c 「完成」能置位(懒解码已建好 selected_frames, 后端据此放行下游)
+        s6, _, b6 = post(base + "/fallingts_load_video/done/18", {"frames": [121]})
+        check("⑥c 懒解码后「完成」置位", s6 == 200 and b6.get("done") is True,
+              {"status": s6, "done": b6.get("done")})
+
         # ⑦ save_frames 懒解码兜底(写进临时子目录, 测完删)
         status7, _, body7 = post(base + "/fallingts_load_video/save_frames/18", {
             "frames": [121], "sequence": 0, "name": "懒解码", "dir": TMP_DIR_NAME,
