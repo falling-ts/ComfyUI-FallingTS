@@ -714,6 +714,14 @@ app.registerExtension({
           // 先对齐输出端口/total, 再重绘列表(render 内按新盒高同步节点高度)
           syncFrameState(node, frameList.state);
           frameList.render();
+          // 节点上还没有播放器时(刷新后 / 上传前), 用后端刚建好的 temp 预览补一个;
+          // 已有播放器则不动 —— 改写 src 会让用户正在播放的位置归零, 下一帧就截错地方
+          const host = document.querySelector('[data-node-id="' + node.id + '"]');
+          const players = [
+            node._fallingtsVideoFallback?.videoEl,
+            ...(host ? host.querySelectorAll("video") : []),
+          ].filter((v) => v && v.src);
+          if (!players.length) restoreVideo(node);
         } catch (err) {
           console.error("[FallingTS] 截帧失败:", err);
           app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端", life: 3000 });

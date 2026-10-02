@@ -92,7 +92,7 @@ ComfyUI-FallingTS/
         ├── node_image_middleclick.js   # 节点中键 → 全屏大图预览
         ├── preview-image.js            # PreviewImageSave 底部控件 + 保存按钮
         ├── preview-video.js            # PreviewVideo 底部保存按钮 + 备用播放器/restoreVideo(刷新后从后端重建预览)
-        ├── load_video.js               # FallingTSLoadVideo: 序列号(自动取产物目录最大编号 + 1 / 刷新按钮重算) + 截帧/完成(partial 只跑下游) + 保存帧(<序列号>_<名称>.png) + 选中帧列表 + 备用播放器/restoreVideo(截帧与刷新重建的取帧请求都带 `nodePayload()` 的 video/name/sequence, 供后端懒解码) —— 自 preview-video.js 迁移。输出端口布局 = **video(0) + audio(1) + prefix(2) + image_1..N(从 3 起)**: syncFrameState 的 startIdx=3, 并把老存档里占着端口 1/2 的旧 image_1/image_2 就地纠正成 audio/prefix —— ⚠️ prefix 必须排在选中帧**之前**, 因为 syncFrameState 会把无链接的**尾部**端口裁到「3 + 输出帧数」
+        ├── load_video.js               # FallingTSLoadVideo: 序列号(自动取产物目录最大编号 + 1 / 刷新按钮重算) + 截帧/完成(partial 只跑下游) + 保存帧(<序列号>_<名称>.png) + 选中帧列表 + 备用播放器/restoreVideo(截帧与刷新重建的取帧请求都带 `nodePayload()` 的 video/name/sequence, 供后端懒解码; 截帧成功后若节点上还没有播放器就用后端刚建好的 temp 预览补一个, 已有播放器则不动 —— 改写 src 会把用户正在播放的位置归零) —— 自 preview-video.js 迁移。输出端口布局 = **video(0) + audio(1) + prefix(2) + image_1..N(从 3 起)**: syncFrameState 的 startIdx=3, 并把老存档里占着端口 1/2 的旧 image_1/image_2 就地纠正成 audio/prefix —— ⚠️ prefix 必须排在选中帧**之前**, 因为 syncFrameState 会把无链接的**尾部**端口裁到「3 + 输出帧数」
         ├── load_audio.js               # FallingTSLoadAudio: 序列号(自动取产物目录最大编号 + 1 / 刷新按钮重算, 带代际闸门防"在途刷新覆盖存档值") + 「刷新序列号」按钮 + armComboRefresh(node,"audio") + armComboMenu(node,"audio") + 短守护(onFirstLoad 把 audio 值换候选首项时恢复存档值)。**不含「保存」**(写盘仍归 PreviewAudioSave); 节点内试听播放器由前端 AUDIO_UI 控件提供(后端声明的 audioUI 输入), 故本文件不建播放器
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮 + 内置播放器
         ├── audio-trim.js               # FallingTSAudioTrim 波形+播放器+截段/完成按钮+段列表(刷新后从后端重建)
