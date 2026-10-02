@@ -1,0 +1,227 @@
+# -*- coding: utf-8 -*-
+"""验收: 0050/0051 重构 + 0035 端口迁移 + 0040..0044 尾部清空(真实前端 + 8189 新节点代码)。
+
+用法(工作区根): .venv/Scripts/python.exe custom_nodes/ComfyUI-FallingTS/dev/_verify-005x-decompose.py
+前提: 另起一个临时实例(带新代码)在 8189:
+  cd ComfyUI && D:/AI/Comfy/.venv/Scripts/python.exe main.py --cpu --port 8189 --disable-pinned-memory
+"""
+from __future__ import annotations
+
+import json
+import pathlib
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+from websockets.sync.client import connect
+
+sys.stdout.reconfigure(encoding="utf-8")
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent.parent
+EDGE = [r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe"]
+BASE = "http://127.0.0.1:8189"
+
+FAILURES = []
+
+
+def check(label, ok, detail=None):
+    print(("PASS" if ok else "FAIL") + ": " + label, "" if detail is None else str(detail)[:200])
+    if not ok:
+        FAILURES.append(label)
+
+
+class CDP:
+    def __init__(self, ws_url):
+        self.ws = connect(ws_url, max_size=None, open_timeout=30)
+        self.seq = 0
+
+    def call(self, method, params=None):
+        self.seq += 1
+        mid = self.seq
+        self.ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        while True:
+            msg = json.loads(self.ws.recv())
+            if msg.get("id") == mid:
+                if "error" in msg:
+                    raise RuntimeError(f"{method}: {msg['error']}")
+                return msg.get("result", {})
+
+    def js(self, expr):
+        for _ in range(30):
+            try:
+                res = self.call("Runtime.evaluate", {"expression": expr, "awaitPromise": True, "returnByValue": True})
+            except RuntimeError as exc:
+                if "Execution context was destroyed" in str(exc):
+                    time.sleep(1.2)
+                    continue
+                raise
+            if res.get("exceptionDetails"):
+                d = res["exceptionDetails"]
+                raise RuntimeError("JS 异常: " + str((d.get("exception") or {}).get("description") or d.get("text")))
+            return (res.get("result") or {}).get("value")
+        raise RuntimeError("JS 求值失败")
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+LOADER_JS = """
+window.__loadWf = async (wf) => {
+  app.graph.clear();
+  await app.loadGraphData(wf);
+  await new Promise(r => setTimeout(r, 900));
+  const g = app.graph;
+  const nodes = g._nodes || [];
+  const nm = n => (n.title || n.type);
+  const links = Object.values(g.links || {}).map(l => {
+    const a = g.getNodeById(l.origin_id), b = g.getNodeById(l.target_id);
+    return {
+      fromType: a ? a.type : "?", fromTitle: a ? nm(a) : "?",
+      fromOut: a ? (a.outputs?.[l.origin_slot]?.name ?? "") : "",
+      toType: b ? b.type : "?", toTitle: b ? nm(b) : "?",
+      toIn: b ? (b.inputs?.[l.target_slot]?.name ?? "") : "",
+    };
+  });
+  return {
+    nodes: nodes.length,
+    links: links,
+    nodeList: nodes.map(n => ({
+      id: n.id, type: n.type, title: nm(n),
+      outputs: (n.outputs || []).map(o => o.name),
+      inputs: (n.inputs || []).map(i => i.name),
+      widgets: Object.fromEntries((n.widgets || []).map(w => [w.name, w.value])),
+    })),
+  };
+};
+"""
+
+
+def load(cdp, wf_name):
+    wf = json.loads((ROOT / "workflows" / (wf_name + ".json")).read_text(encoding="utf-8"))
+    lit = json.dumps(json.dumps(wf, ensure_ascii=False))
+    return cdp.js("(async()=>{ return await window.__loadWf(JSON.parse(" + lit + ")); })()")
+
+
+def nodes_of(dump, node_type):
+    return [n for n in dump["nodeList"] if n["type"] == node_type]
+
+
+def link(dump, **kw):
+    found = [l for l in dump["links"] if all(l.get(k) == v for k, v in kw.items())]
+    return found
+
+
+def main():
+    edge = next((p for p in EDGE if pathlib.Path(p).is_file()), None)
+    port = free_port()
+    profile = pathlib.Path(tempfile.mkdtemp(prefix="verify005x-"))
+    proc = subprocess.Popen([edge, "--headless=new", f"--remote-debugging-port={port}",
+                             f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
+                             "--disable-gpu", "--window-size=1800,1100", BASE + "/"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        ws_url = None
+        for _ in range(150):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
+                    for t in json.loads(r.read().decode()):
+                        if t.get("type") == "page" and t.get("url", "").startswith(BASE):
+                            ws_url = t["webSocketDebuggerUrl"]
+                            break
+                if ws_url:
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        cdp = CDP(ws_url)
+        cdp.call("Runtime.enable")
+        cdp.js("(async()=>{const t0=Date.now();while(Date.now()-t0<180000){"
+               "if(window.app?.graph&&window.app.graph._nodes)return true;"
+               "await new Promise(r=>setTimeout(r,300))}return false})()")
+        cdp.js(LOADER_JS)
+        cdp.js("window.__errs=[];window.addEventListener('error',e=>window.__errs.push(String(e.message)))")
+
+        # ── 0050_视频拆帧 ──────────────────────────────────────────────
+        d = load(cdp, "0050_视频拆帧")
+        check("0050 节点构成", len(nodes_of(d, "FallingTSLoadVideo")) == 1 and len(nodes_of(d, "PreviewImageSave")) == 3
+              and len(nodes_of(d, "FallingTSMarkDownTable")) == 1 and len(nodes_of(d, "Reroute")) == 1,
+              "%d 节点 / %d 连线" % (d["nodes"], len(d["links"])))
+        lv = nodes_of(d, "FallingTSLoadVideo")[0]
+        check("0050 加载视频输出 = video/audio/选中帧1..3",
+              lv["outputs"] == ["video", "audio", "image_1", "image_2", "image_3"], lv["outputs"])
+        check("0050 输出帧数 = 3", lv["widgets"].get("输出帧数") == 3, lv["widgets"].get("输出帧数"))
+        check("0050 MD 原视频 → video_in",
+              len(link(d, toType="FallingTSLoadVideo", toIn="video_in", fromType="FallingTSMarkDownTable", fromOut="原视频")) == 1)
+        ok = all(len(link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="PreviewImageSave", toIn="images")) == 1
+                 for i in (1, 2, 3))
+        check("0050 选中帧 1..3 → 三个预览保存", ok)
+        check("0050 Reroute → 三个 filename_prefix",
+              len(link(d, fromType="Reroute", toType="PreviewImageSave", toIn="filename_prefix")) == 3)
+        check("0050 保存节点标题", sorted(n["title"] for n in nodes_of(d, "PreviewImageSave")) == ["预览保存-关键帧", "预览保存-尾帧", "预览保存-首帧"])
+
+        # ── 0051_视频拆音 ──────────────────────────────────────────────
+        d = load(cdp, "0051_视频拆音")
+        check("0051 节点构成", len(nodes_of(d, "FallingTSLoadVideo")) == 1 and len(nodes_of(d, "FallingTSAudioTrim")) == 1
+              and len(nodes_of(d, "PreviewAudioSave")) == 3 and len(nodes_of(d, "Reroute")) == 1,
+              "%d 节点 / %d 连线" % (d["nodes"], len(d["links"])))
+        check("0051 加载视频 audio → 音频截段",
+              len(link(d, fromType="FallingTSLoadVideo", fromOut="audio", toType="FallingTSAudioTrim", toIn="audio")) == 1)
+        check("0051 截段 1..3 → 三个预览音频",
+              all(len(link(d, fromType="FallingTSAudioTrim", fromOut="audio_%d" % i, toType="PreviewAudioSave", toIn="audio")) == 1 for i in (1, 2, 3)))
+        check("0051 Reroute → 截段 + 三个预览音频的 filename_prefix",
+              len(link(d, fromType="Reroute", toIn="filename_prefix")) == 4,
+              [l["toType"] for l in link(d, fromType="Reroute", toIn="filename_prefix")])
+        tr = nodes_of(d, "FallingTSAudioTrim")[0]
+        check("0051 音频截段输出段数 = 3", tr["widgets"].get("输出段数") == 3, tr["widgets"].get("输出段数"))
+
+        # ── 0035_场景截帧(端口从 slot1 起后移一位) ─────────────────────
+        d = load(cdp, "0035_场景截帧")
+        lv = nodes_of(d, "FallingTSLoadVideo")[0]
+        check("0035 加载视频输出 = video/audio/选中帧1..8",
+              lv["outputs"] == ["video", "audio"] + ["image_%d" % i for i in range(1, 9)], lv["outputs"])
+        want = ["单图 前面", "单图 前右", "单图 右面", "单图 右后", "单图 后面", "单图 后左", "单图 左面", "单图 左前"]
+        got = []
+        for i in range(1, 9):
+            hit = link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="PreviewImageSave", toIn="images")
+            got.append(hit[0]["toTitle"] if hit else "(无)")
+        check("0035 八个选中帧仍落在八个单图保存", got == want, got)
+
+        # ── 0040..0044 尾部清空 ────────────────────────────────────────
+        expect_counts = {"0040_文生视频": 27, "0041_首帧视频": 26, "0042_首尾视频": 26,
+                         "0043_关键帧视频": 42, "0044_参考视频": 30}
+        for wf_name, want_nodes in expect_counts.items():
+            d = load(cdp, wf_name)
+            tail_types = [n["type"] for n in d["nodeList"] if n["type"] in ("FallingTSAudioTrim", "PreviewAudioSave", "PreviewImageSave")]
+            check("%s 截帧/截音尾部已清空" % wf_name, not tail_types, tail_types)
+            pv = nodes_of(d, "PreviewVideo")
+            check("%s 预览视频只剩 video 输出" % wf_name, len(pv) == 1 and pv[0]["outputs"] == ["video"],
+                  pv[0]["outputs"] if pv else "无 PreviewVideo")
+            got = link(d, toType="PreviewVideo", toIn="filename_prefix")
+            check("%s 预览视频文件名前缀 ← MD 表 ID" % wf_name,
+                  len(got) == 1 and got[0]["fromType"] == "FallingTSMarkDownTable" and got[0]["fromOut"] == "ID",
+                  got)
+            check("%s 节点数不变(仅删尾部)" % wf_name, d["nodes"] == want_nodes, d["nodes"])
+
+        errs = cdp.js("window.__errs")
+        check("无前端 JS 报错", not errs, errs)
+    finally:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+        subprocess.run(["powershell", "-NoProfile", "-Command",
+                        "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' or Name='chrome.exe'\" | "
+                        f"Where-Object {{ $_.CommandLine -like '*{profile}*' }} | "
+                        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
+                       capture_output=True)
+
+    print()
+    print("FAILURES: " + (", ".join(FAILURES) if FAILURES else "无"))
+    sys.exit(1 if FAILURES else 0)
+
+
+main()

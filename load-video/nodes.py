@@ -21,7 +21,14 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
 
 3. **「保存帧」**: 把选中帧逐张写成 output/<目录>/<序列号>_<名称>.png。
 
-4. **截帧/完成/选中帧输出**(自 PreviewVideo 迁移; 预览视频节点只保留「保存」):
+4. **音频输出**: 执行时 get_components() 的音轨直接给 `audio` 输出 —— 拆音不需要截帧,
+    该输出**不受「完成」门控**(只有 image_1..N 被门控), 于是「加载视频 → 音频后处理」这条链
+    在未点「完成」时就能跑通。
+
+5. **「原视频」可外部传入**: 可选 VIDEO 输入 `video_in`(数据表「原视频」列等)—— 连上就用它,
+    不连则用自身下拉(下拉是 COMBO, 前端不允许把 VIDEO/STRING 连进 COMBO, 故另开这一个口)。
+
+6. **截帧/完成/选中帧输出**(自 PreviewVideo 迁移; 预览视频节点只保留「保存」):
    - 执行时把视频编码到 temp 并 UI.PreviewVideo 让前端播放, 同时 get_components() 拆出
      帧集合缓存; 前端「截帧」按钮按播放时间取帧, 「完成」后输出 image_1..image_N;
    - 未「完成」时输出全部 ExecutionBlocker(None) 阻断下游(到本节点停下, 等截帧);
@@ -196,12 +203,16 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         """定义节点 schema(V3 规范)。
 
         返回:
-            IO.Schema: node_id/display_name/category/description, 输入 name + sequence + video,
-            输出 video + image_1..image_MAX_FRAMES, hidden 含 prompt+extra_pnginfo+unique_id,
+            IO.Schema: node_id/display_name/category/description, 输入 name + sequence + video +
+            video_in(可选), 输出 video + audio + image_1..image_MAX_FRAMES,
+            hidden 含 prompt+extra_pnginfo+unique_id,
             标记 is_output_node=True(有 UI 预览, 且是截帧后 partial 提交的锚点)。
         """
         files = _list_relative(folder_paths.get_output_directory())
-        outputs = [IO.Video.Output("video", tooltip="加载的视频(原样透传, 供下游拆解/编辑)。")]
+        outputs = [
+            IO.Video.Output("video", tooltip="加载的视频(原样透传, 供下游拆解/编辑)。"),
+            IO.Audio.Output("audio", tooltip="视频的音轨(拆音用; 不受「完成」门控)。"),
+        ]
         outputs += [
             IO.Image.Output(
                 f"image_{i}",
@@ -246,6 +257,13 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
                     ),
                     tooltip="要加载的视频(下拉来自 output 目录, 含数字目录内部的资源; 也可直接上传)",
                 ),
+                # 下拉是 COMBO, 前端不允许把 VIDEO/STRING 连进 COMBO(实测 isValidConnection 为假),
+                # 故另开一个 VIDEO 口给「数据表原视频列」这类外部来源
+                IO.Video.Input(
+                    "video_in",
+                    optional=True,
+                    tooltip="可选: 外部传入的视频(如数据表「原视频」列); 连上就用它, 不连则用上面的下拉",
+                ),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],
             is_output_node=True,
@@ -253,23 +271,25 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, video, name: str = "", sequence: str = "") -> IO.NodeOutput:
+    def execute(cls, video=None, video_in=None, name: str = "", sequence: str = "") -> IO.NodeOutput:
         """节点执行入口: 加载视频 → 编码 temp 供预览 → 拆帧缓存 → 按「完成」输出选中帧。
 
         逻辑:
         - 已「完成」且已有帧缓存: 直接取缓存输出(partial 提交时本节点会再次执行, 走这条
           路径不重新解码视频), 不重新编码 temp;
-        - 未「完成」: 解码视频并编码到 temp 预览, 拆帧缓存, 输出全部 ExecutionBlocker(None)
-          阻断下游(合成/保存都不跑, "到本节点就停下, 等截帧"), 但 UI.PreviewVideo 照常发出;
-        - 「完成」: 输出视频 + 选中帧 image_1..image_MAX_FRAMES(未选中槽 None)。
+        - 未「完成」: 解码视频并编码到 temp 预览, 拆帧缓存, 音轨照常输出, 但视频与选中帧
+          输出 ExecutionBlocker(None) 阻断下游(合成/保存都不跑, "到本节点就停下, 等截帧"),
+          UI.PreviewVideo 照常发出 —— 拆音不需要截帧, 故音频不受「完成」门控;
+        - 「完成」: 输出视频 + 音轨 + 选中帧 image_1..image_MAX_FRAMES(未选中槽 None)。
 
         参数:
-            video (str): 视频文件名(相对 output, 形如 0035_场景截帧/00001_陈落.mp4)。
+            video (str | None): 视频文件名(相对 output, 形如 0035_场景截帧/00001_陈落.mp4)。
+            video_in (Video | None): 外部传入的视频(数据表「原视频」列等), 有值时优先于 video。
             name (str, 默认 ""): 保存帧的文件名。
             sequence (str, 默认 ""): 保存帧的编号(5 位文本, 如 "00005"; 缓存起来供「保存帧」兜底)。
 
         返回:
-            IO.NodeOutput: 视频 + 64 个选中帧槽(未选中/未完成时按上述语义填)。
+            IO.NodeOutput: 视频 + 音轨 + 64 个选中帧槽(未选中/未完成时按上述语义填)。
         """
         nid = getattr(cls.hidden, "unique_id", None)
         nid_str = str(nid) if nid else ""
@@ -281,14 +301,20 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         if nid_str in _done and cached and cached.get("file"):
             return IO.NodeOutput(
                 cached.get("video"),
+                cached.get("audio"),
                 *_frames_from_cache(cached, cached.get("selected_frames") or []),
                 ui=UI.PreviewVideo([UI.SavedResult(cached["file"], cached.get("subfolder") or "", IO.FolderType.temp)]),
             )
 
-        video_path = folder_paths.get_annotated_filepath(
-            video, default_dir=folder_paths.get_output_directory()
-        )
-        loaded = InputImpl.VideoFromFile(video_path)
+        if video_in is not None:
+            loaded = video_in
+            source = video_in.get_stream_source()
+            video_path = source if isinstance(source, str) else ""
+        else:
+            video_path = folder_paths.get_annotated_filepath(
+                video, default_dir=folder_paths.get_output_directory()
+            )
+            loaded = InputImpl.VideoFromFile(video_path)
 
         width, height = loaded.get_dimensions()
         prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
@@ -310,9 +336,11 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         try:
             components = loaded.get_components()
             images = components.images
+            audio = components.audio
             fps = float(components.frame_rate) if components.frame_rate else 0.0
         except Exception:
             images = None
+            audio = None
             fps = 0.0
 
         try:
@@ -330,18 +358,29 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
             "file": file,
             "subfolder": subfolder,
             "images": images,
+            "audio": audio,
             "fps": fps,
             "selected_frames": selected_frames,
         }
 
         ui = UI.PreviewVideo([UI.SavedResult(file, subfolder, IO.FolderType.temp)])
         if nid_str not in _done:
-            # 未「完成」: 阻断下游, 但预览照发(视频照常出现在节点上供播放/截帧)
-            return IO.NodeOutput(*([ExecutionBlocker(None)] * (1 + MAX_FRAMES)), ui=ui)
-        return IO.NodeOutput(loaded, *_frames_from_cache(_last_output[nid_str], selected_frames), ui=ui)
+            # 未「完成」: 视频与选中帧阻断下游, 音轨照常输出(拆音不需要截帧), 预览照发
+            return IO.NodeOutput(
+                ExecutionBlocker(None),
+                audio,
+                *([ExecutionBlocker(None)] * MAX_FRAMES),
+                ui=ui,
+            )
+        return IO.NodeOutput(
+            loaded,
+            audio,
+            *_frames_from_cache(_last_output[nid_str], selected_frames),
+            ui=ui,
+        )
 
     @classmethod
-    def fingerprint_inputs(cls, video=None, **kwargs):
+    def fingerprint_inputs(cls, video=None, video_in=None, **kwargs):
         """缓存失效签名: 文件名 + 文件 mtime + 选中帧 + 是否完成 + 重置代际。
 
         截帧/删帧/完成都改变缓存里的 selected_frames/_done, 「重置」递增 _reset_generation;
@@ -353,13 +392,17 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         cached = _last_output.get(nid_str) or {}
 
         stamp = video
-        try:
-            path = folder_paths.get_annotated_filepath(
-                video, default_dir=folder_paths.get_output_directory()
-            )
-            stamp = (video, os.path.getmtime(path))
-        except Exception:
-            pass
+        if video_in is not None:
+            source = video_in.get_stream_source()
+            stamp = (str(source), os.path.getmtime(source) if isinstance(source, str) else None)
+        else:
+            try:
+                path = folder_paths.get_annotated_filepath(
+                    video, default_dir=folder_paths.get_output_directory()
+                )
+                stamp = (video, os.path.getmtime(path))
+            except Exception:
+                pass
 
         return (
             stamp,
@@ -370,8 +413,13 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def validate_inputs(cls, video, **kwargs) -> bool | str:
-        """文件不存在时给出明确提示(内置 LoadVideo 同口径; 值默认按 output 解析)。"""
+    def validate_inputs(cls, video=None, video_in=None, **kwargs) -> bool | str:
+        """文件不存在时给出明确提示(内置 LoadVideo 同口径; 值默认按 output 解析)。
+
+        经 video_in 连进来的视频已由上游加载, 不按文件名再查一次(此时下拉值可以是空的)。
+        """
+        if video_in is not None:
+            return True
         try:
             path = folder_paths.get_annotated_filepath(
                 video, default_dir=folder_paths.get_output_directory()
