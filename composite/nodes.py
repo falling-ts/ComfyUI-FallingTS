@@ -144,7 +144,7 @@ class FallingTSImageCompositeNode:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "composite"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
 
     @staticmethod
     def _clamp_total(total) -> int:

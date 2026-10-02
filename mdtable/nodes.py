@@ -607,7 +607,7 @@ class FallingTSMarkDownTableNode:
         for i in range(MAX_OUTPUTS)
     )
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/表格"
+    CATEGORY = "FallingTS"
     DESCRIPTION = (
         "从 md 文件解析数据表: 系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → "
         "节点内按「标题(类型)」渲染可编辑表单 (IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT, "

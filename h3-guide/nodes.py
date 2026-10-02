@@ -40,7 +40,7 @@ class FallingTSH3AddGuideNode(io.ComfyNode):
         return io.Schema(
             node_id="FallingTSH3AddGuide",
             display_name="FallingTS H3 引导锚定 (None 安全)",
-            category="FallingTS/H3",
+            category="FallingTS",
             description=(
                 "把 1 张图 (或音频) 锚定到 MiniMax H3 视频的任意帧。image 与 audio 同为 None 时"
                 "原样透传 positive (该列无锚点, 不报错), 因此关键帧列可以留空。"

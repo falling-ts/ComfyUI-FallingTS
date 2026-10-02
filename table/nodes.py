@@ -135,7 +135,7 @@ class FallingTSTableNode:
         for i in range(MAX_COLS)
     )
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/表格"
+    CATEGORY = "FallingTS"
     DESCRIPTION = (
         "通用 Excel 式表格 (数据内嵌工作流): 顶部「选择」下拉选行, 输出该行 "
         "A/B/C... 各列字符串; 行数/列数可调 (最少 1), 输出端口随列数增减。"

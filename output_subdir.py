@@ -17,12 +17,18 @@
 from __future__ import annotations
 
 import os
+import re
+
+import folder_paths
 
 # md 数据表节点的 class_type (与 mdtable/nodes.py 的注册名一致)
 MD_TABLE_CLASS = "FallingTSMarkDownTable"
 
 # 目录名里不允许出现的字符(Windows 非法字符 + 路径分隔符)
 _UNSAFE_CHARS = '<>:"/\\|?*'
+
+# 产物编号口径: 目录里以「数字_」开头的**文件**(与遮罩成品的 5 位编号同一套)
+_SEQ_FILE_RE = re.compile(r"^(\d+)_")
 
 
 def safe_dir_name(name) -> str:
@@ -45,6 +51,52 @@ def safe_dir_name(name) -> str:
         text = text.replace(ch, "_")
     text = text.strip().strip(".")
     return "" if text in ("", ".", "..") else text
+
+
+def next_sequence(directory) -> int:
+    """下一个可用编号: 目录里已有 "数字_" 命名的**文件**的最大编号 + 1。
+
+    只数文件 —— 目录名同样以数字开头(0011_万物建模/), 把它算进编号会在
+    workflow_name 取不到(退回 output 根目录)时得到毫无意义的巨大值。
+    目录不存在或没有编号文件时返回 0(与「第一个产物」的约定一致)。
+
+    参数:
+        directory (str|None): 产物目录(通常是 output/<子目录名>)。
+
+    返回:
+        int: 下一个可用编号; 目录不存在/为空/没有编号文件时为 0。
+    """
+    if not directory:
+        return 0
+    try:
+        entries = list(os.scandir(directory))
+    except OSError:
+        return 0
+
+    highest = -1
+    for entry in entries:
+        if not entry.is_file():
+            continue
+        matched = _SEQ_FILE_RE.match(entry.name)
+        if matched:
+            highest = max(highest, int(matched.group(1)))
+    return highest + 1
+
+
+def sequence_dir(workflow_name, prompt=None, directory=None) -> str:
+    """解析编号/产物所在目录的**绝对路径**(子目录名按 resolve_subdir 口径取)。
+
+    参数:
+        workflow_name (str|None): 前端传来的当前工作流名(子目录名兜底)。
+        prompt (dict|None): API prompt(用于优先取 md 表文件名作子目录名)。
+        directory (str|None): 显式指定的子目录名(优先于前两者)。
+
+    返回:
+        str: 目录绝对路径; 解析不出子目录名时返回 output 根目录。
+    """
+    sub = safe_dir_name(directory) or resolve_subdir(workflow_name, prompt)
+    root = folder_paths.get_output_directory()
+    return os.path.join(root, sub) if sub else root
 
 
 def _node_order(node_id) -> tuple:

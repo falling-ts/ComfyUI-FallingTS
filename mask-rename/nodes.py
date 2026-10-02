@@ -17,7 +17,8 @@
   - output/0010_灰度遮罩/: 成品 {base}.png(遮罩编辑器只服务「灰度遮罩」资源表)
   - input/clipspace/: 遮罩编辑文件(clipspace-*, 可重新编辑)
 
-base 名 = 前端传入 > 预览节点 execute 时缓存的 filename_prefix(即 MD 行 ID) > 兜底 mask-{ts}。
+base 名 = 「加载图像」节点传入的 name(按目录已有 5 位编号自增 → 0000N_名称)
+> 前端传入的 base > 预览节点 execute 时缓存的 filename_prefix(即 MD 行 ID) > 兜底 mask-{ts}。
 ⚠️ 该缓存由 preview-image 维护, 键为「<工作流根 id>::<节点 id>」, 必须经其 _cache_get 读。
 """
 
@@ -61,6 +62,33 @@ _RECENT_MS = 10 * 60 * 1000
 # 遮罩编辑器只服务「灰度遮罩」资源表, 故成品固定归入 0010_灰度遮罩/,
 # 与 preview-image 的「按 md 表文件名建子目录」保持一致的目录层级。
 _MASK_TABLE_DIR = "0010_灰度遮罩"
+
+# 成品编号口径: 0010_灰度遮罩 里已有的 5 位编号 + 1(00001_、00002_ …)
+_NUMBERED_RE = re.compile(r"^(\d{5})_")
+
+
+def _next_numbered_base(out_dir: str, name: str) -> str:
+    """按目录里已有的 5 位编号自增, 拼成 0000N_名称(不含扩展名)。
+
+    编号只看已有的「五位数字_」前缀(与资源表 00001_陈落 那套编号同一口径);
+    目标文件已存在(并发保存撞号)时顺延到下一个空号, 不覆盖刚写下的成品。
+    """
+    highest = 0
+    try:
+        for entry in os.listdir(out_dir):
+            matched = _NUMBERED_RE.match(entry)
+            if matched:
+                highest = max(highest, int(matched.group(1)))
+    except OSError:
+        pass
+
+    number = highest + 1
+    for _ in range(1000):
+        candidate = f"{number:05d}_{name}"
+        if not os.path.exists(os.path.join(out_dir, candidate + ".png")):
+            return candidate
+        number += 1
+    return f"{number:05d}_{name}"
 
 
 def _sanitize_base(name: str) -> str:
@@ -179,11 +207,14 @@ async def _rename_mask(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # 「加载图像」节点传来的「名称」: 有值就按 0010_灰度遮罩 里的 5 位编号自增命名
+    mask_name = _sanitize_base(str(data.get("name") or ""))
+
     # base 名: 前端传入 > 预览节点缓存 filename_prefix > 兜底 mask-{ts}
     # 缓存键带工作流作用域, 故必须经 _cache_get(node_id, workflow_id) 读
     # (workflow_id 由前端给 app.rootGraph.id; 未给时 _cache_get 退化为纯节点 id)
     base = _sanitize_base(str(data.get("base") or ""))
-    if not base and node_id:
+    if not mask_name and not base and node_id:
         # 读缓存失败只该让命名退化, 不该把整个路由打成 500:
         # 500 会被前端当成「整理失败」→ 连复制都不做, 用户看到的只有控制台一行警告。
         try:
@@ -213,6 +244,10 @@ async def _rename_mask(request: web.Request) -> web.Response:
         return web.json_response(
             {"ok": False, "error": f"无法创建成品目录 {_MASK_TABLE_DIR}: {e}"}, status=500
         )
+
+    # 带了名称 ⇒ 用「自增编号 + 名称」命名(旧口径的 base 让位)
+    if mask_name:
+        base = _next_numbered_base(out_dir, mask_name)
 
     out_file = os.path.join(out_dir, f"{base}.png")
     try:

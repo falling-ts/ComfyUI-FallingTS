@@ -118,7 +118,7 @@ class FallingTSSelectorNode:
         + tuple(f"第 {i} 组 选中值 (ANY): 第 {i} 组中选中组名对应的输入值, 未连线为 None" for i in range(1, MAX_GROUPS + 1))
     )
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
     DESCRIPTION = (
         "多对一选择 (多组切换, 参考分组开关): items 逗号分隔组名, total 组数(最少 1), "
         "左侧输入 = 组数 × 组名数量 (第1组在前第2组在后), 下拉选一个组名, "

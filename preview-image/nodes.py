@@ -208,7 +208,7 @@ class PreviewImageSaveNode:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("images",)
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
     OUTPUT_NODE = True
     DESCRIPTION = (
         "始终预览图片(写 temp 不写 output); 点「保存」才按 文件名/格式/位深/色彩空间 "

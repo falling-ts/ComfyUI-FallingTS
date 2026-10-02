@@ -157,7 +157,7 @@ class FallingTSWorldRefinePLYNode(io.ComfyNode):
         return io.Schema(
             node_id="WorldRefinePLY",
             display_name="FallingTS 世界重建精修 PLY (504)",
-            category="FallingTS/3D",
+            category="FallingTS",
             description=(
                 f"多视图世界重建 (504) + 3DGS 外观精修, 输出一个标准 3DGS PLY 路径。"
                 f"两种用法: ① 无先验时按 {SLOTS} 批序喂 8 图; ② 接 WorldPanoramaViews 时喂任意 "

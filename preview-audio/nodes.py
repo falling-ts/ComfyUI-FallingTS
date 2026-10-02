@@ -205,7 +205,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             node_id="PreviewAudioSave",
             search_aliases=["preview audio", "保存音频", "音频预览", "输出音频"],
             display_name="Preview Audio (保存)",
-            category="audio",
+            category="FallingTS",
             description=(
                 "Preview the audio (temp folder) and click 保存 to write it to output as "
                 "{filename_prefix}{filename_suffix}.{format} (no sequence suffix, overwrites same name)."

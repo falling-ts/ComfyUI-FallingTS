@@ -117,7 +117,7 @@ class FallingTSFanoutNode:
         for i in range(1, MAX_OUTPUTS + 1)
     )
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
     DESCRIPTION = (
         "扇出选择 (多对一的镜像): items 逗号分隔组名, total 组数(最少 1, = 左侧输入端口数, 每组一个 input_i), "
         "右侧 total × 组名数量 个输出 (每组每个组名一个, 标签 = 组名), "

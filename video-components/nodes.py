@@ -42,7 +42,7 @@ class FallingTSVideoComponentsNode:
         "色彩空间 (STRING); video 为 None 时为空串",
     )
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
     DESCRIPTION = "拆解参考视频为帧/音频/帧率/位深/色彩空间; video 未连接或为 None 时全部输出 None, 不崩溃。"
 
     def execute(self, video=None):

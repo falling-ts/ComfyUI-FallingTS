@@ -363,7 +363,7 @@ class FallingTSWorldSurroundPanoramaNode(io.ComfyNode):
         return io.Schema(
             node_id="WorldSurroundPanorama",
             display_name="FallingTS 360°视频 → 横向展开长图",
-            category="FallingTS/3D",
+            category="FallingTS",
             description=(
                 "把一段 360° 环绕视频展开成一张**横向长图**(等距圆柱): 上行=天, 下行=地, "
                 "有效带紧贴内容(无黑边)。真 360 相机导出的 equirect 视频直接抽帧。"
@@ -1051,7 +1051,7 @@ class FallingTSWorldPanoramaViewsNode(io.ComfyNode):
         return io.Schema(
             node_id="WorldPanoramaViews",
             display_name="FallingTS 全景 → 视角批 + 位姿",
-            category="FallingTS/3D",
+            category="FallingTS",
             description=(
                 "把横向展开长图切成互相重叠的透视视角, 并输出每个视角的 w2c 外参与内参 "
                 "(相机都在球心, 纯旋转)。外参口径与 HYWM2SamplePanorama 一致; 竖向采样范围由 "

@@ -1,12 +1,15 @@
 /**
- * FallingTS.MaskRename 前端扩展: 仅对 PreviewImageSave 节点生效。
+ * FallingTS.MaskRename 前端扩展: 对 PreviewImageSave 与 FallingTSLoadImage 两个节点生效。
  * 从该节点打开遮罩编辑器保存后:
  * - 后端把 4 个 clipspace-{ts} 文件保存到 input/clipspace/(= output/clipspace, 同一物理目录),
  *   保留原名 —— 内置编辑器 type=input 仍能找到, 重新打开可完整恢复 -mask/-paint 层继续编辑;
  * - 后端复制 clipspace-painted-masked-{ts}.png -> output/{base}.png(按 ID 命名成品, 同名覆盖);
  * - 前端把节点引用更新到 clipspace 子目录(edit_ref), 让重新打开遮罩编辑器能加载。
  *
- * base 名 = 预览节点 execute 时缓存的 filename_prefix(连到 MD 表格 ID 时即行 ID)。
+ * 成品名:
+ * - FallingTSLoadImage 节点: 用它的「名称」输入框 → 0010_灰度遮罩/0000N_名称.png
+ *   (N = 目录里已有 5 位编号的最大值 + 1, 由后端算, 每次保存新增一个编号);
+ * - PreviewImageSave 节点: 预览节点 execute 时缓存的 filename_prefix(连到 MD 表格 ID 时即行 ID)。
  * 其它官方节点打开遮罩编辑器保存时【不】触发。
  *
  * 原理(全部走抛出接口, 不改打包前端):
@@ -18,7 +21,8 @@
 
 import { app } from "../../../scripts/app.js";
 
-const NODE_CLASS = "PreviewImageSave";
+// 挂勾子的节点: 预览保存 + 自带「名称」输入框的加载图像节点
+const NODE_CLASSES = ["PreviewImageSave", "FallingTSLoadImage"];
 const PREFIX = "clipspace-painted-masked-";
 // 只在遮罩「刚保存」时整理(ts 在 5 分钟内); 加载旧工作流带的历史 clipspace 引用不动作,
 // 避免误动很久以前生成的遮罩文件
@@ -79,11 +83,16 @@ function triggerRename(node, ref) {
 /**
  * 调用后端完成遮罩文件整理(保存到 clipspace + 复制成品), 并更新节点引用到 clipspace。
  *
- * @param {LGraphNode} node 预览保存节点
+ * @param {LGraphNode} node 预览保存 / 加载图像节点
  * @param {string} imageRef 当前引用的 clipspace 文件名
  * @returns {Promise<void>} 整理流程
  */
 async function renameMask(node, imageRef) {
+  // 「加载图像」节点的名称输入框(没有该 widget 的节点传空串 → 后端走旧口径命名)
+  const nameWidget = node.widgets?.find((w) => w.name === "name");
+  const maskName =
+    typeof nameWidget?.value === "string" ? nameWidget.value.trim() : "";
+
   let resp;
   try {
     // workflow_id 取根图 id: 后端 _last_output 的键是 "<工作流根 id>::<节点 id>",
@@ -97,6 +106,7 @@ async function renameMask(node, imageRef) {
         node_id: String(node.id),
         image_ref: imageRef,
         workflow_id: workflowId,
+        name: maskName,
       }),
     });
   } catch (err) {
@@ -147,15 +157,15 @@ app.registerExtension({
   name: "FallingTS.MaskRename",
 
   /**
-   * 节点定义注册前钩子: **只处理 PreviewImageSave**, 给 node.images 装 setter 检测遮罩编辑器保存。
-   * 其它官方节点不安装钩子, 保存遮罩时【不】触发整理。
+   * 节点定义注册前钩子: 只处理 PreviewImageSave / FallingTSLoadImage, 给 node.images 装 setter
+   * 检测遮罩编辑器保存。其它官方节点不安装钩子, 保存遮罩时【不】触发整理。
    *
    * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
    * @param {object} nodeData 节点定义数据(来自 /object_info)
    * @returns {void}
    */
   beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData?.name !== NODE_CLASS) return;
+    if (!NODE_CLASSES.includes(nodeData?.name)) return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {

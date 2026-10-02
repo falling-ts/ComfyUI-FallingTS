@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 18 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 19 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
@@ -49,6 +49,10 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # FallingTSVideoComponentsNode 视频拆解 (参考视频 → 帧/音频/帧率/位深/色彩空间; None 安全替代核心 GetVideoComponents: video 可选, None 时全部输出 None 且**不 sticky 回放**)
 ├── h3-guide/
 │   └── nodes.py                # FallingTSH3AddGuideNode H3 引导锚定 (None 安全替代核心 MiniMaxH3AddGuide: image 与 audio 同为 None 时**原样透传 positive**, 关键帧列因此可留空; 有值时直接委派 `MiniMaxH3AddGuide.execute`, 不复制其实现)
+├── load-image/
+│   └── nodes.py                # FallingTSLoadImageNode 加载图像 (来自输出): 内置 LoadImageOutput 的超集 —— ① 下拉候选改由自身路由 GET /fallingts_load_image/files 提供(output 根 + **数字目录(^\d+_)内部整棵子树的图片**, 值形如 0010_灰度遮罩/00001_手部.png, 不带 " [output]" 标注, 由 load_image 的 default_dir=output 定位; 内置 /internal/files/output 只列一层 ⇒ 本机下拉基本为空); ② 「名称」输入框排在 image 下拉之前(刷新按钮由 remote 组件在 combo 之后追加 ⇒ 名称框在其上方), 遮罩保存时带给 POST /fallingts_mask/rename, 成品 0010_灰度遮罩/0000N_名称.png; ③ remote **不设 control_after_refresh** —— 刷新按钮与跑完自动刷新只重新拉候选列表, 不再把已选值换成候选首项(内置 LoadImageOutput 设 "first", 而候选按 mtime 倒序 ⇒ 刚保存的产物必然夺走选中权); 首次加载时上游 onFirstLoad 仍会无条件改值, 由前端 web/js/load_image.js 短守护恢复成存档值; ④ 「序列号」+「刷新序列号」按钮(与「加载视频」同一套: output/<当前工作流名目录> 里已有 "数字_" 命名**文件**的最大编号 + 1, 编号口径与目录解析都取自 output_subdir; 路由 GET /fallingts_load_image/next_sequence) —— 排在 image **之后**并声明为 **optional**: 位置不能提前(V1 节点按 widgets_values 的**下标**恢复旧工作流, 插在中间会让老工作流的 image 值整体错位), optional 则保证无头 API 不带该输入也能跑; ⑤ INPUT_TYPES 里**现扫**一份 options(每次 /object_info 都重扫) ⇒ 页面加载/新建节点时候选已是含子目录的完整列表(与 V3 的 define_schema 同口径)
+├── load-video/
+│   └── nodes.py                # FallingTSLoadVideoNode 加载视频 (来自输出 + 截帧): 内置 LoadVideo 的超集 —— ① 下拉候选由自身路由 GET /fallingts_load_video/files 提供(output 根 + **数字目录(^\d+_)内部整棵子树的视频**, 值形如 0035_场景截帧/00001_书房旋镜视频.mp4, 不带 " [output]" 标注, 由 get_annotated_filepath(default_dir=output) 定位), remote **不设 control_after_refresh**(刷新只更新候选, 不改写已选值); ② 「序列号」= output/<工作流产物目录>/ 里已有编号最大值 + 1(目录不存在/没有编号文件时为 0, 5 位显示 00000), 可手改, 右侧「刷新序列号」按钮随时重算(int), 保存帧后续到下一个可用号; ③ 「名称」是保存帧的文件名; ④ 「保存帧」把选中帧逐张写成 output/<产物目录>/<序列号>_<名称>.png(撞号顺延, 不覆盖); ⑤ **截帧/完成/选中帧输出自 PreviewVideo 迁移** —— 执行时编码 temp + UI.PreviewVideo + get_components() 拆帧缓存, 未「完成」输出全部 ExecutionBlocker(None) 阻断下游, 「完成」输出 image_1..image_N; fingerprint_inputs 纳入文件名/mtime/选中帧/完成态/重置代际, 已完成时 execute 直接走缓存不重新解码; 路由 /fallingts_load_video/{files,next_sequence,frame,frame-remove,done,reset,state,preview-url,save_frames}
 ├── world-refine/
 │   └── nodes.py                # FallingTSWorldRefinePLYNode (节点 id `WorldRefinePLY`) 世界重建精修 → 落临时 PNG(+可选相机先验 JSON) → 用 HYWM2 隔离环境的解释器跑 `world-refine\refine_0034_gs.py` (504 前馈 + 2% 尺度过滤 + 3DGS 全参数精修[去多视图双重曝光]) → 取回 stdout 的 `[OUT]` 路径交给 PLY 视口。主进程只做编排(**故意不放 comfy-env.toml**, gsplat 只在 hywm2-nodes 里), 图里只有一次前馈不与图内重建抢显存
 ├── world-panorama/
@@ -60,7 +64,7 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # PreviewImageSaveNode 图片预览保存
 ├── preview-video/
 │   ├── __init__.py
-│   └── nodes.py                # PreviewVideoNode 视频预览保存
+│   └── nodes.py                # PreviewVideoNode 视频预览保存 (只做「预览 + 保存」: 编码 temp + UI.PreviewVideo, 点「保存」写 output; **截帧/完成/选中帧输出已于 2026-10-02 迁到 load-video 的 FallingTSLoadVideo**)
 ├── preview-audio/
 │   ├── __init__.py
 │   └── nodes.py                # PreviewAudioSaveNode 音频预览保存 (纯预览 + 「保存」, 不切段)
@@ -68,21 +72,25 @@ ComfyUI-FallingTS/
 │   ├── __init__.py
 │   └── nodes.py                # FallingTSAudioTrimNode 音频截段 (波形拖选区 → 多段输出 + 保存)
 ├── mask-rename/
-│   └── nodes.py                # 遮罩编辑器文件整理:包装 /upload/image 路由 + POST /fallingts_mask/rename
+│   └── nodes.py                # 遮罩编辑器文件整理:包装 /upload/image 路由 + POST /fallingts_mask/rename(带 name 时按 0010_灰度遮罩 里已有的 5 位编号自增 → 0000N_名称.png, 撞号顺延; 无 name 走旧口径)
 ├── pre-run/
 │   └── nodes.py                # 运行前命令后端: POST /fallingts_prerun/run (工作区根 cwd 执行命令, 空则跳过, 非0/超时即拦截本次提交)
 ├── auto-unload/
 │   └── nodes.py                # 跑完自动卸载模型后端: POST /fallingts_auto_unload/unload (队列为空时逐出全部已加载模型释放显存, 否则跳过; 直调内置按钮同款核心函数, 不用 /free 置旗)
-├── dev/                        # **开发/验收工具链**(31 个脚本, 不参与 ComfyUI 加载): 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检、跑完自动卸载的离线自检。**根仓库 `scripts\` 只放临时文件(随时可清空), 凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
+├── dev/                        # **开发/验收工具链**(31 个脚本, 不参与 ComfyUI 加载): 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检、跑完自动卸载的离线自检、加载图像与遮罩编号自检(`_verify-load-image.py` / `_verify-load-image-ui.py`)、两个加载节点的下拉候选/序列号浏览器验收(`_verify-load-dropdown.py`), 下拉弹窗增强(抹掉 ` [output]` 标注 + 「排序方式」左侧的刷新按钮)的浏览器验收(`_verify-combo-menu.py`, 传 `custom_nodes\ComfyUI-FallingTS\dev\_verify-combo-menu.py` 跑)。**根仓库 `scripts\` 只放临时文件(随时可清空), 凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
 └── web/
     ├── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
-        ├── assets_tab_rename.js        # 媒体资产面板「已导入」→「已保存」
-        ├── mask-rename.js              # PreviewImageSave 遮罩编辑器保存联动
+        ├── assets_tab_rename.js        # 「已导入」→「已保存」(左侧媒体资产面板 + 节点下拉弹窗的分类按钮)。⚠️ 1.52.7 的 `globalProperties.$i18n` 是 **null-prototype 普通对象**(无 `t`/`mergeLocaleMessage`) ⇒ i18n 合并不可用, 只能靠 `MutationObserver`+`TreeWalker` 做 DOM 文本兜底(弹窗是 body 下的 portal, 属新增子树)
+        ├── load_combo_menu.js           # 两个加载节点共用: 下拉弹窗增强 —— ① 抹掉选项末尾的 " [output]"/" [input]" 标注(前端给 output 资产项硬编码拼的来源后缀, 而本工作区 input/output 是同一物理目录的软链 ⇒ 列表里既有带标注的资产项又有不带标注的 remote 候选项, 又重复又乱; 本模块改弹窗 DOM 的文本节点, 并给 widget.value 装访问器式清洗 ⇒ 点到资产项时落到节点/提交给后端的也是纯文件名); ② 在弹窗工具条「排序方式」左侧插一个「刷新」按钮, 点一下调 widget.refresh() 重扫 output(含数字目录子树), 刷新后按 Escape 关掉弹窗再自动点开一次 —— 弹窗的候选列表是"打开时算一次"的(WidgetSelectDropdown 读普通对象 widget.options.values, 非 Vue 响应式, 换了数组也不重算), 不重开就永远停在旧列表; 只对登记过的 widget 生效(armComboMenu), 识别"弹窗属于哪个 combo"走两条路: Vue 节点的 combo 按钮文本 == 当前值(capture 阶段 click), 画布模式读 app.canvas.node_widget
+        ├── mask-rename.js              # PreviewImageSave / FallingTSLoadImage 遮罩编辑器保存联动(后者带上它的「名称」输入框, 后端按 0010_灰度遮罩 自增编号命名成品)
+        ├── load_combo_refresh.js        # 两个加载节点共用: combo 候选"点开即最新" —— 前端只在 ① NodeDef 注册 ② 点 refresh 按钮 ③ 跑完流程的 Auto-refresh 这三个时机拉候选, **"点开下拉"这一下不拉**(弹窗的 handleIsOpenUpdate 只刷新「已保存」那份资产列表), 于是新出现的子目录/文件必须手动点一次刷新才进列表(用户反馈的"第一次点开不显示子目录资源"); 本模块补上 节点创建后 / 在节点上按下鼠标 / 每 4 秒(页面可见时) 三个时机调 widget.refresh()。前提: remote 不设 control_after_refresh ⇒ 刷新只换候选、绝不改写已选值
+        ├── load_image.js               # FallingTSLoadImage: 序列号(后端 /fallingts_load_image/next_sequence 按当前工作流名解析目录) + 「刷新序列号」按钮(两拍重排到 remote 追加的 Auto-refresh/refresh/upload 之后) + armComboRefresh(node,"image") + 短守护 —— 刷新改值已由后端不设 control_after_refresh 根治; 上游 onFirstLoad 在节点首次加载时仍会无条件把 image 值设成候选首项(候选按 mtime 倒序), 本扩展在 onConfigure 后 4 秒内只在"值被换成候选首项"时恢复成工作流存的值
         ├── md_table.js                 # MarkDown 数据表前端 (选文件/内嵌表格弹窗)
         ├── media_lightbox_zoom.js      # 全屏预览缩放 (滚轮/拖拽/双击/快捷键)
         ├── node_image_middleclick.js   # 节点中键 → 全屏大图预览
         ├── preview-image.js            # PreviewImageSave 底部控件 + 保存按钮
-        ├── preview-video.js            # PreviewVideo 底部保存按钮 + 截帧/完成 + restoreFrames(刷新后从后端重建帧列表)
+        ├── preview-video.js            # PreviewVideo 底部保存按钮 + 备用播放器/restoreVideo(刷新后从后端重建预览)
+        ├── load_video.js               # FallingTSLoadVideo: 序列号(自动取产物目录最大编号 + 1 / 刷新按钮重算) + 截帧/完成(partial 只跑下游) + 保存帧(<序列号>_<名称>.png) + 选中帧列表 + 备用播放器/restoreVideo —— 自 preview-video.js 迁移
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮 + 内置播放器
         ├── audio-trim.js               # FallingTSAudioTrim 波形+播放器+截段/完成按钮+段列表(刷新后从后端重建)
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
@@ -114,8 +122,10 @@ ComfyUI-FallingTS/
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 (data=None 如未连接 → 输出本节点最近一次输出(sticky), 从未输出则回退默认状态) |
 | fps | FallingTSFrameRateConvert | 帧率转换 (图像序列按目标帧率抽帧: 步长 = max(1, round(source_fps/target_fps)), 每 stride 帧保留 1 帧, stride=1 原样透传; 目标帧率未连接/None 时原样透传不抽帧; **images=None → 输出本节点最近一次抽帧结果(sticky), 从未处理则透传 None**; 音频不动, 配合 CreateVideo 的 fps 参数输出) |
 | composite | FallingTSImageComposite | 多图合成 (total 驱动: total 最少 1 不设上限 默认 4 (端口口径 64), 左侧只有 image1..imageN 图端口, 标注是节点内 label1..labelN 表单文本框 (按 total 自动扩充), **前端按 total 动态增删 image_i 图端口、扩充 label_i 标注表单文本框 (未启用的图端口/文本框不进提交载荷)**, 与 switch/route/fanout/selector 同套机制; 图 image1..64 (optional, 未连接/None = 该格用底色空白占位, **total 图全空 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**) + label1..64 (节点内表单文本框, widget 默认空串 = 不画, 值为 None 时才回退默认标注 前面/右面/后面/左面/上面/下面/近处/远处); 网格列数 = ceil(sqrt(total)) 行优先填充 (total=4 → 2×2, 与旧版布局一致), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 合成单张图; 字号/间距/底色 None=默认 8/6/#000000, 底色非法值回退黑色) |
+| load-image | FallingTSLoadImage | 加载图像 (来自输出): 内置 \`LoadImageOutput\` 的超集。① **下拉候选由自身路由 \`GET /fallingts_load_image/files\` 提供** —— 内置 \`/internal/files/output\` 用 \`os.scandir\` 只列 output 根一层, 而本工作区产物全落在数字目录(\`0010_灰度遮罩/\`、\`0011_万物建模/\` …)里 ⇒ 内置节点的下拉在本机基本是空的; 本路由按「媒体资产」侧栏同一口径扫描: output 根图片 + **数字目录(\`^\d+_\`)内部整棵子树的图片**(数字目录外如 \`clipspace/\` 不收, 隐藏文件/非图片不收), 按 mtime 倒序, 值形如 \`0010_灰度遮罩/00001_手部.png\`(**不带 " [output]" 标注** —— 前端给候选算预览图时一律拼 type=input 且不剥离标注, 带标注会让 /api/view 404; 本节点 \`load_image\`/\`IS_CHANGED\`/\`VALIDATE_INPUTS\` 用 \`default_dir=output\` 解析, 带标注的值仍按标注走), 前端 remote 组件直接当 \`widget.options.values\` 用(即弹窗「已导入/已保存」与「全部」两个分类的内容)。② **「名称」输入框排在 image 下拉之前** —— 内置刷新按钮由 remote 组件在 combo 之后 \`addWidget('button','refresh',...)\` 追加, 故名称框天然落在刷新按钮上方; 遮罩编辑器保存时前端把它带给 \`POST /fallingts_mask/rename\`, 成品按 \`0010_灰度遮罩/0000N_名称.png\` 落盘(编号 = 目录里已有 5 位编号最大值 + 1, 撞号顺延到下一个空号); 名称留空则退回旧口径(前端 base > 预览缓存 filename_prefix > \`mask-{ts}\`)。③ \`load_image\` / \`IS_CHANGED\` / \`VALIDATE_INPUTS\` 与内置 \`LoadImage\` 同一实现(视频/动图序列 + PIL 回退), 输出 IMAGE/MASK。④ remote **不设 `control_after_refresh`** —— 刷新按钮与跑完自动刷新只重新拉候选列表, 不再把已选值换成候选首项(内置 `LoadImageOutput` 设 `"first"`, 而候选按 mtime 倒序 ⇒ 刚保存的产物必然夺走选中权); 首次加载时上游 `onFirstLoad` 仍会无条件改值, 由前端 `web/js/load_image.js` 短守护(4s, 只认"被换成候选首项"这一种覆盖)恢复成存档值。⑤ **「序列号」+「刷新序列号」**(2026-10-02 加, 与「加载视频」同一套) —— 编号 = `output/<当前工作流名目录>/` 里已有 `数字_` 命名**文件**的最大编号 + 1(目录不存在/没有编号文件为 0, 显示成 5 位 `00000`), 可手改、按钮随时重算; 目录口径走共用的 `output_subdir`(有 md 数据表用表文件名, 没有才用工作流名), 路由 `GET /fallingts_load_image/next_sequence`。⚠️ 序列号排在 image **之后**且声明为 **optional**: V1 节点按 `widgets_values` 的**下标**恢复旧工作流, 插在中间会让老工作流的 image 值整体错位; optional 保证无头 API 不带该输入也能跑。⑥ **下拉候选在 `INPUT_TYPES` 里也现扫一份 `options`**(每次 `/object_info` 都重扫, 与 V3 的 `define_schema` 同口径) ⇒ 页面加载/新建节点时列表就已完整; 再配合前端 `load_combo_refresh.js`(节点创建 / 按下鼠标 / 每 4 秒 三个时机拉 remote) 彻底消除"第一次点开不显示子目录资源" |
 | preview-image | PreviewImageSave | 图片预览保存 (始终预览 temp, 点「保存」才写 output 同名覆盖无序号; images=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的图**(sticky)供下游合成, 从未预览则输出 None) |
-| preview-video | PreviewVideo | 视频预览保存 (video=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的视频**(sticky), 从未预览则输出 None) |
+| load-video | FallingTSLoadVideo | 加载视频 (来自输出 + 截帧): 内置 `LoadVideo` 的超集。① **下拉候选由自身路由 `GET /fallingts_load_video/files` 提供**(与「加载图像」同口径: output 根视频 + **数字目录内部整棵子树的视频**, 值形如 `0035_场景截帧/00001_书房旋镜视频.mp4`, 不带 " [output]" 标注), remote **不设 control_after_refresh**(刷新/跑完自动刷新只重新拉候选)。② **「序列号」** = output/<产物目录>/ 里已有编号最大值 + 1(目录不存在或没有 `数字_` 命名的文件时为 0, 显示成 5 位 00000), 可手改; **「刷新序列号」按钮**随时重算, 「保存帧」成功后自动续到下一个可用号。③ **「名称」**是保存帧的文件名。④ **「保存帧」**把选中帧逐张写成 `output/<产物目录>/<序列号>_<名称>.png`(编号撞上已有文件时顺延, 不覆盖; 产物目录由 `output_subdir.resolve_subdir` 解析 —— 有 md 数据表用表名, 没有才用工作流名)。⑤ **截帧/完成/选中帧输出自 PreviewVideo 迁移**(2026-10-02): 视频编码 temp + `UI.PreviewVideo` 预览, 同时 `get_components()` 拆出帧集合缓存; 未「完成」输出全部 `ExecutionBlocker(None)` 阻断下游(到本节点停下等截帧), 「完成」按选中帧输出 `image_1..image_64`; `fingerprint_inputs` 纳入文件名 + mtime + 选中帧 + 完成态 + 重置代际(否则被全局执行缓存跳过、下游拿到旧帧), 已完成时 execute 直接取缓存不重新解码视频(partial 提交时本节点会再次执行)。⑥ 输出 **video + 64 个选中帧槽**(前端按「输出帧数」增删端口) |
+| preview-video | PreviewVideo | 视频预览保存 (**只做「预览 + 保存」**, 与核心 SaveVideo 的分工一致): 编码 temp + `UI.PreviewVideo` 预览, video=None(扇出未选中分支)→ 回放上次预览并输出缓存视频, 从未预览则输出 None; 点「保存」写 output(`{filename_prefix}{filename_suffix}.mp4`, 同名覆盖无序号)。**截帧/完成/选中帧输出已迁到 `FallingTSLoadVideo`**(2026-10-02), 输出只剩 video |
 | preview-audio | PreviewAudioSave | 音频预览保存 (纯预览与保存, 不切段; audio=None 如扇出未选中分支 → 回放上次预览 + **输出该节点最近一次预览的音频**(sticky), 从未预览则输出 None; 切段已拆到 audio-trim) |
 | audio-trim | FallingTSAudioTrim | 音频截段 (节点内波形拖两侧把手选区 → 点「截段」累积多段 → 点「完成」按段输出 audio_1..audio_N; 未「完成」时用 ExecutionBlocker 阻断下游, 只发预览事件供试听与切段; 同样带「保存」与内置播放器; 输出 1 + 64 槽) |
 | video-components | FallingTSVideoComponents | 视频拆解 (参考视频 → 帧序列/音频/帧率/位深/色彩空间, **None 安全替代核心 GetVideoComponents**: 核心节点的 `video` 是 required 且 execute 内直接调 `video.get_components()`, 收到 None 抛 `AttributeError: 'NoneType' object has no attribute 'get_components'`; 本节点 `video` 为 **optional**, None (mdtable 空 `<Video N>` 字段 / 上游无值) 时**全部输出 None 且不报错**, 下游 H3 Ref2VA 的 `ref_video_N` 是可选输入, None 被其内部 `if video_frames is None: continue` 安全跳过; **不做 sticky 回放** —— None 在此表示"该行没有视频参考", 回放上一次的视频会让生成张冠李戴。3020-参考场景 / 4030-参考视频 各 3 处已换用) |
@@ -124,7 +134,11 @@ ComfyUI-FallingTS/
 | world-panorama | WorldSurroundPanorama | 360° 视频 → **横向展开长图**(等距圆柱条带, 上行=天) + `valid_band`(有效竖向跨度) + `v_center`(竖向中心) + `report`。`mode=equirect`(真 360 相机导出)直接抽帧; `mode=unfold`/`auto` 走旋转展开 —— **2026-09-28 v2 重做**: ① 粗采样估「每帧画面位移」→ 按 `target_shift_percent`(默认 12% 画面宽)**自动定抽帧步长**(转得快少抽/转得慢多抽, **末帧必采到**), 再**自适应补密**: 只对「几何模型解不出(匹配不足/RANSAC 失败) 或 位移超上限(3× 目标)」的相邻采样对插中间帧(专治"长静止段 + 甩镜段"这类不均匀转速), 静止段保守抽稀(位移<0.5px 才丢, 至少留 8 帧)。⚠️ **补密判据别用"单应内点比例"**: 真实素材帧间有内容漂移/运动模糊, 比例常年 0.24~0.37 却几何完好 —— 拿比例<0.40 触发会给 0031 平白补 11 帧、f 311.8→332.4px、与源帧 NCC 0.74→0.51; 也不能只看位移中位数(88° 错配对会给出 13.7px 的"正常"值 ⇒ 补密永不触发)。首末采样帧**几何重合**(匹配≥40 + 单应内点比例≥0.3 + 内点中位位移 <0.35×典型帧间位移 + 在解出的 f 下对应点转角 <5°)才判定「整整一圈」并把总转角吸附成 360°(实测 0031 逐帧位移累积只有 311°, 吸附后与独立 ORB 曲线一致; 只用位移中位数会被误匹配骗过 ⇒ 低纹理素材把 200° 弧**静默**拉成 360°、漂移 31.8°); **吸附窗口不能靠 `|span−2π|<10°`**(48 帧素材采样弧 352.4° 被拉成 360° ⇒ 尺度错 2.15%、中段漂移 3.1°、NCC 0.572); 整段累计横向位移 <6% 画面宽(近乎静止) ⇒ **直接报错**「不是环绕镜头」; ② 相邻帧 ORB + RANSAC 纯偏航单应 → 用**对应点纯旋转一致性**(Δ 的鲁棒相对离散度 + 竖直残差, 无量纲 ⇒ 不会退化成「f 越大越好」) 与**相邻帧重叠区稠密光度一致性**联立定焦距, 闭环值/单对单应只作交叉校验(实测 0031: 光度 311.8px / 对应点 295.8 / 闭环 290.7 / 单对单应 380.1 —— 单应受平移污染会高估 22%); ③ **逐像素 winner-take-all**: 每个输出像素只取光学轴夹角最小的那一帧, 从不做帧间平均 ⇒ 结构上不可能有重影; 换帧处只对**低频**羽化(`seam_feather` 默认 7px, 高频仍来自唯一那一帧), 帧间亮度差用相邻帧曝光链(链式偏差不在 2%~12% 时自动关闭, 免得把噪声当曝光漂移); ④ 输出**紧贴有效带的横条**(不再输出 2:1 画布 —— 旋转视频只有 ±36° 有数据, v1 的 2:1 上下各 30% 是纯黑), 没被完全覆盖的行自动裁掉 ⇒ 一条黑边都没有; ⑤ **竖直朝向改回世界地图口径**(第 0 行 = 仰角 +band/2): v1 的行映射把源图下方放到第 0 行 ⇒ 长图**倒立**(实测帧 0 同角度区: 正放 NCC 0.16 / 上下翻转 0.52)。实测 0031 旋镜视频(832x480/24fps/243 帧, **转速不均匀**: 前 24 帧只转 8°、末 24 帧 转 39°): 抽 21→20 帧(步长 12, 8.4px/帧), f=311.8px → h_fov 106.3°, 长图 **2939x592 = 8.16px/度**(v1 只有 5.76), 有效带 72.6°, **空白 0%**, 对齐残差 2.7/255; 与源帧同内容处 NCC **0.74**(v1 0.55)、拉普拉斯锐度 **12.3 vs 2.9(4.3 倍)**; 在整圈 9 个位置扫偏航峰值与独立 ORB 位移曲线一致(≤5°)。`video`(VIDEO)/`images`(IMAGE) 二选一, 都为空则全部输出 None(不 sticky) |
 | world-panorama | WorldPanoramaViews | 横向长图 → 一网格透视视角 + **每视角精确 w2c 外参 / 内参**(相机全在球心, 纯旋转 ⇒ 平移恒 0, 外参正交)。外参口径与上游 `HYWM2SamplePanorama` 一致(`f_px=(size/2)/tan(fov/2)`, `cx=cy=(size-1)/2`, 外参取 `R.T`), **等距圆柱的竖直朝向按世界地图口径修正**: `elev=asin(-ry)`、`eq_y=(elev_top-elev)/v_range·(H-1)`(v1/上游那套要求长图上行=地, 拿真 equirect 图会上下颠倒; 本节点与 `WorldSurroundPanorama` **成对**修正, 切出来的视角画面与 v1 **完全一致** —— 老长图+老公式对源帧 0.724、新长图+新公式 0.71)。竖向采样由 `v_center`/`v_range` 决定(接长图的 v_center / valid_band): `step=fov·(1-重叠%)`, `num_h=ceil(360/step)`, **`v_range ≤ fov` 时只切一行**(旋转视频的 valid_band 正是这个量级; 按 `ceil(v_range/step)` 会切出 2 行、每行一半黑边 —— 实测 12 视角时前馈 token 预算只够 406, 改单行 6 视角后涨到 **574**), 否则 `num_v=ceil(v_range/step)`(v_range=150/180 时 3 行, 供真全景用); 竖向档位以 `v_center` 为中心**对称**摆放。⚠️ 长图是 2:1 而 `v_range` 没接到 valid_band 时告警。`panorama` 为空 → images/extrinsics/intrinsics 全 None(不 sticky) |
 
-注:`preview-image` / `preview-video` / `preview-audio` / `audio-trim` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
+注:`preview-image` / `preview-video` / `preview-audio` / `audio-trim` / `load-image` / `load-video` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载。
+
+注(分类, 2026-10-02): **20 个节点 CATEGORY 统一为顶级 `FallingTS`**(V1 `CATEGORY=`, V3 `category=`) —— 双击画布的选择面板里都在同一 `FallingTS` 分组下, 原有子分组与核心 `image`/`video`/`audio` 归属均已收拢。
+
+注(灰度遮罩, 2026-10-02): **灰度遮罩资源表已废弃** —— `stories/<故事库>/0010_灰度遮罩.md` 与 `stories/template/0010_灰度遮罩.md` 已删除。遮罩改为「加载图像」节点(`FallingTSLoadImage`, 工作流 `0010_灰度遮罩`)加载原图 → 遮罩编辑器绘制 → 保存进 `output/0010_灰度遮罩/<5位编号>_名称.png`(编号自增)。资源表侧只需在万物变化的 `灰度遮罩(MASK)` 列写 `@{0010_灰度遮罩/编号_名称}` —— `@{}` 按 output/input 目录找文件, **不读数据表**, 故删表不影响引用解析。
 
 ### 产物落盘目录约定(三个预览保存节点)
 
@@ -137,7 +151,7 @@ ComfyUI-FallingTS/
 
 ⚠️ **V3 节点的 hidden 不进 `execute` 实参** —— `execution.py` 的 `get_finalized_class_inputs` 把 hidden 单独摘出,只能经 `cls.hidden.<name>` 取(`HiddenHolder.__getattr__` 对未知键返回 None)。所以 `preview-video` / `preview-audio` 的 `execute` 里**不能**写 `prompt=None` 形参(写了恒为 None, 静默失效),prompt 一律从 `cls.hidden.prompt` 读;`preview-image` 是 V1 节点(`"hidden": {"prompt": "PROMPT"}`),prompt 才是真正的 execute 实参。**加/改任何依赖 hidden 的 V3 节点逻辑前先确认这一点。**
 
-### None 容忍约定(全部 18 节点)
+### None 容忍约定(全部 19 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -156,7 +170,7 @@ ComfyUI-FallingTS/
 - **世界模型 —— 360 视频/全景源**(world-panorama 两节点):`video`+`images` 全空 → `panorama=None`;`panorama=None` → `images/extrinsics/intrinsics` 全 None;**故意不做 sticky** —— 回放上一次的长图/视角会把另一段视频的世界模型张冠李戴(与 video-components 同一条理由);`WorldRefinePLY` 则相反: 它是**输出类**节点, `images=None` 时回放**上次产出的 PLY 路径**(无产出则空串, 下游视口显示 not found 不崩), 这样单独点视口节点不会把整条重建链拉回来重跑;
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
-### 前端状态与后端同步约定(全部 18 节点)
+### 前端状态与后端同步约定(全部 19 节点)
 
 **核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
 
@@ -178,7 +192,7 @@ ComfyUI-FallingTS/
   - `audio-trim` → `GET /audio-trim/audio-url/{id}` → `refreshWaveform()` 内一并设置
 - 在 `onConfigure`(工作流加载完成)末尾调用"读回重建":
   - `audio-trim` → `refreshWaveform()`:GET `/audio-trim/waveform/{id}` 一次拿回 peaks + segments;
-  - `preview-video` → `restoreFrames()`:GET `/preview-video/state/{id}` 拿帧号, 再逐个 POST `/preview-video/frame/{id}`(`append=false`)取 PNG 转 blob URL;
+  - `load-video` → `restoreFrames()`:GET `/fallingts_load_video/state/{id}` 拿帧号, 再逐个 POST `/fallingts_load_video/frame/{id}`(`append=false`)取 PNG 转 blob URL;
 - 界面态同步要**双向且含空值**: `Array.isArray(data.segments)` 为真就写回(即便是空数组), 否则删光段后刷新会残留旧列表。
 - ⚠️ **每一个 `app.extensionManager.toast.add({...})` 都必须显式带 `life: 3000`** —— PrimeVue 的 `ToastMessage` 只在 `message.life` 为真时才起定时器(`vendor-primevue-*.js`:`this.message.life&&(this.closeTimeout=setTimeout(...))`), **没有默认值**;漏写 `life` 的 toast 会永久挂在右上角不消失(2026-10-01 实测: 本插件原有 29 处漏写, 全是「保存/截帧/完成/继续」的成功与失败提示)。插件自绘的右下角 toast(`task_notify.js`)同样按 3000ms 收口。
 
@@ -222,7 +236,7 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 ### 分段执行约定(lazy 门控 + partial 提交)
 
-「先跑到本节点停住 → 点按钮只跑下游」这套机制(**preview-video 的截帧/audio-trim 的截段/proceed 的继续**)由两半组成, **缺一不可**:
+「先跑到本节点停住 → 点按钮只跑下游」这套机制(**load-video 的截帧/audio-trim 的截段/proceed 的继续**)由两半组成, **缺一不可**:
 
 **① lazy 门控(后端) —— 决定"上游跑不跑"**
 
@@ -230,7 +244,8 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 - `check_lazy_status` 返回需要拉取的上游输入名: **已放行(完成/继续)→ `[]` 不拉**; 未放行 → `["audio"]` 拉上游更新缓存;
 - 用 `MISSING = object()` 哨兵区分"该输入没连线"(`MISSING`)与"连了线但上游未求值"(`None`);
 - `execute` 里 `audio is None`(lazy 未拉上游)时**用 `_last_output` 缓存继续**; 未放行则返回 `ExecutionBlocker(None)` 阻断全部下游。
-- **对照**: `preview-video` 的 `IO.Video.Input("video", lazy=True, ...)` 是正确样板; `audio-trim` 曾经漏掉 `lazy=True`, 表现为「点完成仍重新加载模型、耗时 90s+」。
+- **对照**: `audio-trim` 的 `IO.Audio.Input("audio", lazy=True, ...)` 是正确样板(它的输入是上游数据, 不拉就重跑不了上游); `audio-trim` 曾经漏掉 `lazy=True`, 表现为「点完成仍重新加载模型、耗时 90s+」。
+- `load-video`(`FallingTSLoadVideo`)**不用 lazy**: 它的 `video` 是文件下拉(input/输出目录里的文件名), 没有"上游数据"可拉 —— 未完成时靠 `ExecutionBlocker` 阻断下游, 已完成时 execute 直接取 `_last_output` 缓存(不重新解码), 于是 partial 提交把它重新执行也只是取缓存, 上游(加载/解码)不会白跑。
 
 **② partial 提交(前端) —— 决定"下游跑哪些"**
 

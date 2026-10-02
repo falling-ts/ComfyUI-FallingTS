@@ -34,6 +34,9 @@ PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
 # world-refine 目录名同样含连字符, 需经 importlib 按名加载(世界重建 + 3DGS 精修 → PLY)
 WorldRefinePLYNode = import_module("world-refine.nodes").FallingTSWorldRefinePLYNode
 
+# load-image 目录名含连字符: 注册 /fallingts_load_image/files 路由(下拉候选: output 根 + 数字目录内的图片)
+import_module("load-image.nodes")
+
 # mask-rename 目录名含连字符: 注册 /fallingts_mask/rename 路由 + 包装 /upload/image(遮罩整理), 无节点
 import_module("mask-rename.nodes")
 
@@ -57,6 +60,7 @@ __all__ = [
     "FallingTSMarkDownTableNode",
     "PreviewVideoNode",
     "PreviewImageSaveNode",
+    "LoadImageNode",
     "PreviewAudioSaveNode",
     "WorldRefinePLYNode",
 ]

@@ -55,7 +55,7 @@ class FallingTSSwitchNode:
     RETURN_NAMES = tuple(f"output_{i}" for i in range(1, MAX_GROUPS + 1))
     OUTPUT_TOOLTIPS = tuple(f"第 {i} 组输出: switch 为真取 true_{i}, 为假取 false_{i}" for i in range(1, MAX_GROUPS + 1))
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
     DESCRIPTION = (
         "分组开关 (参考官方切换): 一个 switch 布尔同时控制 total 组, "
         "每组 = 为假时/为真时/输出 (ANY), total 最少 1。"

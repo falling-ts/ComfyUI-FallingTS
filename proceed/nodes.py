@@ -82,7 +82,7 @@ class FallingTSContinueNode:
     RETURN_TYPES = (ANY,)
     RETURN_NAMES = ("any",)
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/控制"
+    CATEGORY = "FallingTS"
 
     @classmethod
     def IS_CHANGED(cls, id: str | None = None, **kwargs):

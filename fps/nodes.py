@@ -55,7 +55,7 @@ class FallingTSFrameRateConvertNode:
     RETURN_NAMES = ("images",)
     OUTPUT_TOOLTIPS = ("抽帧后的图像序列 (每 round(source/target) 帧保留 1 帧)",)
     FUNCTION = "execute"
-    CATEGORY = "FallingTS/工具"
+    CATEGORY = "FallingTS"
     DESCRIPTION = "按目标帧率抽帧: 24fps → 8fps 保留每第 3 帧; 音频不动, 视频总时长不变, 播放速率正常。"
 
     def execute(self, images, source_fps: float, target_fps: float, id=None):

@@ -292,7 +292,7 @@ class FallingTSAudioTrimNode(IO.ComfyNode):
             node_id="FallingTSAudioTrim",
             search_aliases=["preview audio", "保存音频", "音频预览", "输出音频", "截取音频", "音频截段"],
             display_name="音频截段",
-            category="audio",
+            category="FallingTS",
             description=(
                 "Preview the audio (temp folder), drag on the waveform to pick a time range and click 截段 "
                 "to add it, then click 完成 to output each segment on audio_1..audio_N. "
