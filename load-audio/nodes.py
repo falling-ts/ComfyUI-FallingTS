@@ -191,6 +191,13 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
                     optional=True,
                     tooltip="节点内试听播放器(前端原生音频控件, 后端不读)",
                 ),
+                # 下拉是 COMBO, 前端不允许把 AUDIO 连进 COMBO, 故另开一个 AUDIO 口给
+                # 「数据表 原声音 列」这类外部来源(与加载视频的 video_in 同一套做法)
+                IO.Audio.Input(
+                    "audio_in",
+                    optional=True,
+                    tooltip="可选: 外部传入的音频(如数据表「原声音」列); 连上就用它, 不连则用上面的下拉",
+                ),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo, IO.Hidden.unique_id],
             is_output_node=True,
@@ -198,17 +205,23 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, audio, name: str = "", sequence: str = "") -> IO.NodeOutput:
-        """节点执行入口: 从 output 目录读音频文件 → 解码成 AUDIO 对象输出。
+    def execute(cls, audio=None, audio_in=None, name: str = "", sequence: str = "") -> IO.NodeOutput:
+        """节点执行入口: 取音频(外部传入优先, 否则从 output 目录读文件) → 输出 AUDIO 对象。
 
         参数:
-            audio (str): 音频文件名(相对 output, 形如 0060_背景音乐/00001_夜雨.mp3)。
+            audio (str | None): 音频文件名(相对 output, 形如 0060_背景音乐/00001_夜雨.mp3)。
+            audio_in (dict | None): 上游直接给的 AUDIO(如数据表「原声音」列), 有值时优先于 audio。
             name (str, 默认 ""): 配套文件名(本节点不写盘, 仅记录给下游/前端)。
             sequence (str, 默认 ""): 配套编号(同上)。
 
         返回:
             IO.NodeOutput: 音频对象 {"waveform": BxCxN, "sample_rate": int} + UI.PreviewAudio。
         """
+        if audio_in is not None:
+            return IO.NodeOutput(audio_in, ui=UI.PreviewAudio(audio_in, cls=cls))
+        if not audio:
+            raise ValueError("FallingTS 加载音频: 没有选择音频(下拉), 也没有连接 audio_in")
+
         audio_path = folder_paths.get_annotated_filepath(
             audio, default_dir=folder_paths.get_output_directory()
         )
@@ -218,12 +231,16 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
         return IO.NodeOutput(audio_obj, ui=UI.PreviewAudio(audio_obj, cls=cls))
 
     @classmethod
-    def fingerprint_inputs(cls, audio=None, **kwargs):
-        """缓存失效签名: 文件 mtime + 大小。
+    def fingerprint_inputs(cls, audio=None, audio_in=None, **kwargs):
+        """缓存失效签名: 文件 mtime + 大小(audio_in 分支只需一个稳定标记)。
 
         音频文件可能很大(整段 wav), 故不像内置 LoadAudio 那样对内容做 sha256, 用
         (mtime, size) 判定"文件换过了" —— 换文件/重新导出必然触发重跑。
+        走 audio_in 时本节点只做透传, 签名含义由上游节点自己的 fingerprint/IS_CHANGED 决定
+        (ComfyUI 的缓存签名串会带上全部祖先节点的签名), 这里给个稳定标记即可。
         """
+        if audio_in is not None:
+            return ("audio_in",)
         try:
             path = folder_paths.get_annotated_filepath(
                 audio, default_dir=folder_paths.get_output_directory()
@@ -234,8 +251,20 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
             return (audio,)
 
     @classmethod
-    def validate_inputs(cls, audio=None, **kwargs) -> bool | str:
-        """文件不存在时给出明确提示(内置口径; 值默认按 output 解析)。"""
+    def validate_inputs(cls, audio=None, audio_in=None, input_types=None, **kwargs) -> bool | str:
+        """文件不存在时给出明确提示(内置口径; 值默认按 output 解析)。
+
+        ⚠️ 校验阶段**连线的输入拿不到值** —— execution.py 的 get_input_data 在
+        execution_list 为空时把 linked 输入标成 missing(实参为 None), 所以「音频是从 audio_in
+        连进来的」这件事**不能靠 audio_in is None 判断**, 否则会把"下拉为空但已连线"误判成
+        「Invalid audio file: 」而拦掉整次提交(实测 0070 的 audio_in 图即此症状)。
+        判定办法: 声明 input_types 形参 —— ComfyUI 会把各连线输入的上游类型传进来
+        (execution.py: `input_filtered['input_types'] = [received_types]`)。
+        """
+        if "audio_in" in (input_types or {}) or audio_in is not None:
+            return True
+        if not audio:
+            return "请选择音频文件(下拉)或把音频连到 audio_in"
         try:
             path = folder_paths.get_annotated_filepath(
                 audio, default_dir=folder_paths.get_output_directory()

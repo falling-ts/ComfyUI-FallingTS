@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""重构 0050_视频拆帧 / 0051_视频拆音, 并清空 0040..0044 的截帧/截音尾部。
+"""拆解类工作流的生成: 0050_视频拆帧 / 0051_视频拆音 / 0070_截取声音 + 0040..0044 尾部清空。
 
-三件事(幂等, 可反复跑):
+四件事(幂等, 可反复跑):
 
 1. 0050_视频拆帧: 用 FallingTSLoadVideo(加载视频) 取代核心 GetVideoComponents,
    并照搬「0044_参考视频」PreviewVideo 之后的三个 PreviewImageSave(首帧/关键帧/尾帧);
@@ -9,11 +9,14 @@
    (下拉是 COMBO, 前端不允许把 VIDEO 连进 COMBO, 故节点另开了一个 VIDEO 口)。
 2. 0051_视频拆音: 加载视频的 audio 输出 → FallingTSAudioTrim(波形截段) →
    三个 PreviewAudioSave(音频处理链同样来自「0044_参考视频」尾部)。
-3. 0040..0044: 删掉 PreviewVideo 之后的截帧链(首帧/关键帧/尾帧保存)与整条截音链
+3. 0070_截取声音: 用 FallingTSLoadAudio(加载音频) 取音频 —— MD 表「原声音」列接它的
+   audio_in(与 video_in 同一套: 下拉是 COMBO, 连不进 AUDIO), 再走同一条截取链
+   (FallingTSAudioTrim → 多个 PreviewAudioSave, 即「截取音频预览」)。
+4. 0040..0044: 删掉 PreviewVideo 之后的截帧链(首帧/关键帧/尾帧保存)与整条截音链
    (截段 + 三个音频保存) + 分发文件名前缀的 Reroute; 预览视频节点只留 video 输出,
    文件名前缀改为 MD 表 ID 直连(与 0030/0031/0032 已完成的清理同口径)。
 
-跑法(工作区根): .venv/Scripts/python.exe custom_nodes/ComfyUI-FallingTS/dev/build-0050-0051-decompose.py
+跑法(工作区根): .venv/Scripts/python.exe custom_nodes/ComfyUI-FallingTS/dev/build-decompose-workflows.py
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ WF_DIR = ROOT / "workflows"
 
 MD_TABLE = "FallingTSMarkDownTable"
 LOAD_VIDEO = "FallingTSLoadVideo"
+LOAD_AUDIO = "FallingTSLoadAudio"
 AUDIO_TRIM = "FallingTSAudioTrim"
 
 
@@ -653,15 +657,112 @@ def check(name: str, wf: dict) -> list:
     return [name + ": " + e for e in errs]
 
 
+def load_audio_node(pos, size, order, title: str) -> dict:
+    """加载音频节点: 输入端 audio_in(AUDIO) + name/sequence/audio/audioUI/upload。
+
+    输入顺序按运行时实测顺序 —— 可选输入排在 required 之前:
+    audio_in / name / sequence / audio / audioUI / upload。
+    """
+    n = {
+        "id": 0,
+        "type": LOAD_AUDIO,
+        "pos": list(pos),
+        "size": list(size),
+        "flags": {},
+        "order": order,
+        "mode": 0,
+        "inputs": [
+            io("audio_in", "AUDIO", widget=False),
+            io("name", "STRING"),
+            io("sequence", "STRING"),
+            io("audio", "COMBO"),
+            io("audioUI", "AUDIO_UI", widget=False),
+            io("upload", "IMAGEUPLOAD"),
+        ],
+        "outputs": [
+            {"localized_name": "audio", "name": "audio", "type": "AUDIO", "slot_index": 0, "links": []}
+        ],
+        "title": title,
+        "properties": {
+            "Node name for S&R": LOAD_AUDIO,
+            "ue_properties": {"widget_ue_connectable": {}, "version": "7.8", "input_ue_unconnectable": {}},
+        },
+        "widgets_values": ["", "00000", None, "", None, None, None, None],
+        "widgets_values_named": {
+            "name": "",
+            "sequence": "00000",
+            "刷新序列号": None,
+            "audio": "",
+            "Auto-refresh after generation": None,
+            "refresh": None,
+            "audioUI": None,
+            "upload": None,
+        },
+    }
+    return n
+
+
+def build_0070() -> dict:
+    """0070_截取声音: MD 表(原声音) → 加载音频 → 截取音频(截段) → 多个截取音频预览。"""
+    wf = load("0070_截取声音")
+    md = node_of(wf, 1)
+    place(md, 1, (0, 0), (480, 570), order=0)
+    nodes = [
+        md,
+        place(reroute((560, 0), 1), 2, (560, 0), (75, 26), order=1),
+        place(load_audio_node((715, 0), (930, 640), 2, "音频 加载/试听"), 3, (715, 0), (930, 640), order=2),
+        place(audio_trim(), 4, (1725, 0), (660, 660), order=3),
+        place(preview_audio_save("截取音频预览-1"), 5, (2465, 0), (660, 660), order=4),
+        place(preview_audio_save("截取音频预览-2"), 6, (2465, 720), (660, 660), order=5),
+        place(preview_audio_save("截取音频预览-3"), 7, (2465, 1440), (660, 660), order=6),
+        md_note(
+            8,
+            "## 截取声音\n\n"
+            "- 音频来源 = MD 表的 原声音 列, 接在「加载音频」节点的 audio_in 上(也随时能在节点下拉里手选 output 里的音频)\n"
+            "- 加载音频直接输出 audio(节点内可试听)\n"
+            "- 音频进「截取音频」: 波形上拖两侧把手选区 → 点「截段」累积(可多段) → 点「完成」输出 截段 1/2/3\n"
+            "- 每段各接一个「截取音频预览」, 可试听并点「保存」落盘; 段数不够时把该节点的「输出段数」调大即可\n"
+            "- 文件名前缀 = MD 表格 ID(由 Reroute 分发)",
+            (-600, 0), (520, 760), 7,
+        ),
+    ]
+    nodes[3]["title"] = "截取音频"
+    links = [
+        [1, 1, 1, 3, 0, "AUDIO"],
+        [2, 1, 0, 2, 0, "STRING"],
+        [3, 3, 0, 4, 0, "AUDIO"],
+        [4, 2, 0, 4, 1, "STRING"],
+        [5, 2, 0, 5, 1, "STRING"],
+        [6, 2, 0, 6, 1, "STRING"],
+        [7, 2, 0, 7, 1, "STRING"],
+        [8, 4, 1, 5, 0, "AUDIO"],
+        [9, 4, 2, 6, 0, "AUDIO"],
+        [10, 4, 3, 7, 0, "AUDIO"],
+    ]
+    wf["nodes"] = nodes
+    wf["links"] = links
+    wf["groups"] = []
+    wf["last_node_id"] = 8
+    wf["last_link_id"] = 10
+    wf["extra"] = {"ds": {"scale": 0.45, "offset": [2257.777777777778, 544]}, "ue_links": []}
+    relink(wf)
+    return wf
+
+
 def main() -> None:
-    results = {"0050_视频拆帧": build_0050(), "0051_视频拆音": build_0051(), "0035_场景截帧": fix_0035()}
+    results = {
+        "0050_视频拆帧": build_0050(),
+        "0051_视频拆音": build_0051(),
+        "0070_截取声音": build_0070(),
+        "0035_场景截帧": fix_0035(),
+    }
     for name in ("0040_文生视频", "0041_首帧视频", "0042_首尾视频", "0043_关键帧视频", "0044_参考视频"):
         results[name] = clean_tail(name)
 
     problems = []
     for name, wf in results.items():
         problems += integrity(name, wf)
-        if name in ("0050_视频拆帧", "0051_视频拆音"):
+        if name in ("0050_视频拆帧", "0051_视频拆音", "0070_截取声音"):
             problems += check(name, wf)
         save(name, wf)
         types = {}
@@ -679,4 +780,5 @@ def main() -> None:
         print("布局/结构自检: 无问题")
 
 
-main()
+if __name__ == "__main__":
+    main()

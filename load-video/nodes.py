@@ -306,6 +306,9 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
                 ui=UI.PreviewVideo([UI.SavedResult(cached["file"], cached.get("subfolder") or "", IO.FolderType.temp)]),
             )
 
+        if video_in is None and not video:
+            raise ValueError("FallingTS 加载视频: 没有选择视频(下拉), 也没有连接 video_in")
+
         if video_in is not None:
             loaded = video_in
             source = video_in.get_stream_source()
@@ -413,13 +416,19 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         )
 
     @classmethod
-    def validate_inputs(cls, video=None, video_in=None, **kwargs) -> bool | str:
+    def validate_inputs(cls, video=None, video_in=None, input_types=None, **kwargs) -> bool | str:
         """文件不存在时给出明确提示(内置 LoadVideo 同口径; 值默认按 output 解析)。
 
-        经 video_in 连进来的视频已由上游加载, 不按文件名再查一次(此时下拉值可以是空的)。
+        ⚠️ 校验阶段**连线的输入拿不到值**(execution.py 的 get_input_data 在 execution_list
+        为空时把 linked 输入标成 missing), 所以「视频是从 video_in 连进来的」不能靠
+        video_in is None 判断 —— 否则 0050/0051 这种"下拉为空 + video_in 接线"的图会在
+        提交时被误判成「Invalid video file: 」而整次被拦掉。判定见 input_types 形参
+        (ComfyUI 会把各连线输入的上游类型传进来)。
         """
-        if video_in is not None:
+        if "video_in" in (input_types or {}) or video_in is not None:
             return True
+        if not video:
+            return "请选择视频文件(下拉)或把视频连到 video_in"
         try:
             path = folder_paths.get_annotated_filepath(
                 video, default_dir=folder_paths.get_output_directory()

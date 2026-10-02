@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 from websockets.sync.client import connect
@@ -118,7 +119,66 @@ def link(dump, **kw):
     return found
 
 
+def post(path, payload):
+    """POST JSON 到 8189(400 时把 body 回给调用方看)。"""
+    req = urllib.request.Request(BASE + path, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"_http_error": e.code, "_body": e.read().decode()[:600]}
+
+
+def get(path):
+    """GET JSON。"""
+    with urllib.request.urlopen(BASE + path, timeout=60) as r:
+        return json.loads(r.read().decode())
+
+
+def check_video_in_end_to_end():
+    """后端: video_in 连线时提交不该被误判成「Invalid video file」(0050/0051 走的就是这条路)。
+
+    校验阶段连线的输入拿不到值, 若只判断 video_in 是否为 None, "下拉为空 + video_in 接线"
+    的图会被整次拦掉 —— 这里用核心 LoadVideo 造一个 VIDEO 源接进 video_in, 验证提交被接受、
+    且本节点正常执行(未「完成」→ 阻断下游但预览照发)。
+    """
+    probe = ROOT / "media" / "七纹刻印" / "_probe_video_in.mp4"
+    source = ROOT / "media" / "七纹刻印" / "0031_首帧场景" / "00001_书房旋镜视频.mp4"
+    if not source.is_file():
+        print("SKIP video_in 用例: 找不到源视频", source)
+        return
+    probe.write_bytes(source.read_bytes())
+    try:
+        prompt = {
+            "1": {"class_type": "LoadVideo", "inputs": {"file": probe.name}},
+            "2": {"class_type": "FallingTSLoadVideo",
+                  "inputs": {"video_in": ["1", 0], "video": "", "name": "", "sequence": "00000"}},
+        }
+        res = post("/prompt", {"prompt": prompt, "client_id": "verify-005x"})
+        body = str(res.get("_body") or "")
+        check("video_in 图提交未被「Invalid video file」拦掉",
+              bool(res.get("prompt_id")) and "Invalid video file" not in body, res)
+        pid = res.get("prompt_id")
+        if pid:
+            hist = None
+            for _ in range(60):
+                time.sleep(2)
+                h = get("/history/" + pid)
+                if pid in h:
+                    hist = h[pid]
+                    break
+            outs = (hist or {}).get("outputs") or {}
+            check("video_in 图执行成功(未完成 → 预览照发)",
+                  (hist or {}).get("status", {}).get("status_str") == "success"
+                  and bool(outs.get("2", {}).get("images")),
+                  {"status": (hist or {}).get("status", {}).get("status_str"), "node2": outs.get("2")})
+    finally:
+        probe.unlink(missing_ok=True)
+
+
 def main():
+    check_video_in_end_to_end()
     edge = next((p for p in EDGE if pathlib.Path(p).is_file()), None)
     port = free_port()
     profile = pathlib.Path(tempfile.mkdtemp(prefix="verify005x-"))

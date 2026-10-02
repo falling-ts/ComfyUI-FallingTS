@@ -113,19 +113,22 @@ async function refreshSequence(node, notify) {
  * 优先 widgets_values_named(按 widget 名索引, 不受 widget 顺序变化影响),
  * 退回到 widgets_values 里 audio widget 的同下标项。
  *
+ * 注意区分"存的就是空串"(如 0070 由 audio_in 驱动、下拉不选文件)与"没有存档值":
+ * 前者要守护成空, 后者(null)不守护 —— 否则新节点上手选候选首项会被误回拨。
+ *
  * @param {LGraphNode} node 节点
  * @param {object} info configure 数据
- * @returns {string} 存档值(取不到返回空串)
+ * @returns {string|null} 存档值; 没有存档值时返回 null
  */
 function storedAudioValue(node, info) {
   const named = info?.widgets_values_named;
-  if (named && typeof named.audio === "string" && named.audio) return named.audio;
+  if (named && typeof named.audio === "string") return named.audio;
 
   const list = info?.widgets_values;
-  if (!Array.isArray(list)) return "";
+  if (!Array.isArray(list)) return null;
   const index = node.widgets?.findIndex((w) => w.name === "audio") ?? -1;
   const value = index >= 0 ? list[index] : undefined;
-  return typeof value === "string" ? value : "";
+  return typeof value === "string" ? value : null;
 }
 
 /**
@@ -137,7 +140,7 @@ function storedAudioValue(node, info) {
  */
 function keepStoredAudio(node, info) {
   const stored = storedAudioValue(node, info);
-  if (!stored) return;
+  if (stored === null) return;
 
   const widget = node.widgets?.find((w) => w.name === "audio");
   if (!widget) return;

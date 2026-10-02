@@ -128,9 +128,9 @@ def main():
         check("提交载荷不带 audioUI(故后端声明为 optional)", "audioUI" not in (info["sent"] or {}), info["sent"])
         check("带 audioUI 播放器 + 上传按钮",
               "audioUI" in info["widgets"] and "upload" in info["widgets"], info["widgets"])
-        check("输入 = name/sequence/audio/audioUI/upload",
-              info["inputs"][:4] == ["name:STRING", "sequence:STRING", "audio:COMBO", "audioUI:AUDIO_UI"]
-              and any(i.startswith("upload:") for i in info["inputs"]), info["inputs"])
+        check("输入 = audio_in/name/sequence/audio/audioUI/upload",
+              info["inputs"] == ["audio_in:AUDIO", "name:STRING", "sequence:STRING", "audio:COMBO",
+                                 "audioUI:AUDIO_UI", "upload:AUDIOUPLOAD"], info["inputs"])
         check("输出 = audio:AUDIO", info["outputs"] == ["audio:AUDIO"], info["outputs"])
 
         # 序列号: 新节点会自动向后端取一次
