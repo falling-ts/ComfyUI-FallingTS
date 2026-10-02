@@ -235,6 +235,92 @@ def _decode_frames(loaded) -> dict:
         return {"images": None, "audio": None, "fps": 0.0}
 
 
+def _encode_temp_preview(loaded) -> tuple[str, str]:
+    """把视频编码成一份 temp 预览, 返回 (file, subfolder); 编不出时抛异常由调用方兜底。
+
+    与 execute 同口径(随机前缀 + 5 位计数 + mp4), 供「页面刷新后重建播放器」使用。
+    """
+    width, height = loaded.get_dimensions()
+    temp_prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
+    full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+        temp_prefix,
+        folder_paths.get_temp_directory(),
+        width,
+        height,
+    )
+    ext = Types.VideoContainer.get_extension("mp4")
+    file = f"{filename}_{counter:05}_.{ext}"
+    loaded.save_to(
+        os.path.join(full_output_folder, file),
+        format=Types.VideoContainer.MP4,
+        codec=Types.VideoCodec.AUTO,
+    )
+    return file, subfolder
+
+
+def _temp_preview_exists(cache: dict) -> bool:
+    """缓存里的 temp 预览文件是否还在(ComfyUI 清理 temp 后就不在了)。"""
+    file = str(cache.get("file") or "")
+    if not file:
+        return False
+    path = os.path.join(folder_paths.get_temp_directory(), str(cache.get("subfolder") or ""), file)
+    return os.path.isfile(path)
+
+
+def _ensure_temp_preview(cache: dict) -> bool:
+    """确保缓存里有真实存在的 temp 预览: 不在就现场重编码一份(懒编码兜底)。
+
+    为什么需要: temp 目录随时会被 ComfyUI 清理, 而预览 URL 是页面刷新后重建播放器的唯一
+    来源 —— 沿用旧文件名直接返回, 就是给节点挂一个「视频加载失败 / Invalid URL」(实测
+    /view 返回 404)。重编码成功后把新文件名写回缓存, 前端按新 URL 重新加载。
+    """
+    if _temp_preview_exists(cache):
+        return True
+    loaded = cache.get("video")
+    if loaded is None and cache.get("path"):
+        try:
+            loaded = InputImpl.VideoFromFile(cache["path"])
+        except Exception as e:
+            logging.warning("[FallingTS] 重建预览时打开视频失败: %s", e)
+            return False
+    if loaded is None:
+        return False
+    try:
+        file, subfolder = _encode_temp_preview(loaded)
+    except Exception as e:
+        logging.warning("[FallingTS] 重建 temp 预览失败: %s", e)
+        return False
+    cache["video"] = loaded
+    cache["file"], cache["subfolder"] = file, subfolder
+    return True
+
+
+def _source_video_url(path) -> str:
+    """源文件本身的 /view URL(temp 预览重建失败时的兜底; 源文件在磁盘上不会消失)。"""
+    if not path:
+        return ""
+    for kind, base in (("output", folder_paths.get_output_directory()), ("input", folder_paths.get_input_directory())):
+        try:
+            rel = os.path.relpath(str(path), base)
+        except ValueError:
+            continue
+        if rel.startswith(".."):
+            continue
+        rel = rel.replace("\\", "/")
+        subfolder, _, name = rel.rpartition("/")
+        return f"/view?filename={quote(name)}&subfolder={quote(subfolder)}&type={kind}"
+    return ""
+
+
+def _preview_url(cache: dict) -> str:
+    """取该节点可播放的预览 URL: 优先 temp 预览(必要时现场重建), 退而用源文件。"""
+    if _ensure_temp_preview(cache):
+        file = str(cache.get("file") or "")
+        subfolder = str(cache.get("subfolder") or "")
+        return f"/view?filename={quote(file)}&subfolder={quote(subfolder)}&type=temp"
+    return _source_video_url(cache.get("path"))
+
+
 def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str = "") -> tuple[dict | None, str]:
     """按节点上选中的视频现场拆帧并建缓存(截帧/保存帧路由的「懒解码」兜底)。
 
@@ -266,24 +352,8 @@ def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str 
     # 顺手编码一份预览到 temp(与 execute 同口径): ① 页面刷新后 restoreVideo 能重建播放器;
     # ② 「完成」时 partial 提交可直接命中 execute 的缓存快速路径, 不必再解码一遍。
     # 编码失败不影响截帧(只是没有预览), 故单独兜底。
-    file = ""
-    subfolder = ""
     try:
-        width, height = loaded.get_dimensions()
-        temp_prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
-        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            temp_prefix,
-            folder_paths.get_temp_directory(),
-            width,
-            height,
-        )
-        ext = Types.VideoContainer.get_extension("mp4")
-        file = f"{filename}_{counter:05}_.{ext}"
-        loaded.save_to(
-            os.path.join(full_output_folder, file),
-            format=Types.VideoContainer.MP4,
-            codec=Types.VideoCodec.AUTO,
-        )
+        file, subfolder = _encode_temp_preview(loaded)
     except Exception as e:
         logging.warning("[FallingTS] 懒解码时编码预览失败(不影响截帧): %s", e)
         file, subfolder = "", ""
@@ -421,7 +491,9 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         prefix = sequence_prefix(sequence, name)
 
         cached = _last_output.get(nid_str)
-        if nid_str in _done and cached and cached.get("file"):
+        # temp 预览可能已被 ComfyUI 清理: 先现场补编码, 否则 UI.PreviewVideo 指向死文件,
+        # 补不出来就落到下面的完整路径重新解码
+        if nid_str in _done and cached and _ensure_temp_preview(cached):
             return IO.NodeOutput(
                 cached.get("video"),
                 cached.get("audio"),
@@ -443,21 +515,7 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
             )
             loaded = InputImpl.VideoFromFile(video_path)
 
-        width, height = loaded.get_dimensions()
-        temp_prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
-        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            temp_prefix,
-            folder_paths.get_temp_directory(),
-            width,
-            height,
-        )
-        ext = Types.VideoContainer.get_extension("mp4")
-        file = f"{filename}_{counter:05}_.{ext}"
-        loaded.save_to(
-            os.path.join(full_output_folder, file),
-            format=Types.VideoContainer.MP4,
-            codec=Types.VideoCodec.AUTO,
-        )
+        file, subfolder = _encode_temp_preview(loaded)
 
         # 拆出帧集合缓存(截帧数据源): images = [N,H,W,C] 张量
         parts = _decode_frames(loaded)
@@ -700,16 +758,20 @@ async def _handle_state(request: web.Request) -> web.Response:
 
 
 async def _handle_preview_url(request: web.Request) -> web.Response:
-    """返回该节点当前缓存视频的可播放 URL, 供前端在刷新后重建预览。"""
+    """返回该节点当前缓存视频的可播放 URL, 供前端在刷新后重建预览。
+
+    temp 预览被清理时现场重编码(懒编码兜底), 再不行退回源文件本身的 URL —— 绝不能把
+    已被清理的 temp 文件名直接返给前端: 前端把播放器指过去就是 404, 节点上显示
+    「视频加载失败 / Invalid URL」(实测复现)。
+    """
     nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid) or {}
-    file = cache.get("file")
-    if not file:
+    cache = _last_output.get(nid)
+    if not cache:
         return web.json_response({"status": "error", "message": "没有可预览的视频, 请先运行到该节点"}, status=400)
-    subfolder = cache.get("subfolder") or ""
-    return web.json_response(
-        {"status": "ok", "url": f"/view?filename={quote(file)}&subfolder={quote(subfolder)}&type=temp"}
-    )
+    url = _preview_url(cache)
+    if not url:
+        return web.json_response({"status": "error", "message": "视频预览已失效, 请重新运行到该节点"}, status=400)
+    return web.json_response({"status": "ok", "url": url})
 
 
 async def _handle_save_frames(request: web.Request) -> web.Response:

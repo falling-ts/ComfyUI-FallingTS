@@ -506,7 +506,9 @@ async function restoreVideo(node) {
       curName = null;
     }
     const newName = new URL(absUrl).searchParams.get("filename");
-    if (curName !== newName) {
+    // 后端换了文件(懒解码重编码 / 重跑)或这个元素上一次就加载失败(旧 temp 已被清理 ⇒ 404)
+    // 时重新指向; 否则保持 src 不动 —— 改写 src 会把用户正在播放的位置归零, 下一帧就截错地方
+    if (curName !== newName || nativeVid.dataset.src !== absUrl || nativeVid.error) {
       nativeVid.dataset.src = absUrl;
       nativeVid.src = absUrl;
       nativeVid.controls = true;
@@ -721,7 +723,12 @@ app.registerExtension({
             node._fallingtsVideoFallback?.videoEl,
             ...(host ? host.querySelectorAll("video") : []),
           ].filter((v) => v && v.src);
-          if (!players.length) restoreVideo(node);
+          // 没有播放器、或可见的那个已经加载失败(指向被清理的 temp ⇒ 页面上「视频加载失败」
+          // / Invalid URL)时, 用后端刚重建好的预览补上; 正在正常播放的播放器不动
+          const visible = players.filter((v) => (v.getClientRects?.().length ?? 0) > 0);
+          const pool = visible.length ? visible : players;
+          const broken = (v) => !v.getAttribute("src") || !!v.error || v.networkState === 3;
+          if (!players.length || pool.some(broken)) restoreVideo(node);
         } catch (err) {
           console.error("[FallingTS] 截帧失败:", err);
           app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端", life: 3000 });
