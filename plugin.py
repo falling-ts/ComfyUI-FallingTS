@@ -27,6 +27,8 @@ from composite.nodes import FallingTSImageCompositeNode
 LoadImageNode = import_module("load-image.nodes").FallingTSLoadImageNode
 # load-video 目录名含连字符(加载视频: 来自输出 + 数字目录下拉 + 序列号/名称 + 截帧/保存帧)
 LoadVideoNode = import_module("load-video.nodes").FallingTSLoadVideoNode
+# load-audio 目录名含连字符(加载音频: 来自输出 + 数字目录下拉 + 序列号/名称 + 节点内试听)
+LoadAudioNode = import_module("load-audio.nodes").FallingTSLoadAudioNode
 
 # preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
@@ -69,6 +71,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSImageComposite": FallingTSImageCompositeNode,
     "FallingTSLoadImage": LoadImageNode,
     "FallingTSLoadVideo": LoadVideoNode,
+    "FallingTSLoadAudio": LoadAudioNode,
     "FallingTSVideoComponents": VideoComponentsNode,
     "FallingTSH3AddGuide": H3AddGuideNode,
     "WorldRefinePLY": WorldRefinePLYNode,
@@ -92,6 +95,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSImageComposite": "FallingTS 四图合成 (2×2 带标注)",
     "FallingTSLoadImage": "FallingTS 加载图像 (来自输出)",
     "FallingTSLoadVideo": "FallingTS 加载视频 (来自输出 + 截帧)",
+    "FallingTSLoadAudio": "FallingTS 加载音频 (来自输出)",
     "FallingTSVideoComponents": "FallingTS 视频拆解 (拆帧/拆音)",
     "FallingTSH3AddGuide": "FallingTS H3 引导锚定 (None 安全)",
     "WorldRefinePLY": "FallingTS 世界重建精修 PLY (504)",
