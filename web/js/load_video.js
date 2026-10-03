@@ -1,5 +1,5 @@
 /**
- * FallingTSLoadVideo 前端: 加载视频节点的「序列号 / 刷新 / 截帧 / 完成 / 保存帧」。
+ * FallingTSLoadVideo 前端: 加载视频节点的「序列号 / 刷新 / 截帧 / 完成」。
  *
  * 本文件自 preview-video.js 的截帧部分迁移而来(预览视频节点此后只保留「保存」):
  * - 预览部分由节点原生 UI.PreviewVideo 负责(播放 temp 目录文件);
@@ -8,8 +8,6 @@
  *   取该帧转 PNG 返回; 前端追加到选中帧列表并同步输出端口 image_1..N;
  * - 点「完成」: 无帧 = 预加载(全量提交); 有帧 = 置完成后以 partial_execution_targets
  *   只提交本节点下游的输出节点(与 PreviewVideo / 继续节点同套语义);
- * - 点「保存帧」: 把选中帧按 <序列号>_<名称>.png 存进 output/<产物目录>/, 保存后序列号
- *   自动续到下一个可用号;
  * - 「序列号」自动取 output/<产物目录>/ 里已有编号的最大值 + 1(目录为空或不存在为 00000),
  *   可手动改; 右侧「刷新序列号」按钮随时重算;
  * - 刷新后从后端读回截帧列表与视频预览重建(后端是唯一事实来源)。
@@ -84,12 +82,11 @@ function paintButton(el, from, to, hoverFrom, hoverTo) {
 const BTN_STYLES = {
   截帧: ["#0bb47d", "#17d9a0", "#0ecc90", "#22edb2"],
   完成: ["#e5484d", "#ff6b70", "#f05459", "#ff7a80"],
-  保存帧: ["#6a5cff", "#9d5cff", "#7b6dff", "#ad6dff"],
   刷新序列号: ["#3a6ea5", "#4f96d8", "#477fbb", "#5fa9e8"],
 };
 
 /**
- * 遍历页面按钮, 给本节点用到的四种按钮(截帧/完成/保存帧/刷新序列号)套样式。
+ * 遍历页面按钮, 给本节点用到的三种按钮(截帧/完成/刷新序列号)套样式。
  *
  * @returns {void}
  */
@@ -140,7 +137,7 @@ function setSequence(node, value) {
 }
 
 /**
- * 从后端重算序列号并写入节点(保存帧后也用它续号)。
+ * 从后端重算序列号并写入节点(供 prefix 文件名前缀使用)。
  *
  * @param {LGraphNode} node 节点
  * @param {boolean} notify 是否弹提示(手动点刷新时为真)
@@ -600,7 +597,7 @@ function currentPlaybackSeconds(node) {
 }
 
 /**
- * 取节点上「视频 / 名称 / 序列号」三个值, 随截帧与保存帧请求一起发给后端。
+ * 取节点上「视频 / 名称 / 序列号」三个值, 随截帧请求一起发给后端。
  *
  * 后端在帧缓存为空时(重启 ComfyUI / 还没跑过本节点)靠这里的 video 现场拆帧 ——
  * 用户既然能在节点里播放视频, 就不该被「请先运行到该节点」挡住。
@@ -657,7 +654,7 @@ app.registerExtension({
   },
 
   /**
-   * 节点定义注册前钩子: 给加载视频节点追加序列号刷新 + 截帧/完成/保存帧 + 选中帧列表。
+   * 节点定义注册前钩子: 给加载视频节点追加序列号刷新 + 截帧/完成 + 选中帧列表。
    *
    * @param {Function} nodeType 节点类型构造函数(原型上挂方法)
    * @param {object} nodeData 节点定义数据(来自 /object_info)
@@ -787,40 +784,6 @@ app.registerExtension({
         }
       });
 
-      // ── 保存帧: 选中帧按 <序列号>_<名称>.png 存进 output/<产物目录>/, 保存后续号 ──
-      node.addWidget("button", "保存帧", null, async () => {
-        const frames = node._fallingtsFrameList?.state?.frames ?? [];
-        if (!frames.length) {
-          app.extensionManager.toast.add({ severity: "warning", summary: "还没有截帧, 请先点「截帧」", life: 3000 });
-          return;
-        }
-        const seqWidget = node.widgets?.find((w) => w.name === "sequence");
-        const nameWidget = node.widgets?.find((w) => w.name === "name");
-        try {
-          const resp = await fetch(ROUTE + "/save_frames/" + node.id, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              frames: frames.map((f) => f.fno),
-              sequence: Number(seqWidget?.value) || 0,
-              name: nameWidget?.value ?? "",
-              workflow_name: currentWorkflowName(),
-            }),
-          });
-          const data = await resp.json().catch(() => null);
-          if (!resp.ok) {
-            app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "保存帧失败", life: 3000 });
-            return;
-          }
-          // 保存后续到下一个可用号(后端已重算)
-          if (data?.next_sequence != null) setSequence(node, data.next_sequence);
-          app.extensionManager.toast.add({ severity: "success", summary: data?.message ?? "已保存", life: 3000 });
-        } catch (err) {
-          console.error("[FallingTS] 保存帧失败:", err);
-          app.extensionManager.toast.add({ severity: "error", summary: "保存帧失败: 无法连接后端", life: 3000 });
-        }
-      });
-
       // ── 输出帧数: 输出 image 端口数量(默认 1, 最小 = max(1, 选中帧数), 上限 MAX_FRAMES) ──
       const totalWidget = node.addWidget("number", "输出帧数", 1, () => {
         syncFrameState(node, node._fallingtsFrameList?.state ?? { frames: [] });
@@ -853,6 +816,20 @@ app.registerExtension({
         } else {
           setSequence(node, stored);
         }
+        // 老存档兼容: 「保存帧」按钮已删除, 但旧工作流的 widgets_values 还占着一格, 会让其后的
+        // 输出帧数/frame_list/video_fallback 按位错位 —— 这里把输出帧数修正回来(frame_list /
+        // video_fallback 稍后由 restoreFrames / restoreVideo 以后端为准重建)。
+        const _wv = info?.widgets_values;
+        const _named = info?.widgets_values_named;
+        const _legacy = _named
+          ? Object.prototype.hasOwnProperty.call(_named, "保存帧")
+          : Array.isArray(_wv) && _wv.length === 13;
+        if (_legacy) {
+          const savedTotal = _named?.["输出帧数"] ?? (Array.isArray(_wv) ? _wv[10] : undefined);
+          const tw = node._fallingtsTotalWidget;
+          if (tw && savedTotal != null && savedTotal !== "") tw.value = Number(savedTotal) || tw.value;
+        }
+
         // configure 是同步的, 渲染发生在 configure 完成后 ⇒ 一次成型, 不会先显示全部端口
         syncFrameState(node, node._fallingtsFrameList?.state ?? { frames: [] });
         fitHeight(node);

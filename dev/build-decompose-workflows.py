@@ -173,7 +173,7 @@ def load_video_node(pos, size, order, frames: int) -> dict:
             "Node name for S&R": LOAD_VIDEO,
             "ue_properties": {"widget_ue_connectable": {}, "version": "7.8", "input_ue_unconnectable": {}},
         },
-        "widgets_values": ["", "00000", None, "", None, None, None, None, {"frames": []}, "", frames, {"frames": []}, ""],
+        "widgets_values": ["", "00000", None, "", None, None, None, None, {"frames": []}, frames, {"frames": []}, ""],
         "widgets_values_named": {
             "name": "",
             "sequence": "00000",
@@ -184,7 +184,6 @@ def load_video_node(pos, size, order, frames: int) -> dict:
             "upload": None,
             "截帧": None,
             "完成": {"frames": []},
-            "保存帧": "",
             "输出帧数": frames,
             "frame_list": {"frames": []},
             "video_fallback": "",
@@ -347,7 +346,7 @@ def build_0050() -> dict:
             "## 视频拆帧\n\n"
             "- 「加载视频」(FallingTSLoadVideo) 自己就是起点: 在它的下拉里选 output 里的原视频(点「刷新」重扫候选)\n"
             "- 点「截帧」在播放位置取帧(可删/可多次), 点「完成」把选中帧输出到下游\n"
-            "- 选中帧 1/2/3 → 首帧/关键帧/尾帧 三个「预览保存」; 单帧也能用节点自带的「保存帧」直接存\n"
+            "- 选中帧 1/2/3 → 首帧/关键帧/尾帧 三个「预览保存」\n"
             "- 文件名前缀 = 加载视频的「文件名前缀」输出(序列号_名称, 一条线分发给三个保存节点); 后缀区分首帧/关键帧/尾帧\n"
             "- 本工作流不读数据表; 拆音见 0051_视频拆音",
             (-600, 0), (520, 760), 4,

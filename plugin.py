@@ -25,7 +25,7 @@ from fps.nodes import FallingTSFrameRateConvertNode
 from composite.nodes import FallingTSImageCompositeNode
 # load-image 目录名含连字符, 需经 importlib 按名加载(加载图像: 来自输出 + 数字目录下拉 + 名称输入框)
 LoadImageNode = import_module("load-image.nodes").FallingTSLoadImageNode
-# load-video 目录名含连字符(加载视频: 来自输出 + 数字目录下拉 + 序列号/名称 + 截帧/保存帧)
+# load-video 目录名含连字符(加载视频: 来自输出 + 数字目录下拉 + 序列号/名称 + 截帧)
 LoadVideoNode = import_module("load-video.nodes").FallingTSLoadVideoNode
 # load-audio 目录名含连字符(加载音频: 来自输出 + 数字目录下拉 + 序列号/名称 + 节点内试听)
 LoadAudioNode = import_module("load-audio.nodes").FallingTSLoadAudioNode

@@ -11,7 +11,6 @@
   ④ 无 video 且无缓存 → 400 且提示「请在节点里选择或上传视频」
   ⑤ mode=frame 直接按帧号取 → 200 且帧号一致
   ⑥ /state 反映懒解码建好的缓存(total_frames / selected_frames)
-  ⑦ save_frames 懒解码兜底 → 产物落临时子目录(测完删除)
 
 用法: .venv/Scripts/python.exe custom_nodes/ComfyUI-FallingTS/dev/_verify-load-video-lazy-frame.py
 """
@@ -165,16 +164,6 @@ def main() -> int:
         check("⑥c 懒解码后「完成」置位", s6 == 200 and b6.get("done") is True,
               {"status": s6, "done": b6.get("done")})
 
-        # ⑦ save_frames 懒解码兜底(写进临时子目录, 测完删)
-        status7, _, body7 = post(base + "/fallingts_load_video/save_frames/18", {
-            "frames": [121], "sequence": 0, "name": "懒解码", "dir": TMP_DIR_NAME,
-        })
-        saved_ok = status7 == 200 and (out_dir / "00000_懒解码.png").is_file()
-        check("⑦ save_frames 懒解码 → 产物落临时目录", saved_ok,
-              {"status": status7, "message": body7.get("message"), "saved": body7.get("saved")})
-
-        size = (out_dir / "00000_懒解码.png").stat().st_size if saved_ok else 0
-        check("⑦ 产物是有效 PNG(>10KB)", size > 10_000, {"bytes": size})
     finally:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
         env_log.close()

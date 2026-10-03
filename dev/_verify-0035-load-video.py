@@ -2,7 +2,7 @@
 """验证「加载视频」(FallingTSLoadVideo) 前端: 控件齐全 / 序列号 / 端口对齐 / remote 配置。
 
 背景(2026-10-02): 截帧/完成/选中帧输出自 PreviewVideo 迁移到新节点, 并新增
-「序列号(自动取产物目录最大编号 + 1)」「名称」「刷新序列号」「保存帧」。
+「序列号(自动取产物目录最大编号 + 1)」「名称」「刷新序列号」。
 本脚本用无头 Edge + CDP 真开前端, 加载 0035_场景截帧 工作流后逐项检查。
 
 用法: .venv/Scripts/python.exe custom_nodes/ComfyUI-FallingTS/dev/_verify-0035-load-video.py [BASE_URL]
@@ -187,7 +187,7 @@ def main() -> int:
         else:
             check("工作流里找到 FallingTSLoadVideo 节点", True)
             names = info.get("names") or []
-            for want in ("name", "sequence", "刷新序列号", "video", "截帧", "完成", "保存帧", "输出帧数", "frame_list", "video_fallback"):
+            for want in ("name", "sequence", "刷新序列号", "video", "截帧", "完成", "输出帧数", "frame_list", "video_fallback"):
                 check(f"控件存在: {want}", want in names, names)
             check("序列号自动填成 5 位 00000", info.get("sequence") == "00000", info.get("sequence"))
             check("视频下拉值 = 工作流存档视频", info.get("video") == VIDEO, info.get("video"))

@@ -6,7 +6,7 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
 - 值经 folder_paths.get_annotated_filepath(..., default_dir=output) 解析, 带 " [output]"
   标注的值仍按标注走。
 
-本模块另加四件事:
+本模块在原加载口径之外另加这些能力:
 
 1. **下拉候选由自身路由 GET /fallingts_load_video/files 提供**(与「加载图像」同一口径):
    内置 /internal/files/output 只列 output 根目录一层, 而本工作区产物全落在数字目录
@@ -15,17 +15,15 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
    0035_场景截帧/00001_陈落.mp4(不带 " [output]" 标注, 见「加载图像」模块的同一条说明)。
    remote **不设 control_after_refresh** —— 刷新只重新拉候选列表, 不改写已选值。
 
-2. **「序列号」+「名称」**: 截帧保存的命名。序列号 = output/<工作流产物目录>/ 里已有
+2. **「序列号」+「名称」**: 产物文件名前缀的命名。序列号 = output/<工作流产物目录>/ 里已有
    编号的最大值 + 1(目录不存在或没有 "数字_" 命名的文件时为 0), 显示为 5 位; 前端在
-   节点创建/打开工作流时自动拉取一次, 刷新按钮可随时重算, 保存帧后自动续到下一个可用号。
+   节点创建/打开工作流时自动拉取一次, 刷新按钮可随时重算。
 
-3. **「保存帧」**: 把选中帧逐张写成 output/<目录>/<序列号>_<名称>.png。
-
-4. **音频输出**: 执行时 get_components() 的音轨直接给 `audio` 输出 —— 拆音不需要截帧,
+3. **音频输出**: 执行时 get_components() 的音轨直接给 `audio` 输出 —— 拆音不需要截帧,
     该输出**不受「完成」门控**(只有 image_1..N 被门控), 于是「加载视频 → 音频后处理」这条链
     在未点「完成」时就能跑通。
 
-4b. **「序列号_名称」前缀输出**: `prefix`(STRING) = `<序列号>_<名称>`(口径见
+4. **「序列号_名称」前缀输出**: `prefix`(STRING) = `<序列号>_<名称>`(口径见
     output_subdir.sequence_prefix), 接各预览保存节点的 `filename_prefix` —— 拆帧/拆音/截取
     这类"表驱动"工作流不再需要 md 数据表提供文件名前缀。与 `audio` 一样**不受「完成」门控**
     (拆音链在未截帧时也要能落盘)。
@@ -63,7 +61,7 @@ import folder_paths
 from comfy_api.latest import IO, Types, UI, InputImpl
 from comfy_execution.graph_utils import ExecutionBlocker
 
-from output_subdir import next_sequence, safe_dir_name, safe_file_token, sequence_dir, sequence_prefix
+from output_subdir import next_sequence, safe_dir_name, sequence_dir, sequence_prefix
 
 _NODE_NAME = "FallingTSLoadVideo"
 
@@ -160,11 +158,6 @@ async def _handlenext_sequence(request: web.Request) -> web.Response:
             "exists": os.path.isdir(directory),
         }
     )
-
-
-def _sanitize_name(name) -> str:
-    """清洗「名称」: 去扩展名、路径分隔与非法字符, 返回安全的纯文件名(不含扩展名)。"""
-    return safe_file_token(os.path.splitext(str(name or ""))[0])
 
 
 # ─── 帧工具(与 preview-video 同实现) ───────────────────────────────────────
@@ -322,7 +315,7 @@ def _preview_url(cache: dict) -> str:
 
 
 def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str = "") -> tuple[dict | None, str]:
-    """按节点上选中的视频现场拆帧并建缓存(截帧/保存帧路由的「懒解码」兜底)。
+    """按节点上选中的视频现场拆帧并建缓存(截帧路由的「懒解码」兜底)。
 
     为什么需要: execute 的帧缓存只在进程内存里 —— 重启 ComfyUI、或用户刚在节点上选好/
     上传视频还没跑过本节点时缓存是空的, 而此时前端播放器已经就绪、播放位置也读得到, 却点
@@ -415,22 +408,22 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
             category="FallingTS",
             description=(
                 "Load a video from the output directory (including videos inside numbered subdirectories); "
-                "capture frames from it and save them as <sequence>_<name>.png into the workflow's output subdirectory. "
-                "「序列号」是保存帧的编号(自动取目录里最大编号 + 1, 可改, 右侧刷新按钮重算), 「名称」是保存帧的文件名。"
+                "capture frames from it and output them downstream. "
+                "「序列号」+「名称」组成 prefix 文件名前缀(自动取目录里最大编号 + 1, 可改, 右侧刷新按钮重算)。"
             ),
             inputs=[
                 IO.String.Input(
                     "name",
                     default="",
                     multiline=False,
-                    tooltip="保存帧的文件名(不含扩展名): output/<产物目录>/<序列号>_<名称>.png",
+                    tooltip="文件名前缀的名称部分: prefix = <序列号>_<名称>, 接预览保存节点的 filename_prefix",
                 ),
                 # 字符串而非 INT: 编号按 5 位书写(00000), 前端补零显示, 保存时按整数解析
                 IO.String.Input(
                     "sequence",
                     default="",
                     multiline=False,
-                    tooltip="保存帧的编号: 自动取产物目录里已有编号的最大值 + 1(目录为空时为 00000), 可手动改",
+                    tooltip="文件名前缀的编号: 自动取产物目录里已有编号的最大值 + 1(目录为空时为 00000), 可手动改",
                 ),
                 IO.Combo.Input(
                     "video",
@@ -476,8 +469,8 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         参数:
             video (str | None): 视频文件名(相对 output, 形如 0035_场景截帧/00001_陈落.mp4)。
             video_in (Video | None): 外部传入的视频(数据表「原视频」列等), 有值时优先于 video。
-            name (str, 默认 ""): 「名称」: 保存帧的文件名, 同时进 prefix。
-            sequence (str, 默认 ""): 「序列号」(5 位文本, 如 "00005"; 同时进 prefix, 并缓存起来供「保存帧」兜底)。
+            name (str, 默认 ""): 「名称」: 文件名前缀的名称部分。
+            sequence (str, 默认 ""): 「序列号」(5 位文本, 如 "00005"), 与 name 一起组成 prefix。
 
         返回:
             IO.NodeOutput: 视频 + 音轨 + 前缀 + 64 个选中帧槽(未选中/未完成时按上述语义填)。
@@ -485,7 +478,7 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         nid = getattr(cls.hidden, "unique_id", None)
         nid_str = str(nid) if nid else ""
         # V3 节点的 hidden 不进 execute 实参(execution.py 的 get_finalized_class_inputs 单独摘出),
-        # prompt 只能经 cls.hidden 取, 缓存下来供「保存帧」解析产物子目录名。
+        # prompt 只能经 cls.hidden 取(hidden 不进 execute 实参), 缓存下来备用。
         prompt = getattr(cls.hidden, "prompt", None)
         # 「序列号_名称」文件名前缀(独立于视频, 任何分支都照常输出)
         prefix = sequence_prefix(sequence, name)
@@ -774,97 +767,9 @@ async def _handle_preview_url(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "url": url})
 
 
-async def _handle_save_frames(request: web.Request) -> web.Response:
-    """把选中的帧逐张写成 output/<产物目录>/<序列号>_<名称>.png。
-
-    body: {"frames": [帧号...](缺省用缓存里已选的), "sequence": int(缺省用缓存值或自动重算),
-           "name": "名称", "workflow_name": 当前工作流名(据此解析产物子目录), "dir": 直接指定目录名}
-    返回: {"status":"ok","message":...,"saved":[...],"next_sequence":int}。
-    编号撞上已存在的文件时顺延到下一个空号, 不覆盖已有产物。
-    """
-    nid = request.match_info["node_id"].strip()
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    cache = _last_output.get(nid)
-    if not cache or cache.get("images") is None:
-        # 与截帧同一套懒解码兜底: 缓存为空(重启 / 未跑过)时按节点上的视频现场拆帧
-        cache, err = _build_cache_from_file(
-            nid, data.get("video"), str(data.get("name") or ""), str(data.get("sequence") or "")
-        )
-        if cache is None:
-            return web.json_response(
-                {"status": "error", "message": f"没有可保存的帧({err}); 请先在节点里选择视频并截帧"},
-                status=400,
-            )
-
-    images = cache["images"]
-    total = len(images)
-    raw_frames = data.get("frames") or cache.get("selected_frames") or []
-    frames: list[int] = []
-    for item in raw_frames:
-        try:
-            fno = int(item)
-        except (TypeError, ValueError):
-            continue
-        if 1 <= fno <= total and fno not in frames:
-            frames.append(fno)
-    if not frames:
-        return web.json_response({"status": "error", "message": "还没有截帧, 请先点「截帧」"}, status=400)
-
-    sub = safe_dir_name(data.get("dir")) or sequence_dir(data.get("workflow_name"), cache.get("prompt"))
-    base = folder_paths.get_output_directory()
-    out_dir = os.path.join(base, sub) if sub else base
-    try:
-        os.makedirs(out_dir, exist_ok=True)
-    except OSError as e:
-        return web.json_response({"status": "error", "message": f"无法创建产物目录: {e}"}, status=500)
-
-    seq = data.get("sequence")
-    if seq is None:
-        seq = cache.get("sequence")
-    try:
-        seq = int(seq)
-    except (TypeError, ValueError):
-        seq = next_sequence(out_dir)
-    seq = max(0, seq)
-
-    name = _sanitize_name(data.get("name") if data.get("name") is not None else cache.get("name")) or "frame"
-
-    saved: list[str] = []
-    for fno in frames:
-        # 撞号顺延, 绝不覆盖已有产物
-        while os.path.exists(os.path.join(out_dir, f"{seq:05d}_{name}.png")):
-            seq += 1
-        target = os.path.join(out_dir, f"{seq:05d}_{name}.png")
-        try:
-            with open(target, "wb") as f:
-                f.write(_png_bytes(images[fno - 1]))
-        except OSError as e:
-            return web.json_response(
-                {"status": "error", "message": f"写入 {os.path.basename(target)} 失败: {e}"}, status=500
-            )
-        saved.append(f"{seq:05d}_{name}.png")
-        seq += 1
-
-    cache["sequence"] = seq
-    where = f"{sub}/" if sub else ""
-    return web.json_response(
-        {
-            "status": "ok",
-            "message": f"已保存 {len(saved)} 帧: {where}{saved[0]}" + (" …" if len(saved) > 1 else ""),
-            "saved": saved,
-            "next_sequence": next_sequence(out_dir),
-        }
-    )
-
-
 PromptServer.instance.routes.post("/fallingts_load_video/frame/{node_id}")(_handle_frame)
 PromptServer.instance.routes.post("/fallingts_load_video/frame-remove/{node_id}")(_handle_frame_remove)
 PromptServer.instance.routes.post("/fallingts_load_video/done/{node_id}")(_handle_done)
 PromptServer.instance.routes.post("/fallingts_load_video/reset")(_handle_reset)
-PromptServer.instance.routes.post("/fallingts_load_video/save_frames/{node_id}")(_handle_save_frames)
 PromptServer.instance.routes.get("/fallingts_load_video/state/{node_id}")(_handle_state)
 PromptServer.instance.routes.get("/fallingts_load_video/preview-url/{node_id}")(_handle_preview_url)
