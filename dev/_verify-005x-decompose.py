@@ -302,7 +302,7 @@ def main():
         lv = nodes_of(d, "FallingTSLoadVideo")[0]
         check("0035 加载视频输出 = video/audio/prefix/选中帧1..8",
               lv["outputs"] == ["video", "audio", "prefix"] + ["image_%d" % i for i in range(1, 9)], lv["outputs"])
-        want = ["单图 前面", "单图 前右", "单图 右面", "单图 右后", "单图 后面", "单图 后左", "单图 左面", "单图 左前"]
+        want = ["单图 前面", "单图 前右", "单图 右面", "单图 后右", "单图 后面", "单图 后左", "单图 左面", "单图 前左"]
         got = []
         for i in range(1, 9):
             hit = link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="PreviewImageSave", toIn="images")

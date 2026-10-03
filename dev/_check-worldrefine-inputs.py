@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 sys.stdout.reconfigure(encoding="utf-8")
-SLOTS = ["前面", "前右", "右面", "右后", "后面", "后左", "左面", "左前"]
+SLOTS = ["前面", "前右", "右面", "后右", "后面", "后左", "左面", "前左"]
 TEMP = str(_COMFY / "ComfyUI" / "temp" / "worldrefine")
 ORIG = str(_COMFY / "media" / "七纹刻印" / "0031_首帧场景" / "00001_书房旋镜{}.png")
 

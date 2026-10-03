@@ -10,7 +10,7 @@
   ③ 从脚本 stdout 的 `[OUT] ` 行取回 PLY 路径, 交给下游 PLY 视口。
 
 两种上游接法:
-  - **8 视图 (md 数据表)**: 批序 前面/前右/右面/右后/后面/后左/左面/左前, 位姿由模型自己预测;
+  - **8 视图 (md 数据表)**: 批序 前面/前右/右面/后右/后面/后左/左面/前左, 位姿由模型自己预测;
   - **全景视角批 (WorldPanoramaViews)**: 任意 N 个视角 + 每个视角的**精确** w2c 外参与内参,
     脚本会带 `cond_flags=[cam,0,intr]` 注入相机先验, 位姿不再靠猜 —— 上游推理
     `rasterization.py` 在 `is_inference` 直接 return、不做跨视图融合, 每个视角按**自己预测的**
@@ -47,7 +47,7 @@ TEMP_ROOT = os.path.join(folder_paths.get_temp_directory(), "worldrefine")
 OUT_SUBDIR = "0034_世界模型"
 OUT_NAME = "0034_世界模型_世界3DGS"
 LEGACY_N_VIEWS = 8
-SLOTS = "前面/前右/右面/右后/后面/后左/左面/左前"
+SLOTS = "前面/前右/右面/后右/后面/后左/左面/前左"
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class FallingTSWorldRefinePLYNode(io.ComfyNode):
 
     @classmethod
     def define_schema(cls):
-        """声明节点输入/输出。不带先验时 images 的批序必须是 前面/前右/右面/右后/后面/后左/左面/左前。"""
+        """声明节点输入/输出。不带先验时 images 的批序必须是 前面/前右/右面/后右/后面/后左/左面/前左。"""
         return io.Schema(
             node_id="WorldRefinePLY",
             display_name="FallingTS 世界重建精修 PLY (504)",
@@ -269,7 +269,7 @@ class FallingTSWorldRefinePLYNode(io.ComfyNode):
         """落临时图(+相机先验) → 调隔离解释器 → 回传 PLY 路径。
 
         参数:
-            images (IMAGE): 视图批, 无先验时批序 前面…左前 (8 张)。
+            images (IMAGE): 视图批, 无先验时批序 前面…前左 (8 张)。
             steps (int): 精修步数。
             mode (str): "all"(默认, 连几何一起修, 去多视图双重曝光) | "appearance"(只修颜色+透明度)。
             reg (float): 几何信任域强度(mode=all 时生效)。

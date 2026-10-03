@@ -39,7 +39,7 @@ if PLUGIN not in sys.path:
 
 MODEL_DIR = str(_COMFY / "models" / "hywm2")
 MEDIA = str(_COMFY / "media" / "七纹刻印")
-SLOTS = ["前面", "前右", "右面", "右后", "后面", "后左", "左面", "左前"]
+SLOTS = ["前面", "前右", "右面", "后右", "后面", "后左", "左面", "前左"]
 DEFAULT_VIEWS = [os.path.join(MEDIA, "0031_首帧场景", f"00001_书房旋镜{v}.png") for v in SLOTS]
 CACHE = str(_COMFY / "scripts" / "_cache-0034-preds.pt")
 OUTDIR = str(_COMFY / "scripts" / "_out-0034-refine")
@@ -49,7 +49,7 @@ C0 = 0.28209479177387814
 
 ap = argparse.ArgumentParser()
 # --views: 由 ComfyUI 节点(脚本阶段则用默认的 8 张 0031 帧)按**批序**传进来的图片路径,
-#          顺序必须是 前面/前右/右面/右后/后面/后左/左面/左前。
+#          顺序必须是 前面/前右/右面/后右/后面/后左/左面/前左。
 ap.add_argument("--views", type=str, default="",
                 help="8 张视图路径, 用 ; 分隔(批序); 空=用 0031_首帧场景 的默认八面")
 ap.add_argument("--cache", type=str, default=CACHE, help="前馈预测缓存路径(按图片内容哈希校验)")
