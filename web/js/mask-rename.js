@@ -29,6 +29,22 @@ const PREFIX = "clipspace-painted-masked-";
 const FRESH_WINDOW_MS = 5 * 60 * 1000;
 // 兜底轮询间隔(images 属性不可重定义等罕见情况)
 const POLL_MS = 2000;
+// 整理请求超时: 超时即中止, 让在途标志走 finally 释放 —— 挂死的 fetch 会把标志卡住,
+// 之后每次保存都被静默跳过(2026-10-02 那次「保存零产物」即此因)
+const RENAME_TIMEOUT_MS = 10000;
+// 在途标志滞留阈值: 持有超过此时长视为卡死(无超时的挂死请求), 清掉重试
+const STALE_FLAG_MS = 15000;
+
+/**
+ * 提取 clipspace-painted-masked-{ts}.png 文件名里的 ts(毫秒时间戳串)。
+ *
+ * @param {string} filename 文件名
+ * @returns {string|null} ts 串; 非遮罩引用格式返回 null
+ */
+function clipspaceTs(filename) {
+  const m = /^clipspace-painted-masked-(\d+)\.png$/.exec(filename || "");
+  return m ? m[1] : null;
+}
 
 /**
  * 判断文件名是否为「近期生成的遮罩引用」(clipspace-painted-masked-{ts}.png 且 ts 在窗口内)。
@@ -37,10 +53,9 @@ const POLL_MS = 2000;
  * @returns {boolean} 是否近期遮罩引用
  */
 function isFreshClipspace(filename) {
-  const m = /^clipspace-painted-masked-(\d+)\.png$/.exec(filename || "");
-  if (!m) return false;
-  const ts = parseInt(m[1], 10);
-  return Number.isFinite(ts) && Date.now() - ts < FRESH_WINDOW_MS;
+  const ts = clipspaceTs(filename);
+  if (ts === null) return false;
+  return Date.now() - Number(ts) < FRESH_WINDOW_MS;
 }
 
 /**
@@ -65,19 +80,33 @@ function notify(severity, summary, details) {
 }
 
 /**
- * 触发整理(带防重入标记)。
+ * 触发整理(防重入 + ts 级去重)。
+ *
+ * ts 级去重: 同一个 ts 最多发起一次整理。保存返回后前端 store 重绘会把同一引用
+ * 再赋回 node.images(数组身份不同 → setter 再次触发), 不去重则后端编号进位,
+ * 多出 00001/00002 两个相同成品(2026-10-02 「保存两次」即此因); 新保存必然带
+ * 新 ts(Date.now()), 不受影响。
  *
  * @param {LGraphNode} node 节点
  * @param {object|null} ref node.images[0]
  * @returns {void}
  */
 function triggerRename(node, ref) {
-  if (isFreshClipspace(ref?.filename) && !node.__fallingtsRenaming) {
-    node.__fallingtsRenaming = true;
-    renameMask(node, ref.filename).finally(() => {
-      node.__fallingtsRenaming = false;
-    });
+  if (!isFreshClipspace(ref?.filename)) return;
+  if (node.__fallingtsRenaming) {
+    if (Date.now() - (node.__fallingtsRenamingAt || 0) < STALE_FLAG_MS) return;
+    // 上一次请求挂死未释放标志: 清掉重试
+    console.warn("[FallingTS] 遮罩整理标志滞留超 15s(疑似挂死), 清除后重试");
+    node.__fallingtsRenaming = false;
   }
+  const ts = clipspaceTs(ref.filename);
+  if (ts === null || node.__fallingtsLastTs === ts) return;
+  node.__fallingtsLastTs = ts;
+  node.__fallingtsRenaming = true;
+  node.__fallingtsRenamingAt = Date.now();
+  renameMask(node, ref.filename).finally(() => {
+    node.__fallingtsRenaming = false;
+  });
 }
 
 /**
@@ -93,6 +122,9 @@ async function renameMask(node, imageRef) {
   const maskName =
     typeof nameWidget?.value === "string" ? nameWidget.value.trim() : "";
 
+  // 超时中止: 挂死的请求不再把在途标志卡死(标志卡死 ⇒ 之后每次保存被静默跳过)
+  const controller = new AbortController();
+  const timeoutTimer = setTimeout(() => controller.abort(), RENAME_TIMEOUT_MS);
   let resp;
   try {
     // workflow_id 取根图 id: 后端 _last_output 的键是 "<工作流根 id>::<节点 id>",
@@ -108,11 +140,20 @@ async function renameMask(node, imageRef) {
         workflow_id: workflowId,
         name: maskName,
       }),
+      signal: controller.signal,
     });
   } catch (err) {
     console.warn("[FallingTS] 遮罩整理请求失败:", err);
-    notify("error", "遮罩整理失败: 请求发不出去", String(err?.message ?? err));
+    notify(
+      "error",
+      err?.name === "AbortError"
+        ? "遮罩整理失败: 请求超时"
+        : "遮罩整理失败: 请求发不出去",
+      String(err?.message ?? err),
+    );
     return;
+  } finally {
+    clearTimeout(timeoutTimer);
   }
   const data = await resp.json().catch(() => null);
   if (!resp.ok || !data?.ok) {
