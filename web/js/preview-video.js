@@ -286,6 +286,23 @@ async function restoreVideo(node) {
   }
 }
 
+/**
+ * 老存档兼容: PreviewVideo 在「截帧/选中帧输出」迁往 FallingTSLoadVideo 之前保存的工作流里,
+ * 右侧会残留「选中帧 1..64」/ image_1..N 的输出端口(节点定义只剩 video, 但序列化数据把旧端口带了回来)。
+ * 这里在节点配置时把它裁到只剩 video。与 load_video.js syncFrameState 同款保护:
+ * 带链接的尾部端口不强删(强删会让前端重建链接时报 "Cannot set properties of undefined")。
+ *
+ * @param {LGraphNode} node PreviewVideo 节点
+ * @returns {void}
+ */
+function trimFrameOutputs(node) {
+  while ((node.outputs?.length ?? 0) > 1) {
+    const tail = node.outputs[node.outputs.length - 1];
+    if (tail && (tail.links?.length ?? 0) > 0) break;
+    node.removeOutput(node.outputs.length - 1);
+  }
+}
+
 app.registerExtension({
   name: "FallingTS.PreviewVideo",
 
@@ -383,6 +400,8 @@ app.registerExtension({
       const prevOnConfigure = node.onConfigure;
       node.onConfigure = function (info) {
         prevOnConfigure?.call(this, info);
+        // 老存档可能带回「选中帧/image_N」残端口: 裁到只剩 video(本节点已只保留保存功能)
+        trimFrameOutputs(node);
         // 后端是唯一事实来源: 从它读回视频预览并重建前端(刷新不丢)
         restoreVideo(node);
       };
