@@ -4,7 +4,7 @@ r"""Generate workflows/0034_世界模型.json (frontend format) + its API prompt
 本版(= 2026-09-27 三改, 只出一个最高质量 PLY)**把重建从 HYWM2 原生节点挪进了脚本**。
 
     FallingTSMarkDownTable(md_path = stories\七纹刻印\0034_世界模型.md)
-      ├ 前面/前右/右面/后右/后面/后左/左面/前左 八个 IMAGE 列 → ImageBatchMulti.image_1..8
+      ├ 前面/前右/右面/右后/后面/后左/左面/左前 八个 IMAGE 列 → ImageBatchMulti.image_1..8
       └ 宽度/高度 与 偏航角/俯仰角/距离/目标深度/视场角 → 预留元数据(本版不输出图片视频, 也不建网格)
     唯一支路: ImageBatchMulti → **WorldRefinePLY**(自有插件 `ComfyUI-FallingTS\world-refine`)
       → HYWM2PLYAdvancedGaussianViewer   **全图唯一产物: 一个 3DGS `.ply`**
@@ -65,8 +65,8 @@ SKIP_WIDGET_INPUTS = {"ImageBatchMulti": {"inputcount"}}
 DROP_INPUTS = {"ImageBatchMulti": {"inputcount"}}
 MD_SLOTS = 42                 # FallingTSMarkDownTable 声明的输出槽数(RETURN_TYPES)
 
-# 八个水平方位, 顺时针 45° 一档: 前面(起始面) → 前右 → 右面 → 后右 → 后面 → 后左 → 左面 → 前左
-VIEWS = ["前面", "前右", "右面", "后右", "后面", "后左", "左面", "前左"]
+# 八个水平方位, 顺时针 45° 一档: 前面(起始面) → 前右 → 右面 → 右后 → 后面 → 后左 → 左面 → 左前
+VIEWS = ["前面", "前右", "右面", "右后", "后面", "后左", "左面", "左前"]
 PLY_NAME = "0034_世界模型_世界3DGS"       # 全图唯一产物 → 0034_世界模型_世界3DGS.ply
 REFINE_SCRIPT = str(_COMFY / "custom_nodes" / "ComfyUI-FallingTS" / "world-refine" / "refine_0034_gs.py")
 REFINE_PY = r"C:\Users\zghyu\AppData\Local\Programs\comfy-env\.pixi\envs\hywm2-nodes\python.exe"
@@ -167,7 +167,7 @@ def add(nid, ntype, col, y, widgets=None, links=None):
               "widgets": widgets or [], "links": links or {}}
 
 
-# ── 输入: md 数据表 (列 前面/前右/右面/后右/后面/后左/左面/前左 → 八个 IMAGE 槽)
+# ── 输入: md 数据表 (列 前面/前右/右面/右后/后面/后左/左面/左前 → 八个 IMAGE 槽)
 add(1, "FallingTSMarkDownTable", 1, 40, MD_WIDGET)
 
 # ── 八个面合成一个 batch (一次拿到整组视图)
@@ -187,7 +187,7 @@ NOTE_ID = 15
 NOTE_TEXT = f"""## 0034_世界模型 · md 数据表 → HY-World 2.0 世界重建 + 精修（**只出一个最高质量 PLY**）
 
 **输入走 md 数据表**（`stories\\七纹刻印\\0034_世界模型.md`，本节点 1 就是那张表）：
-表内 `前面 / 前右 / 右面 / 后右 / 后面 / 后左 / 左面 / 前左` 八个 IMAGE 列按槽位顺序
+表内 `前面 / 前右 / 右面 / 右后 / 后面 / 后左 / 左面 / 左前` 八个 IMAGE 列按槽位顺序
 （槽 2..9 = 列序）接进 `Image Batch Multi`。
 改表后在本节点上点「刷新」，再 Run 即可换场景 —— **工作流里没有任何硬编码图片路径**。
 

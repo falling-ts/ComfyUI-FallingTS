@@ -35,7 +35,7 @@ r"""FallingTS 加载图像 (来自输出)。
    remote 路由仍然是权威数据源: 点刷新按钮 / 跑完自动刷新都重新拉它。
 
 4. **「序列号」+「刷新序列号」**: 与「加载视频」同一套 —— 输出目录里已有编号的最大值 + 1
-   (目录不存在或没有 "数字_" 命名的文件时为 0, 显示成 5 位 00000), 可手改, 按钮随时重算。
+   (目录不存在或没有 "数字_" 命名的文件时为 1, 显示成 5 位 00001), 可手改, 按钮随时重算。
    编号口径与目录解析都取自 output_subdir(有 md 数据表用表文件名, 没有才用工作流名)。
    ⚠️ 序列号排在 image **之后**: V1 节点按 widgets_values 数组的**下标**恢复旧工作流,
    插在中间会让老工作流的 image 值整体错位。
@@ -135,7 +135,7 @@ async def _handle_next_sequence(request: web.Request) -> web.Response:
 
     query: workflow_name(当前工作流名) 或 dir(直接指定目录名, 优先)。
     返回: {"status":"ok","sequence":int,"directory":"<子目录名>","exists":bool}。
-    目录不存在/没有编号文件时 sequence 为 0(前端显示成 00000)。
+    目录不存在/没有编号文件时 sequence 为 1(前端显示成 00001)。
     """
     query = request.rel_url.query
     sub = safe_dir_name(query.get("dir")) or sequence_dir(query.get("workflow_name"))
@@ -195,7 +195,7 @@ class FallingTSLoadImageNode:
                 "sequence": (
                     "STRING",
                     {
-                        "default": "00000",
+                        "default": "00001",
                         "multiline": False,
                         "display_name": "序列号",
                     },

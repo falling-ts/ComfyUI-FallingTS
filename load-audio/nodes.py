@@ -13,7 +13,7 @@ r"""FallingTS 加载音频 (来自输出)。
 
 2. **「名称」+「序列号」+「刷新序列号」**: 与「加载图像 / 加载视频」同一套 ——
    序列号 = output/<产物目录>/ 里已有编号的最大值 + 1(目录不存在或没有 "数字_" 命名的文件时为
-   0, 显示成 5 位 00000), 可手改, 按钮随时重算; 目录口径走共用的 output_subdir
+   1, 显示成 5 位 00001), 可手改, 按钮随时重算; 目录口径走共用的 output_subdir
    (有 md 数据表用表文件名, 没有才用工作流名)。
 
 3. **remote 不设 control_after_refresh** —— 刷新按钮与跑完自动刷新只重新拉候选列表,
@@ -119,7 +119,7 @@ async def _handle_next_sequence(request: web.Request) -> web.Response:
 
     query: workflow_name(当前工作流名) 或 dir(直接指定目录名, 优先)。
     返回: {"status":"ok","sequence":int,"directory":"<子目录名>","exists":bool}。
-    目录不存在/没有编号文件时 sequence 为 0(前端显示成 00000)。
+    目录不存在/没有编号文件时 sequence 为 1(前端显示成 00001)。
     """
     query = request.rel_url.query
     directory = sequence_dir(query.get("workflow_name"), directory=query.get("dir"))
@@ -168,9 +168,9 @@ class FallingTSLoadAudioNode(IO.ComfyNode):
                 ),
                 IO.String.Input(
                     "sequence",
-                    default="",
+                    default="00001",
                     multiline=False,
-                    tooltip="编号: 自动取产物目录里已有编号的最大值 + 1(目录为空时为 00000), 可手动改",
+                    tooltip="编号: 自动取产物目录里已有编号的最大值 + 1(目录为空时为 00001), 可手动改",
                 ),
                 IO.Combo.Input(
                     "audio",

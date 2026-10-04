@@ -2,7 +2,7 @@
  * FallingTS.LoadAudio 前端扩展: 只对 FallingTSLoadAudio 生效。
  *
  * 1. 「名称 / 序列号 / 刷新序列号」—— 与「加载图像 / 加载视频」同一套: 编号 = 该工作流产物
- *    目录里已有 "数字_" 命名的文件的最大编号 + 1(目录不存在/为空为 00000), 可手改, 按钮随时重算。
+ *    目录里已有 "数字_" 命名的文件的最大编号 + 1(目录不存在/为空为 00001), 可手改, 按钮随时重算。
  *    编号与目录口径都由后端 output_subdir 解析(有 md 数据表用表文件名, 没有才用工作流名)。
  *
  * 2. 下拉候选"点开即最新" —— 见 load_combo_refresh.js; 弹窗里抹掉 " [output]" 标注 +
@@ -26,7 +26,7 @@ import { armComboMenu } from "./load_combo_menu.js";
 
 const NODE_CLASS = "FallingTSLoadAudio";
 const ROUTE = "/fallingts_load_audio";
-// 编号显示宽度: 与产物目录的 5 位编号口径一致(00000, 00001 …)
+// 编号显示宽度: 与产物目录的 5 位编号口径一致(00001, 00002 …)
 const SEQ_WIDTH = 5;
 // 守护窗口: remote 首次 fetch 通常几百毫秒内完成, 4 秒足够覆盖慢盘/大目录
 const GUARD_MS = 4000;
@@ -50,14 +50,27 @@ function currentWorkflowName() {
 }
 
 /**
- * 把整数编号格式化成 5 位文本(00000 / 00001 …)。
+ * 把整数编号格式化成 5 位文本(00001 / 00002 …)。
  *
  * @param {number|string} value 编号
  * @returns {string} 5 位文本
  */
 function sequenceText(value) {
-  const n = Math.max(0, Number(value) || 0);
+  // 序列号从 00001 开始: 0 / 空值 / 非法值都回退到 1, 不再显示 00000
+  const n = Math.max(1, Number(value) || 1);
   return String(Math.trunc(n)).padStart(SEQ_WIDTH, "0");
+}
+
+/**
+ * 判断存档里的序列号是否属于「未设置」: 空、0、负数都视为未设置,
+ * 打开工作流时重新向后端拉取当前目录的下一个可用编号。
+ *
+ * @param {*} value 存档值
+ * @returns {boolean} 是否未设置
+ */
+function sequenceUnset(value) {
+  const text = String(value ?? "").trim();
+  return text === "" || Number(text) <= 0;
 }
 
 /**
@@ -99,7 +112,7 @@ async function refreshSequence(node, notify) {
     if (notify) {
       app.extensionManager.toast.add({ severity: "info", summary: "序列号已刷新: " + sequenceText(j.sequence), life: 3000 });
     }
-    return Number(j.sequence) || 0;
+    return Number(j.sequence) || 1;
   } catch (err) {
     console.error("[FallingTS] 刷新序列号失败:", err);
     if (notify) app.extensionManager.toast.add({ severity: "error", summary: "刷新序列号失败: 无法连接后端", life: 3000 });
@@ -225,7 +238,7 @@ app.registerExtension({
     nodeType.prototype.onConfigure = function (info) {
       const result = onConfigure?.apply(this, arguments);
       const stored = info?.widgets_values_named?.sequence;
-      if (stored == null || String(stored).trim() === "") {
+      if (sequenceUnset(stored)) {
         refreshSequence(this, false);
       } else {
         // 存档值优先, 并让在途的自动刷新作废(否则它回来会把存档值覆盖成当前编号)

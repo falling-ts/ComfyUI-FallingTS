@@ -223,8 +223,8 @@ def main():
               len([l for l in dump["links"] if l["from"] == "音频 加载/试听.prefix"
                    and l["to"].endswith("filename_prefix")]) == 4,
               [l for l in dump["links"] if l["to"].endswith("filename_prefix")])
-        check("加载音频控件值 = 空音频/序列号 00000",
-              (dump["lvWidgets"] or {}).get("audio") == "" and (dump["lvWidgets"] or {}).get("sequence") == "00000",
+        check("加载音频控件值 = 空音频/序列号 00001",
+              (dump["lvWidgets"] or {}).get("audio") == "" and (dump["lvWidgets"] or {}).get("sequence") == "00001",
               dump["lvWidgets"])
         check("加载音频节点内播放器已挂载(原生 AUDIO_UI <audio>)", dump["hasPlayer"], dump.get("playerTag"))
         check("截取音频输出 = audio + 截段 1..3",

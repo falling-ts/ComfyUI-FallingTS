@@ -16,7 +16,7 @@ r"""FallingTS 加载视频 (来自输出 + 截帧)。
    remote **不设 control_after_refresh** —— 刷新只重新拉候选列表, 不改写已选值。
 
 2. **「序列号」+「名称」**: 产物文件名前缀的命名。序列号 = output/<工作流产物目录>/ 里已有
-   编号的最大值 + 1(目录不存在或没有 "数字_" 命名的文件时为 0), 显示为 5 位; 前端在
+   编号的最大值 + 1(目录不存在或没有 "数字_" 命名的文件时为 1), 显示为 5 位 00001; 前端在
    节点创建/打开工作流时自动拉取一次, 刷新按钮可随时重算。
 
 3. **音频输出**: 执行时 get_components() 的音轨直接给 `audio` 输出 —— 拆音不需要截帧,
@@ -144,7 +144,7 @@ async def _handlenext_sequence(request: web.Request) -> web.Response:
 
     query: workflow_name(当前工作流名) 或 dir(直接指定目录名, 优先)。
     返回: {"status":"ok","sequence":int,"directory":"<子目录名>","exists":bool}。
-    目录不存在/没有编号文件时 sequence 为 0(前端显示成 00000)。
+    目录不存在/没有编号文件时 sequence 为 1(前端显示成 00001)。
     """
     query = request.rel_url.query
     sub = safe_dir_name(query.get("dir")) or sequence_dir(query.get("workflow_name"))
@@ -208,6 +208,64 @@ def _resolve_video_path(value) -> str | None:
         if os.path.isfile(path):
             return path
     return None
+
+
+def _file_identity(path: str | None) -> tuple:
+    """返回 (realpath, mtime), 用于判断缓存是否仍对应当前视频文件。"""
+    if not path:
+        return ("", None)
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        real = path
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+    return (real, mtime)
+
+
+def _source_identity(video=None, video_in=None) -> tuple | None:
+    """计算当前输入视频的来源标识, 用于判断节点缓存是否对应当前所选视频。
+
+    - 下拉/上传: ("video", realpath, mtime)
+    - video_in 连线: ("video_in", realpath, mtime)(拿不到路径时返回 None, 不参与比较)
+    """
+    if video_in is not None:
+        try:
+            source = video_in.get_stream_source()
+        except Exception:
+            source = None
+        if isinstance(source, str) and source:
+            return ("video_in",) + _file_identity(source)
+        return None
+    path = _resolve_video_path(video)
+    if path:
+        return ("video",) + _file_identity(path)
+    text = str(video or "").strip()
+    if text:
+        return ("video", text, None)
+    return None
+
+
+def _invalidate_cache(nid: str) -> None:
+    """丢掉节点缓存并要求重新解码: 选了新视频、文件已变或被重置时调用。"""
+    _last_output.pop(nid, None)
+    _done.discard(nid)
+
+
+def _cache_matches_video_value(cache: dict, video_value) -> bool:
+    """判断节点缓存是否仍对应当前下拉里的视频值。
+
+    缓存来自 video_in 时下拉值不参与比较(实际来源是连线, 不是下拉)。
+    """
+    ident = _source_identity(video_value, None)
+    if ident is None:
+        return True
+    cached = cache.get("source_identity")
+    if not cached:
+        return False
+    return cached[0] == "video_in" or cached == ident
 
 
 def _decode_frames(loaded) -> dict:
@@ -356,6 +414,7 @@ def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str 
         "name": name,
         "sequence": max(0, sequence_value),
         "path": path,
+        "source_identity": _source_identity(video_value, None),
         "file": file,
         "subfolder": subfolder,
         "images": parts["images"],
@@ -364,6 +423,7 @@ def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str 
         "selected_frames": [],
     }
     _last_output[nid] = cache
+    _done.discard(nid)
     return cache, ""
 
 
@@ -418,12 +478,12 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
                     multiline=False,
                     tooltip="文件名前缀的名称部分: prefix = <序列号>_<名称>, 接预览保存节点的 filename_prefix",
                 ),
-                # 字符串而非 INT: 编号按 5 位书写(00000), 前端补零显示, 保存时按整数解析
+                # 字符串而非 INT: 编号按 5 位书写(00001), 前端补零显示, 保存时按整数解析
                 IO.String.Input(
                     "sequence",
-                    default="",
+                    default="00001",
                     multiline=False,
-                    tooltip="文件名前缀的编号: 自动取产物目录里已有编号的最大值 + 1(目录为空时为 00000), 可手动改",
+                    tooltip="文件名前缀的编号: 自动取产物目录里已有编号的最大值 + 1(目录为空时为 00001), 可手动改",
                 ),
                 IO.Combo.Input(
                     "video",
@@ -484,6 +544,13 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
         prefix = sequence_prefix(sequence, name)
 
         cached = _last_output.get(nid_str)
+        source_identity = _source_identity(video, video_in)
+        # 输入视频变了(用户换了下拉/换了一行数据表) 时, 旧缓存和旧选中帧都作废,
+        # 不能因为 nid 还带着「已完成」就直接把旧帧输出给下游。
+        if cached and source_identity is not None and cached.get("source_identity") != source_identity:
+            _invalidate_cache(nid_str)
+            cached = None
+
         # temp 预览可能已被 ComfyUI 清理: 先现场补编码, 否则 UI.PreviewVideo 指向死文件,
         # 补不出来就落到下面的完整路径重新解码
         if nid_str in _done and cached and _ensure_temp_preview(cached):
@@ -526,6 +593,7 @@ class FallingTSLoadVideoNode(IO.ComfyNode):
             "sequence": max(0, sequence_value),
             "prompt": prompt,
             "path": video_path,
+            "source_identity": source_identity,
             "file": file,
             "subfolder": subfolder,
             "images": images,
@@ -626,6 +694,13 @@ async def _handle_frame(request: web.Request) -> web.Response:
         data = {}
 
     cache = _last_output.get(nid)
+    cache_reset = False
+    if cache and cache.get("images") is not None and not _cache_matches_video_value(cache, data.get("video")):
+        # 用户换了下拉视频但没跑本节点, 或缓存来自旧代码: 直接丢掉旧帧集合重解码,
+        # 否则「截帧」永远从旧视频里取(点开就是上次那部的帧)。
+        _invalidate_cache(nid)
+        cache = None
+        cache_reset = True
     if not cache or cache.get("images") is None:
         cache, err = _build_cache_from_file(
             nid, data.get("video"), str(data.get("name") or ""), str(data.get("sequence") or "")
@@ -638,6 +713,7 @@ async def _handle_frame(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+        cache_reset = True
     images = cache["images"]
     total = len(images)
 
@@ -679,6 +755,9 @@ async def _handle_frame(request: web.Request) -> web.Response:
     response = web.Response(body=png, content_type="image/png")
     response.headers["X-Frame-Index"] = str(fno)
     response.headers["X-Selected-Count"] = str(len(cache.get("selected_frames") or []))
+    if cache_reset:
+        # 前端据此清空旧视频的帧列表, 并把播放器切到新视频的 temp 预览
+        response.headers["X-Cache-Reset"] = "1"
     return response
 
 

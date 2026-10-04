@@ -8,7 +8,7 @@
  *   取该帧转 PNG 返回; 前端追加到选中帧列表并同步输出端口 image_1..N;
  * - 点「完成」: 无帧 = 预加载(全量提交); 有帧 = 置完成后以 partial_execution_targets
  *   只提交本节点下游的输出节点(与 PreviewVideo / 继续节点同套语义);
- * - 「序列号」自动取 output/<产物目录>/ 里已有编号的最大值 + 1(目录为空或不存在为 00000),
+ * - 「序列号」自动取 output/<产物目录>/ 里已有编号的最大值 + 1(目录为空或不存在为 00001),
  *   可手动改; 右侧「刷新序列号」按钮随时重算;
  * - 刷新后从后端读回截帧列表与视频预览重建(后端是唯一事实来源)。
  */
@@ -21,7 +21,7 @@ import { armComboMenu } from "./load_combo_menu.js";
 const NODE_CLASS = "FallingTSLoadVideo";
 const MAX_FRAMES = 64;
 const ROUTE = "/fallingts_load_video";
-// 编号显示宽度: 与产物目录的 5 位编号口径一致(00000, 00001 …)
+// 编号显示宽度: 与产物目录的 5 位编号口径一致(00001, 00002 …)
 const SEQ_WIDTH = 5;
 
 /**
@@ -114,14 +114,27 @@ if (!window.__fallingtsLoadVideoBtnInited) {
 // ─── 序列号 ────────────────────────────────────────────────────────────────
 
 /**
- * 把整数编号格式化成 5 位文本(00000 / 00001 …)。
+ * 把整数编号格式化成 5 位文本(00001 / 00002 …)。
  *
  * @param {number|string} value 编号
  * @returns {string} 5 位文本
  */
 function sequenceText(value) {
-  const n = Math.max(0, Number(value) || 0);
+  // 序列号从 00001 开始: 0 / 空值 / 非法值都回退到 1, 不再显示 00000
+  const n = Math.max(1, Number(value) || 1);
   return String(Math.trunc(n)).padStart(SEQ_WIDTH, "0");
+}
+
+/**
+ * 判断存档里的序列号是否属于「未设置」: 空、0、负数都视为未设置,
+ * 打开工作流时重新向后端拉取当前目录的下一个可用编号。
+ *
+ * @param {*} value 存档值
+ * @returns {boolean} 是否未设置
+ */
+function sequenceUnset(value) {
+  const text = String(value ?? "").trim();
+  return text === "" || Number(text) <= 0;
 }
 
 /**
@@ -156,7 +169,7 @@ async function refreshSequence(node, notify) {
     if (notify) {
       app.extensionManager.toast.add({ severity: "info", summary: "序列号已刷新: " + sequenceText(j.sequence), life: 3000 });
     }
-    return Number(j.sequence) || 0;
+    return Number(j.sequence) || 1;
   } catch (err) {
     console.error("[FallingTS] 刷新序列号失败:", err);
     if (notify) app.extensionManager.toast.add({ severity: "error", summary: "刷新序列号失败: 无法连接后端", life: 3000 });
@@ -699,6 +712,12 @@ app.registerExtension({
             app.extensionManager.toast.add({ severity: "error", summary: data?.message ?? "截帧失败", life: 3000 });
             return;
           }
+          const cacheReset = resp.headers.get("X-Cache-Reset") === "1";
+          if (cacheReset) {
+            // 后端发现已换视频并重建了帧缓存: 旧视频的选中帧已作废, 清空后再追加本次帧
+            frameList.state.frames = [];
+            syncFrameState(node, frameList.state);
+          }
           const fno = Number(resp.headers.get("X-Frame-Index") || frameList.state.frames.length + 1);
           const blob = await resp.blob();
           const url = URL.createObjectURL(blob);
@@ -713,19 +732,24 @@ app.registerExtension({
           // 先对齐输出端口/total, 再重绘列表(render 内按新盒高同步节点高度)
           syncFrameState(node, frameList.state);
           frameList.render();
-          // 节点上还没有播放器时(刷新后 / 上传前), 用后端刚建好的 temp 预览补一个;
-          // 已有播放器则不动 —— 改写 src 会让用户正在播放的位置归零, 下一帧就截错地方
-          const host = document.querySelector('[data-node-id="' + node.id + '"]');
-          const players = [
-            node._fallingtsVideoFallback?.videoEl,
-            ...(host ? host.querySelectorAll("video") : []),
-          ].filter((v) => v && v.src);
-          // 没有播放器、或可见的那个已经加载失败(指向被清理的 temp ⇒ 页面上「视频加载失败」
-          // / Invalid URL)时, 用后端刚重建好的预览补上; 正在正常播放的播放器不动
-          const visible = players.filter((v) => (v.getClientRects?.().length ?? 0) > 0);
-          const pool = visible.length ? visible : players;
-          const broken = (v) => !v.getAttribute("src") || !!v.error || v.networkState === 3;
-          if (!players.length || pool.some(broken)) restoreVideo(node);
+          if (cacheReset) {
+            // 换了源时必须强制切到新 temp 预览; 沿用旧播放器会让下一次截帧读到旧视频的时间轴
+            restoreVideo(node);
+          } else {
+            // 节点上还没有播放器时(刷新后 / 上传前), 用后端刚建好的 temp 预览补一个;
+            // 已有播放器则不动 —— 改写 src 会让用户正在播放的位置归零, 下一帧就截错地方
+            const host = document.querySelector('[data-node-id="' + node.id + '"]');
+            const players = [
+              node._fallingtsVideoFallback?.videoEl,
+              ...(host ? host.querySelectorAll("video") : []),
+            ].filter((v) => v && v.src);
+            // 没有播放器、或可见的那个已经加载失败(指向被清理的 temp ⇒ 页面上「视频加载失败」
+            // / Invalid URL)时, 用后端刚重建好的预览补上; 正在正常播放的播放器不动
+            const visible = players.filter((v) => (v.getClientRects?.().length ?? 0) > 0);
+            const pool = visible.length ? visible : players;
+            const broken = (v) => !v.getAttribute("src") || !!v.error || v.networkState === 3;
+            if (!players.length || pool.some(broken)) restoreVideo(node);
+          }
         } catch (err) {
           console.error("[FallingTS] 截帧失败:", err);
           app.extensionManager.toast.add({ severity: "error", summary: "截帧失败: 无法连接后端", life: 3000 });
@@ -811,7 +835,7 @@ app.registerExtension({
         if (!node._fallingtsFrameList) return;
         // 存档值优先: 工作流里存过序列号就沿用(用户可能手动改过), 只有空值才自动取
         const stored = info?.widgets_values_named?.sequence;
-        if (stored == null || String(stored).trim() === "") {
+        if (sequenceUnset(stored)) {
           refreshSequence(node, false);
         } else {
           setSequence(node, stored);

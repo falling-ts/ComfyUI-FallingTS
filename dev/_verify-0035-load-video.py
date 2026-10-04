@@ -189,7 +189,7 @@ def main() -> int:
             names = info.get("names") or []
             for want in ("name", "sequence", "刷新序列号", "video", "截帧", "完成", "输出帧数", "frame_list", "video_fallback"):
                 check(f"控件存在: {want}", want in names, names)
-            check("序列号自动填成 5 位 00000", info.get("sequence") == "00000", info.get("sequence"))
+            check("序列号自动填成 5 位 00001", info.get("sequence") == "00001", info.get("sequence"))
             check("视频下拉值 = 工作流存档视频", info.get("video") == VIDEO, info.get("video"))
             check("下拉候选含子目录视频", any("/" in v for v in (info.get("values") or [])), info.get("values"))
             outputs = info.get("outputs") or []
@@ -211,8 +211,8 @@ def main() -> int:
         """)
         check("存在「刷新序列号」按钮", isinstance(after, dict) and "before" in after, after)
         if isinstance(after, dict) and "before" in after:
-            check("刷新后序列号 = 00000(0035_场景截帧 目录尚无产物)",
-                  after.get("before") == "00000" and after.get("after") == "00000", after)
+            check("刷新后序列号 = 00001(0035_场景截帧 目录尚无产物)",
+                  after.get("before") == "00001" and after.get("after") == "00001", after)
 
         spec = cdp.js("""
         (() => {

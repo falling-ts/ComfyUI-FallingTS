@@ -58,20 +58,20 @@ def next_sequence(directory) -> int:
 
     只数文件 —— 目录名同样以数字开头(0011_万物建模/), 把它算进编号会在
     workflow_name 取不到(退回 output 根目录)时得到毫无意义的巨大值。
-    目录不存在或没有编号文件时返回 0(与「第一个产物」的约定一致)。
+    目录不存在或没有编号文件时返回 1(显示成 5 位 00001, 与「第一个产物」的约定一致)。
 
     参数:
         directory (str|None): 产物目录(通常是 output/<子目录名>)。
 
     返回:
-        int: 下一个可用编号; 目录不存在/为空/没有编号文件时为 0。
+        int: 下一个可用编号; 目录不存在/为空/没有编号文件时为 1。
     """
     if not directory:
-        return 0
+        return 1
     try:
         entries = list(os.scandir(directory))
     except OSError:
-        return 0
+        return 1
 
     highest = -1
     for entry in entries:
@@ -80,7 +80,7 @@ def next_sequence(directory) -> int:
         matched = _SEQ_FILE_RE.match(entry.name)
         if matched:
             highest = max(highest, int(matched.group(1)))
-    return highest + 1
+    return highest + 1 if highest >= 0 else 1
 
 
 def safe_file_token(name) -> str:
@@ -103,21 +103,25 @@ def safe_file_token(name) -> str:
 def sequence_prefix(sequence, name) -> str:
     """文件名前缀 =「序列号_名称」(加载节点输出给各预览保存节点的 filename_prefix)。
 
-    序列号按 5 位补零, 空值/非法值按 0 处理(与产物文件名 <序列号>_<名称>.png 同口径:
-    没填编号就是 00000); 名称为空时只给序列号(不补下划线, 免得出现 "00005_")。
+    序列号按 5 位补零; 空值、0 或负数都按起始编号 1 处理(显示成 00001, 与
+    「第一个产物」的新口径一致); 非数字文本仍清洗后原样使用。
+    名称为空时只给序列号(不补下划线, 免得出现 "00005_")。
 
     参数:
         sequence (str|int|None): 序列号(通常形如 "00005", 非数字则原样清洗后使用)。
         name (str|None): 名称(如 "夜雨"), 由 safe_file_token 清洗。
 
     返回:
-        str: "00005_夜雨"; 名称为空时 "00005"; 名称为空且序列号也清洗成空串时 ""。
+        str: "00005_夜雨"; 名称为空时 "00005"; 序列号非法且清洗成空串时退回名称。
     """
     token = safe_file_token(name)
+    raw = "" if sequence is None else str(sequence).strip()
     try:
-        seq = "%05d" % max(0, int(str(sequence).strip() or 0))
+        seq_num = int(raw) if raw else 1
     except (TypeError, ValueError):
         seq = safe_file_token(sequence)
+    else:
+        seq = "%05d" % max(1, seq_num)
     if not token:
         return seq
     return seq + "_" + token if seq else token

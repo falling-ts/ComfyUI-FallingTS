@@ -40,7 +40,7 @@ def read_ply_vertex(path):
 C0 = 0.28209479177387814
 PLY = str(_COMFY / "media" / "七纹刻印" / "0034_世界模型" / "0034_世界模型_世界3DGS.ply")
 MEDIA = str(_COMFY / "media" / "七纹刻印" / "0031_首帧场景")
-SLOTS = ["前面", "前右", "右面", "后右", "后面", "后左", "左面", "前左"]
+SLOTS = ["前面", "前右", "右面", "右后", "后面", "后左", "左面", "左前"]
 
 v = read_ply_vertex(PLY)
 n = len(v["x"])

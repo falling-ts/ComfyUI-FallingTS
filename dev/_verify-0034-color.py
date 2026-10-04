@@ -27,7 +27,7 @@ if PLUGIN not in sys.path:
     sys.path.insert(0, PLUGIN)
 
 C0 = 0.28209479177387814
-SLOTS = ["前面", "前右", "右面", "后右", "后面", "后左", "左面", "前左"]
+SLOTS = ["前面", "前右", "右面", "右后", "后面", "后左", "左面", "左前"]
 AP = argparse.ArgumentParser()
 AP.add_argument("ply")
 AP.add_argument("preds", nargs="?", default=str(_COMFY / "scripts" / "_cache-0034-preds.pt"))
@@ -133,4 +133,4 @@ def tile(rows, path, cols=4):
 
 os.makedirs(os.path.dirname(a.out), exist_ok=True)
 tile(rows_gt + rows_r, a.out)              # 上半 = 参考图, 下半 = 世界模型渲染
-log("[图] 上四张 = 参考图 前面/前右/右面/后右; 下四张 = 世界模型同机位渲染")
+log("[图] 上四张 = 参考图 前面/前右/右面/右后; 下四张 = 世界模型同机位渲染")

@@ -124,7 +124,7 @@ def main() -> None:
         # 执行(按文件名): 加载音频 → PreviewAudioSave
         status, out1, err = run_prompt({
             "1": {"class_type": "FallingTSLoadAudio",
-                  "inputs": {"audio": SUB_VALUE, "name": "探针", "sequence": "00000"}},
+                  "inputs": {"audio": SUB_VALUE, "name": "探针", "sequence": "00001"}},
             "2": {"class_type": "PreviewAudioSave",
                   "inputs": {"audio": ["1", 0], "filename_prefix": "probe", "filename_suffix": "",
                              "format": "flac", "quality": "128k"}},
@@ -137,7 +137,7 @@ def main() -> None:
         status2, out2, err2 = run_prompt({
             "1": {"class_type": "LoadAudio", "inputs": {"audio": PROBE_ROOT.name}},
             "2": {"class_type": "FallingTSLoadAudio",
-                  "inputs": {"audio_in": ["1", 0], "audio": "", "name": "", "sequence": "00000"}},
+                  "inputs": {"audio_in": ["1", 0], "audio": "", "name": "", "sequence": "00001"}},
             "3": {"class_type": "PreviewAudioSave",
                   "inputs": {"audio": ["2", 0], "filename_prefix": "probe", "filename_suffix": "",
                              "format": "flac", "quality": "128k"}},
