@@ -4,14 +4,16 @@
 四件事(幂等, 可反复跑):
 
 1. 0050_视频拆帧: 用 FallingTSLoadVideo(加载视频) 取代核心 GetVideoComponents,
-   并照搬「0044_参考视频」PreviewVideo 之后的三个 PreviewImageSave(首帧/关键帧/尾帧)。
+   并照搬「0044_参考视频」PreviewVideo 之后的三个图片保存节点(首帧/关键帧/尾帧) ——
+   2026-10-05 起统一用 **AutoSaveImage(图片自动保存)**: 执行即落盘, 没有「保存」按钮。
 2. 0051_视频拆音: 加载视频的 audio 输出 → FallingTSAudioTrim(波形截段) →
    三个 PreviewAudioSave(音频处理链同样来自「0044_参考视频」尾部)。
 3. 0070_截取声音: 用 FallingTSLoadAudio(加载音频) 取音频 → 同一条截取链
    (FallingTSAudioTrim → 多个 PreviewAudioSave, 即「截取音频预览」)。
-4. 0035_场景截帧: 补齐 video/audio/prefix 输出端口(+ 老存档的选中帧端口整体后移), 并把
-   文件名前缀接到十个保存节点上、后缀补下划线。0035 的结构自 2026-10-02 起由本函数维护 ——
-   原来"从 0030 的 PreviewVideo 尾部搬运"的 make-0035-scene.py 已退休(0030 尾部已清空)。
+4. 0035_场景截帧: 补齐 video/audio/prefix 输出端口(+ 老存档的选中帧端口整体后移), 把
+   文件名前缀接到十个保存节点上、后缀补下划线, 并把这十个节点就地升级为 AutoSaveImage。
+   0035 的结构自 2026-10-02 起由本函数维护 —— 原来"从 0030 的 PreviewVideo 尾部搬运"的
+   make-0035-scene.py 已退休(0030 尾部已清空)。
 
 **这三个工作流不要 md 数据表节点**(2026-10-02): 源文件由加载节点自身的下拉给出(节点本身
 就是"起始的加载"), 文件名前缀 = 加载节点的 prefix 输出「序列号_名称」(见
@@ -40,6 +42,8 @@ MD_TABLE = "FallingTSMarkDownTable"
 LOAD_VIDEO = "FallingTSLoadVideo"
 LOAD_AUDIO = "FallingTSLoadAudio"
 AUDIO_TRIM = "FallingTSAudioTrim"
+AUTO_SAVE_IMAGE = "AutoSaveImage"
+PREVIEW_IMAGE = "PreviewImageSave"
 
 
 # ─── 读写 ──────────────────────────────────────────────────────────────────
@@ -60,6 +64,39 @@ def node_of(wf: dict, node_id: int) -> dict:
 
 def node_by_type(wf: dict, node_type: str) -> list:
     return [n for n in wf["nodes"] if n["type"] == node_type]
+
+
+def save_image_nodes(wf: dict) -> list:
+    """图片保存节点: AutoSaveImage 与旧存档的 PreviewImageSave(迁移期两者都认)。"""
+    return [n for n in wf["nodes"] if n["type"] in (PREVIEW_IMAGE, AUTO_SAVE_IMAGE)]
+
+
+def normalize_auto_save(wf: dict) -> int:
+    """图片保存节点归一为 AutoSaveImage, 返回本次升级的节点数(幂等)。
+
+    两者保存口径完全一致(AutoSaveImage 直接继承 PreviewImageSaveNode), 差别只是新节点
+    **执行即落盘**、没有「保存」按钮 —— 故只换类型名与 S&R 名, 并删掉 widgets_values_named
+    里那条已不存在的「保存」按钮记录(残留值前端按名恢复时匹配不到控件, 只是脏数据);
+    连线与控件值(前缀/后缀)原样保留。
+
+    Args:
+        wf: 工作流 dict(就地修改)。
+
+    Returns:
+        int: 本次由 PreviewImageSave 升级过来的节点数(已是 AutoSaveImage 的不计入)。
+    """
+    count = 0
+    for n in wf["nodes"]:
+        if n["type"] not in (PREVIEW_IMAGE, AUTO_SAVE_IMAGE):
+            continue
+        if n["type"] == PREVIEW_IMAGE:
+            n["type"] = AUTO_SAVE_IMAGE
+            n["properties"]["Node name for S&R"] = AUTO_SAVE_IMAGE
+            count += 1
+        named = n.get("widgets_values_named")
+        if isinstance(named, dict):
+            named.pop("保存", None)
+    return count
 
 
 def relink(wf: dict) -> None:
@@ -208,10 +245,22 @@ def widget_input(name: str, kind: str) -> dict:
     return {"localized_name": name, "name": name, "type": kind, "widget": {"name": name}, "link": None}
 
 
-def preview_image_save(suffix: str, title: str) -> dict:
+def save_image(suffix: str, title: str) -> dict:
+    """图片保存节点模板: AutoSaveImage(图片自动保存, 执行即落盘, 没有「保存」按钮)。
+
+    控件口径与 PreviewImageSave 完全一致(前者继承后者), 故 widgets_values 只少一个按钮槽:
+    [前缀, 后缀, 格式, 位深, 色彩空间, 备用预览图]。
+
+    Args:
+        suffix: 文件名后缀(紧跟前缀, 用来区分同一批产物, 如 _首帧/_前面)。
+        title: 节点标题。
+
+    Returns:
+        dict: 节点定义(字段格式与前端序列化一致)。
+    """
     return {
         "id": 0,
-        "type": "PreviewImageSave",
+        "type": AUTO_SAVE_IMAGE,
         "pos": [0, 0],
         "size": [640, 760],
         "flags": {},
@@ -228,21 +277,20 @@ def preview_image_save(suffix: str, title: str) -> dict:
         "outputs": [{"localized_name": "images", "name": "images", "type": "IMAGE", "slot_index": 0, "links": []}],
         "title": title,
         "properties": {
-            "Node name for S&R": "PreviewImageSave",
+            "Node name for S&R": AUTO_SAVE_IMAGE,
             "ue_properties": {
                 "widget_ue_connectable": {"filename_prefix": True, "filename_suffix": True, "format": True, "bit_depth": True, "input_color_space": True},
                 "version": "7.8",
                 "input_ue_unconnectable": {},
             },
         },
-        "widgets_values": ["", suffix, "png", "8-bit", "sRGB", None, ""],
+        "widgets_values": ["", suffix, "png", "8-bit", "sRGB", ""],
         "widgets_values_named": {
             "filename_prefix": "",
             "filename_suffix": suffix,
             "format": "png",
             "bit_depth": "8-bit",
             "input_color_space": "sRGB",
-            "保存": None,
             "image_fallback": "",
         },
     }
@@ -339,14 +387,15 @@ def build_0050() -> dict:
     wf = load("0050_视频拆帧")
     nodes = [
         place(load_video_node((0, 0), (930, 1300), 0, 3), 1, (0, 0), (930, 1300), order=0),
-        place(preview_image_save("_首帧", "预览保存-首帧"), 2, (1010, 0), (640, 760), order=1),
-        place(preview_image_save("_关键帧", "预览保存-关键帧"), 3, (1010, 820), (640, 760), order=2),
-        place(preview_image_save("_尾帧", "预览保存-尾帧"), 4, (1010, 1640), (640, 760), order=3),
+        place(save_image("_首帧", "预览保存-首帧"), 2, (1010, 0), (640, 760), order=1),
+        place(save_image("_关键帧", "预览保存-关键帧"), 3, (1010, 820), (640, 760), order=2),
+        place(save_image("_尾帧", "预览保存-尾帧"), 4, (1010, 1640), (640, 760), order=3),
         md_note(5,
             "## 视频拆帧\n\n"
             "- 「加载视频」(FallingTSLoadVideo) 自己就是起点: 在它的下拉里选 output 里的原视频(点「刷新」重扫候选)\n"
             "- 点「截帧」在播放位置取帧(可删/可多次), 点「完成」把选中帧输出到下游\n"
-            "- 选中帧 1/2/3 → 首帧/关键帧/尾帧 三个「预览保存」\n"
+            "- 选中帧 1/2/3 → 首帧/关键帧/尾帧 三个「自动保存」(执行即落盘, 无需点「保存」); "
+            "单帧也能用节点自带的「保存帧」直接存\n"
             "- 文件名前缀 = 加载视频的「文件名前缀」输出(序列号_名称, 一条线分发给三个保存节点); 后缀区分首帧/关键帧/尾帧\n"
             "- 本工作流不读数据表; 拆音见 0051_视频拆音",
             (-600, 0), (520, 760), 4,
@@ -418,8 +467,9 @@ def fix_0035() -> dict:
     ① 节点 18 的输入/输出按当前 schema 重写 —— video(0) / audio(1) / prefix(2) /
        image_1..N(3 起): 老存档里没有音频/前缀口、选中帧从端口 1 起, 这里按**输出名**
        把连线搬到新槽位(重跑不叠加);
-    ② 每个 PreviewImageSave 的 filename_prefix 改接加载视频的 prefix 输出(「序列号_名称」),
-       后缀补一个下划线(前缀与后缀之间也要有分隔: 00001_陈落_前面.png);
+    ② 每个图片保存节点(旧存档的 PreviewImageSave 一并就地升级为 AutoSaveImage)
+       的 filename_prefix 改接加载视频的 prefix 输出(「序列号_名称」), 后缀补一个下划线
+       (前缀与后缀之间也要有分隔: 00001_陈落_前面.png);
     ③ 「输出帧数」控件对齐到实际选中帧端口数(前端 syncFrameState 按 3 + total 增删端口)。
     """
     wf = load("0035_场景截帧")
@@ -472,8 +522,11 @@ def fix_0035() -> dict:
         values[10] = len(frames)
     n["widgets_values"] = values
 
-    # 每个保存节点: filename_prefix 改接 prefix 输出; 后缀补下划线
-    saves = node_by_type(wf, "PreviewImageSave")
+    # 每个保存节点: 归一为「图片自动保存」, filename_prefix 改接 prefix 输出; 后缀补下划线
+    upgraded = normalize_auto_save(wf)
+    if upgraded:
+        print(f"0035: {upgraded} 个 PreviewImageSave 升级为 AutoSaveImage")
+    saves = save_image_nodes(wf)
     save_ids = {s["id"] for s in saves}
     wf["links"] = [
         l for l in wf["links"] if not (l[3] in save_ids and l[4] == 1)
@@ -532,7 +585,7 @@ def layout_0035(wf: dict) -> None:
         return next(n for n in wf["nodes"] if n["type"] == node_type and keyword in (n.get("title") or ""))
 
     comp4, comp8 = titled("FallingTSImageComposite", "截帧合成"), titled("FallingTSImageComposite", "八向合成")
-    prev4, prev8 = titled("PreviewImageSave", "截帧合成"), titled("PreviewImageSave", "八向合成")
+    prev4, prev8 = titled(AUTO_SAVE_IMAGE, "截帧合成"), titled(AUTO_SAVE_IMAGE, "八向合成")
 
     # 列 0: 加载视频(整图的起点); x 固定在最左, y 在末尾按端口顺序约束统一设置
     loader_w = loader["size"][0]

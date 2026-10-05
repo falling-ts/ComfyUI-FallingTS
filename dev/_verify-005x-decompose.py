@@ -144,7 +144,7 @@ def check_video_in_end_to_end():
     且本节点正常执行(未「完成」→ 阻断下游但预览照发)。
     """
     probe = ROOT / "media" / "七纹刻印" / "_probe_video_in.mp4"
-    source = ROOT / "media" / "七纹刻印" / "0031_首帧场景" / "00001_书房旋镜视频.mp4"
+    source = ROOT / "media" / "七纹刻印" / "0031_首帧场景" / "00001_书房旋镜.mp4"
     if not source.is_file():
         print("SKIP video_in 用例: 找不到源视频", source)
         return
@@ -181,60 +181,81 @@ def check_video_in_end_to_end():
         probe.unlink(missing_ok=True)
 
 
-def check_prefix_save_end_to_end():
-    """后端: 连线来的「序列号_名称」前缀真的进了保存文件名。
+def make_probe_wav(path):
+    """现场合成一个 0.5s / 440Hz / 16bit 单声道探针音频(纯标准库, 不依赖外部素材)。
 
-    前缀链路 = 加载节点 prefix 输出 → 保存节点 filename_prefix 输入 → execute 时收到该值 →
-    点「保存」时前端带 filename_prefix_linked=true, 后端改用 execute 时缓存的值(忽略控件值)。
-    这里模拟前端: body 里的 filename_prefix 故意写错, 断言落盘文件名是 <序列号>_<名称><后缀>.png。
+    Args:
+        path: 落盘路径。
+    """
+    import math
+    import struct
+    import wave
+
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"".join(
+            struct.pack("<h", int(12000 * math.sin(2 * math.pi * 440 * i / 16000))) for i in range(8000)
+        ))
+
+
+def check_auto_save_end_to_end():
+    """后端: AutoSaveImage 执行即落盘, 文件名 = 连线前缀 + 控件后缀, 目录 = 随 prompt 带的工作流名。
+
+    两条口径一起验:
+    ① 前缀来自**连线**(加载节点的 prefix 输出 = 「序列号_名称」), 控件值只是占位, execute 收到的是连线值;
+    ② 本 prompt 没有 md 数据表 ⇒ 子目录退回 extra_pnginfo 顶层 workflow_name。
+    本用例**不点任何按钮**(自动保存节点的差异正是"没有「保存」按钮"), 只提交 prompt 等 history。
     """
     from PIL import Image as _Image
 
-    png = ROOT / "media" / "七纹刻印" / "_probe_prefix.png"
+    png = ROOT / "media" / "七纹刻印" / "_probe_auto_save.png"
     wav = ROOT / "media" / "七纹刻印" / "_probe_audio_in.wav"
-    if not wav.is_file():
-        print("SKIP 前缀落盘用例: 缺探针音频", wav)
-        return
+    made_wav = not wav.is_file()
+    if made_wav:
+        make_probe_wav(wav)
     _Image.new("RGB", (8, 8), (10, 20, 30)).save(png)
-    out_dir = ROOT / "media" / "七纹刻印" / "0050_视频拆帧"
-    target = out_dir / "00007_前缀探针_首帧.png"
+    target = ROOT / "media" / "七纹刻印" / "0050_视频拆帧" / "00007_自动保存探针_首帧.png"
     target.unlink(missing_ok=True)
     try:
         prompt = {
             "1": {"class_type": "LoadAudio", "inputs": {"audio": wav.name}},
             "2": {"class_type": "FallingTSLoadAudio",
-                  "inputs": {"audio_in": ["1", 0], "audio": "", "name": "前缀探针", "sequence": "7"}},
+                  "inputs": {"audio_in": ["1", 0], "audio": "", "name": "自动保存探针", "sequence": "7"}},
             "3": {"class_type": "LoadImage", "inputs": {"image": png.name}},
             # filename_prefix 由「加载音频」的 prefix 输出连线供给(控件值只剩占位)
-            "4": {"class_type": "PreviewImageSave",
+            "4": {"class_type": "AutoSaveImage",
                   "inputs": {"images": ["3", 0], "filename_prefix": ["2", 1], "filename_suffix": "_首帧",
                              "format": "png", "bit_depth": "8-bit", "input_color_space": "sRGB"}},
         }
-        res = post("/prompt", {"prompt": prompt, "client_id": "verify-005x"})
+        res = post("/prompt", {"prompt": prompt, "client_id": "verify-005x",
+                               "extra_data": {"extra_pnginfo": {"workflow_name": "0050_视频拆帧"}}})
         pid = res.get("prompt_id")
-        check("前缀落盘: 图提交", bool(pid), res)
+        check("自动保存: 图提交", bool(pid), res)
         if not pid:
             return
+        hist = None
         for _ in range(60):
             time.sleep(2)
-            if pid in get("/history/" + pid):
+            h = get("/history/" + pid)
+            if pid in h:
+                hist = h[pid]
                 break
-        body = {"filename_prefix": "控件值应被忽略", "filename_suffix": "_首帧",
-                "filename_prefix_linked": True, "filename_suffix_linked": False,
-                "workflow_name": "0050_视频拆帧", "format": "png", "bit_depth": "8-bit",
-                "input_color_space": "sRGB"}
-        saved = post("/preview-image/save/4", body)
-        check("前缀落盘: 文件名 = 00007_前缀探针_首帧.png",
-              saved.get("status") == "ok" and target.is_file(),
-              {"resp": str(saved)[:180], "file": target.is_file()})
+        check("自动保存: 执行成功", (hist or {}).get("status", {}).get("status_str") == "success",
+              (hist or {}).get("status"))
+        check("自动保存: 文件名 = 00007_自动保存探针_首帧.png(连线前缀 + 控件后缀)",
+              target.is_file(), str(target))
     finally:
         png.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
+        if made_wav:
+            wav.unlink(missing_ok=True)
 
 
 def main():
     check_video_in_end_to_end()
-    check_prefix_save_end_to_end()
+    check_auto_save_end_to_end()
     edge = next((p for p in EDGE if pathlib.Path(p).is_file()), None)
     port = free_port()
     profile = pathlib.Path(tempfile.mkdtemp(prefix="verify005x-"))
@@ -266,20 +287,28 @@ def main():
 
         # ── 0050_视频拆帧 ──────────────────────────────────────────────
         d = load(cdp, "0050_视频拆帧")
-        check("0050 节点构成 = 加载视频 + 3 预览保存 + 说明(无数据表)",
-              len(nodes_of(d, "FallingTSLoadVideo")) == 1 and len(nodes_of(d, "PreviewImageSave")) == 3
+        check("0050 节点构成 = 加载视频 + 3 自动保存 + 说明(无数据表)",
+              len(nodes_of(d, "FallingTSLoadVideo")) == 1 and len(nodes_of(d, "AutoSaveImage")) == 3
+              and not nodes_of(d, "PreviewImageSave")
               and not nodes_of(d, "FallingTSMarkDownTable") and not nodes_of(d, "Reroute"),
               "%d 节点 / %d 连线" % (d["nodes"], len(d["links"])))
         lv = nodes_of(d, "FallingTSLoadVideo")[0]
         check("0050 加载视频输出 = video/audio/prefix/选中帧1..3",
               lv["outputs"] == ["video", "audio", "prefix", "image_1", "image_2", "image_3"], lv["outputs"])
         check("0050 输出帧数 = 3", lv["widgets"].get("输出帧数") == 3, lv["widgets"].get("输出帧数"))
-        ok = all(len(link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="PreviewImageSave", toIn="images")) == 1
+        ok = all(len(link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="AutoSaveImage", toIn="images")) == 1
                  for i in (1, 2, 3))
-        check("0050 选中帧 1..3 → 三个预览保存", ok)
+        check("0050 选中帧 1..3 → 三个自动保存", ok)
         check("0050 加载视频 prefix → 三个 filename_prefix",
-              len(link(d, fromType="FallingTSLoadVideo", fromOut="prefix", toType="PreviewImageSave", toIn="filename_prefix")) == 3)
-        check("0050 保存节点标题", sorted(n["title"] for n in nodes_of(d, "PreviewImageSave")) == ["预览保存-关键帧", "预览保存-尾帧", "预览保存-首帧"])
+              len(link(d, fromType="FallingTSLoadVideo", fromOut="prefix", toType="AutoSaveImage", toIn="filename_prefix")) == 3)
+        check("0050 保存节点标题", sorted(n["title"] for n in nodes_of(d, "AutoSaveImage")) == ["预览保存-关键帧", "预览保存-尾帧", "预览保存-首帧"])
+        # 节点真的按 AutoSaveImage 注册(而不是未注册类型的占位节点): 控件齐全 + 后缀是字符串
+        saves = nodes_of(d, "AutoSaveImage")
+        need = {"filename_prefix", "filename_suffix", "format", "bit_depth", "input_color_space"}
+        check("0050 自动保存节点控件齐全(类型已注册) + 后缀保留",
+              all(need <= set(s["widgets"]) and s["inputs"][:1] == ["images"] for s in saves)
+              and all(isinstance(s["widgets"].get("filename_suffix"), str) for s in saves),
+              [s["widgets"] for s in saves])
 
         # ── 0051_视频拆音 ──────────────────────────────────────────────
         d = load(cdp, "0051_视频拆音")
@@ -305,18 +334,21 @@ def main():
         want = ["单图 前面", "单图 前右", "单图 右面", "单图 右后", "单图 后面", "单图 后左", "单图 左面", "单图 左前"]
         got = []
         for i in range(1, 9):
-            hit = link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="PreviewImageSave", toIn="images")
+            hit = link(d, fromType="FallingTSLoadVideo", fromOut="image_%d" % i, toType="AutoSaveImage", toIn="images")
             got.append(hit[0]["toTitle"] if hit else "(无)")
         check("0035 八个选中帧仍落在八个单图保存", got == want, got)
-        pref = link(d, fromType="FallingTSLoadVideo", fromOut="prefix", toType="PreviewImageSave", toIn="filename_prefix")
+        pref = link(d, fromType="FallingTSLoadVideo", fromOut="prefix", toType="AutoSaveImage", toIn="filename_prefix")
         check("0035 加载视频 prefix → 十个保存节点", len(pref) == 10, [l["toTitle"] for l in pref])
 
         # ── 0040..0044 尾部清空 ────────────────────────────────────────
-        expect_counts = {"0040_文生视频": 27, "0041_首帧视频": 26, "0042_首尾视频": 26,
-                         "0043_关键帧视频": 42, "0044_参考视频": 30}
+        # 基线 = 2026-10-04 dbbb945「接入 FallingTS 尺寸档选择器」之后各 +5 的当前节点数
+        # (粒度只用于"清尾部不许误删其它节点"; 工作流本身增删节点时同步更新这里)
+        expect_counts = {"0040_文生视频": 32, "0041_首帧视频": 31, "0042_首尾视频": 31,
+                         "0043_关键帧视频": 47, "0044_参考视频": 35}
         for wf_name, want_nodes in expect_counts.items():
             d = load(cdp, wf_name)
-            tail_types = [n["type"] for n in d["nodeList"] if n["type"] in ("FallingTSAudioTrim", "PreviewAudioSave", "PreviewImageSave")]
+            tail_types = [n["type"] for n in d["nodeList"]
+                          if n["type"] in ("FallingTSAudioTrim", "PreviewAudioSave", "PreviewImageSave", "AutoSaveImage")]
             check("%s 截帧/截音尾部已清空" % wf_name, not tail_types, tail_types)
             pv = nodes_of(d, "PreviewVideo")
             check("%s 预览视频只剩 video 输出" % wf_name, len(pv) == 1 and pv[0]["outputs"] == ["video"],
