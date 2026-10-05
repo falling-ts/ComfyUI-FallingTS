@@ -34,6 +34,8 @@ LoadAudioNode = import_module("load-audio.nodes").FallingTSLoadAudioNode
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
 # preview-image 目录名同样含连字符, 需经 importlib 按名加载
 PreviewImageSaveNode = import_module("preview-image.nodes").PreviewImageSaveNode
+# auto-save-image 目录名同样含连字符; 该节点继承 PreviewImageSaveNode(执行即自动保存, 无按钮)
+AutoSaveImageNode = import_module("auto-save-image.nodes").AutoSaveImageNode
 # preview-audio 目录名同样含连字符, 需经 importlib 按名加载
 PreviewAudioSaveNode = import_module("preview-audio.nodes").PreviewAudioSaveNode
 # audio-trim 目录名同样含连字符, 需经 importlib 按名加载(音频截段: 波形选区切多段输出)
@@ -79,6 +81,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "WorldPanoramaViews": WorldPanoramaViewsNode,
     "PreviewVideo": PreviewVideoNode,
     "PreviewImageSave": PreviewImageSaveNode,
+    "AutoSaveImage": AutoSaveImageNode,
     "PreviewAudioSave": PreviewAudioSaveNode,
     "FallingTSAudioTrim": AudioTrimNode,
 }
@@ -103,6 +106,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "WorldPanoramaViews": "FallingTS 全景 → 视角批 + 位姿",
     "PreviewVideo": "Preview Video (保存)",
     "PreviewImageSave": "Preview Image (保存)",
+    "AutoSaveImage": "Auto Save Image (自动保存)",
     "PreviewAudioSave": "Preview Audio (保存)",
     "FallingTSAudioTrim": "FallingTS 音频截段 (波形切段)",
 }

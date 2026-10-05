@@ -17,6 +17,7 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | Grouped switch | `FallingTSSwitch` | `FallingTS/Utility` | One `switch` boolean toggles `total` groups at once (each group when-false/when-true → output, ANY); `total` ≥ 1 |
 | Video preview | `PreviewVideo` | `video` | Preview into the temp directory; clicking "Save" writes to output per `filename_prefix`+`filename_suffix` (`.mp4`, same name overwritten, no sequence number) |
 | Image preview save | `PreviewImageSave` | `FallingTS/Utility` | Always previews (temp, does not write to output); clicking **Save** writes to output per filename prefix/suffix/format/bit depth/color space, **same name overwritten, no sequence number** |
+| Image auto save | `AutoSaveImage` | `FallingTS/Utility` | **Always previews and saves automatically, no Save button**: every execution writes `{filename_prefix}{filename_suffix}.{format}` to output (**same name overwritten, no sequence number**) with exactly the same save semantics as Image preview save (shared implementation: format/bit depth/color space/metadata); the subdirectory prefers the workflow's md table filename, otherwise the workflow name |
 | Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix`+`filename_suffix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
 | Video components | `FallingTSVideoComponents` | `FallingTS/Utility` | Splits a reference video into frames/audio/fps/bit depth/color space (**None-safe**, replacing the core `GetVideoComponents`): `video` is an **optional input**, so when it is unwired or None (empty mdtable field / no upstream value) **all outputs are None and nothing crashes**, letting the downstream H3 Ref2VA skip that reference slot as "no reference"; the core node raises AttributeError on None, so workflows whose `<Video N>` column may be left empty need this node |
 
@@ -28,6 +29,7 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | `web/js/proceed.js` | Continue node button + segmented execution logic |
 | `web/js/route.js` | Route node: dynamically add/remove each group's ports by `total` + actually execute the false branch: on a partial submit, merge the output nodes downstream of each switch=false group's output into targets, save this segment and stop |
 | `web/js/preview-image.js` | Preview-save node "Save" button + format-linked bit depth/color space |
+| `web/js/auto_save_image.js` | Auto-save image node: format-linked bit depth/color space + rebuild preview after a refresh + inject the current workflow name into `POST /prompt` (`extra_pnginfo`) so the node can resolve its output subdirectory at execute time |
 | `web/js/preview-video.js` | Video preview node "Save" button |
 | `web/js/preview-audio.js` | Audio preview node "Save" button |
 | `web/js/table_lookup.js` | Table DOM controls (Excel grid + selection dropdown + first-column ID) |
@@ -274,6 +276,9 @@ ComfyUI-FallingTS/
 │   └── __init__.py
 ├── preview-image/    # image preview-save node (always preview temp + click "Save" to write output, same name overwritten)
 │   ├── nodes.py      #   PreviewImageSave + HTTP route (/preview-image/save)
+│   └── __init__.py
+├── auto-save-image/  # image auto-save node (preview + write output on every execution; subclasses PreviewImageSave, no Save button)
+│   ├── nodes.py      #   AutoSaveImage (reuses preview-image's temp preview / _last_ui cache / _save_batch_to_output)
 │   └── __init__.py
 ├── pre-run/          # pre-run command backend (no nodes): POST /fallingts_prerun/run
 │   └── nodes.py      #   runs the configured command in the workspace root, skips when empty, blocks the submit on non-zero/timeout

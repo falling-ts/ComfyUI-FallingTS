@@ -17,6 +17,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 分组开关 | `FallingTSSwitch` | `FallingTS/工具` | 一个 `switch` 布尔同时切换 total 组(每组 为假时/为真时 → 输出,ANY),total 最少 1 |
 | 视频预览 | `PreviewVideo` | `video` | 预览到 temp 目录;点「保存」按 `filename_prefix`+`filename_suffix` 写 output(`.mp4`,同名覆盖,无序号) |
 | 图片预览保存 | `PreviewImageSave` | `FallingTS/工具` | 始终预览(temp 不写 output);点「**保存**」才按 文件名前缀/后缀/格式/位深/色彩空间 写 output,**同名覆盖、无序号** |
+| 图片自动保存 | `AutoSaveImage` | `FallingTS/工具` | **始终预览 + 执行即自动保存, 没有「保存」按钮**:每次执行都按 `{前缀}{后缀}.{格式}` 写 output(**同名覆盖、无序号**),保存口径与「图片预览保存」完全一致(共用同一套实现: 格式/位深/色彩空间/元数据);子目录优先用工作流的 md 数据表文件名, 没有 md 表才用工作流名 |
 | 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+`filename_suffix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
 | 视频拆解 | `FallingTSVideoComponents` | `FallingTS/工具` | 把参考视频拆成 帧序列/音频/帧率/位深/色彩空间(**None 安全**,核心 `GetVideoComponents` 的替代):`video` 是**可选输入**,未连接或为 None(mdtable 空字段/上游无值)时**全部输出 None 且不报错**,让下游 H3 Ref2VA 的参考视频位按"无参考"跳过;核心节点收到 None 会 AttributeError,故 `<Video N>` 参考列允许留空的工作流须用本节点 |
 
@@ -27,6 +28,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
 | `web/js/route.js` | 路由节点:按 `total` 动态增删各组端口 + 假分支真正执行:partial 提交时把 switch=false 的各组输出下游输出节点并入 targets,保存本段并停止 |
 | `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
+| `web/js/auto_save_image.js` | 自动保存图片节点:format 联动位深/色彩空间 + 刷新后重建预览 + 提交时把当前工作流名注入 `POST /prompt`(`extra_pnginfo`),供节点在 execute 里解析产物子目录 |
 | `web/js/preview-video.js` | 视频预览节点「保存」按钮 |
 | `web/js/preview-audio.js` | 音频预览节点「保存」按钮 |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
@@ -273,6 +275,9 @@ ComfyUI-FallingTS/
 │   └── __init__.py
 ├── preview-image/    # 图片预览保存节点(始终预览 temp + 点「保存」写 output, 同名覆盖)
 │   ├── nodes.py      #   PreviewImageSave + HTTP 路由(/preview-image/save)
+│   └── __init__.py
+├── auto-save-image/  # 图片自动保存节点(预览 + 执行即写 output; 继承 PreviewImageSave, 无「保存」按钮)
+│   ├── nodes.py      #   AutoSaveImage(复用 preview-image 的 temp 预览 / _last_ui 缓存 / _save_batch_to_output)
 │   └── __init__.py
 ├── web/js/           # 前端扩展(ComfyUI 经 /extensions 运行时加载,不参与前端打包)
 ├── locales/          # i18n 翻译(zh/nodeDefs.json, 节点与控件显示名)
