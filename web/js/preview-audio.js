@@ -78,6 +78,28 @@ function currentWorkflowName() {
   }
 }
 
+/**
+ * 取当前工作流的根 id(= 工作流 JSON 的根 id, 即 graph.serialize().id)。
+ *
+ * 后端拿它给预览缓存加作用域: 只按节点 id 缓存会让各工作流之间**同 id 的节点互相串音**
+ * (节点 id 在工作流之间大量重复), 打开工作流 B 时会把之前跑过的 A 的同 id 节点音频当成
+ * B 的预览播出来。后端在 execute 时从 extra_pnginfo.workflow.id 取到的是同一个值
+ * (前端 graphToPrompt() 把 graph.serialize() 整个塞进 extra_pnginfo.workflow)。
+ *
+ * @returns {string} 工作流根 id; 取不到时为空串(后端退回纯节点 id)
+ */
+function currentWorkflowId() {
+  try {
+    // 必须取**根图**: 前端 graphToPrompt() 默认序列化 rootGraph, extra_pnginfo.workflow.id
+    // 来自它; 取子图(node.graph)会拿到别的 id, 与后端存的键对不上
+    const g = app?.rootGraph ?? app?.graph;
+    if (!g) return "";
+    return String(g.id || g.serialize?.()?.id || "");
+  } catch {
+    return "";
+  }
+}
+
 /** 遍历页面按钮, 给「保存」按钮套样式。 */
 function styleSaveButtons() {
   document.querySelectorAll("button").forEach((el) => {
@@ -94,17 +116,31 @@ function styleSaveButtons() {
 async function refreshPlayer(node) {
   const player = node._fallingtsPlayer;
   if (!player) return;
+  let url = null;
   try {
-    const r = await fetch(`/preview-audio/audio-url/${node.id}`);
+    // 带上当前工作流 id: 后端据此定位「本次执行」的缓存, 不带就会跨工作流串音
+    const wid = encodeURIComponent(currentWorkflowId());
+    const r = await fetch(`/preview-audio/audio-url/${node.id}?workflow_id=${wid}`);
     const j = await r.json().catch(() => null);
-    if (!r.ok || j?.status !== "ok" || !j.url) return;
-    if (player.audioEl.dataset.src === j.url) return;
-    player.audioEl.dataset.src = j.url;
-    player.audioEl.src = j.url;
-    player.audioEl.load();
+    if (r.ok && j?.status === "ok" && j.url) url = new URL(j.url, window.location.origin).href;
   } catch {
-    /* 后端未就绪时忽略, 下次轮询会重试 */
+    /* 后端未就绪时忽略 */
   }
+  // 没有可播放的源就整个收起来(与 image/video 的 0 高兜底同口径): 空播放器会占掉
+  // 节点一大块高度, 且 src 为空时点了也没声
+  if (!url) {
+    player.element.style.display = "none";
+    player.computeSize = (width) => [width, 0];
+    node.setDirtyCanvas(true, true);
+    return;
+  }
+  if (player.audioEl.dataset.src === url) return;
+  player.element.style.display = "";
+  player.computeSize = (width) => [width, 40];
+  player.audioEl.dataset.src = url;
+  player.audioEl.src = url;
+  player.audioEl.load();
+  node.setDirtyCanvas(true, true);
 }
 
 /** 对所有 PreviewAudioSave 节点刷新播放源(带防抖)。 */
@@ -132,7 +168,9 @@ function refreshAllPlayers() {
  */
 function createPlayerWidget(node) {
   const root = document.createElement("div");
-  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;";
+  // 默认收起(与 image/video 的 0 高兜底同口径): 没有可播放的源时(刚建节点 / 缓存已失效)
+  // 空播放器会白白占掉节点一块高度, 由 refreshPlayer 拿到 URL 后再展开
+  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;display:none;";
 
   const audioEl = document.createElement("audio");
   audioEl.controls = true;
@@ -147,7 +185,7 @@ function createPlayerWidget(node) {
     getValue: () => "",
     setValue: () => {},
   });
-  widget.computeSize = (width) => [width, 40];
+  widget.computeSize = (width) => [width, 0];
   widget.audioEl = audioEl;
   widget.element = root;
   return widget;
@@ -188,6 +226,9 @@ app.registerExtension({
               quality: getWidget("quality") ?? "128k",
               // 当前工作流名: 后端据此在 output 下建同名子目录再保存(取不到则由后端回退 output 根)
               workflow_name: currentWorkflowName(),
+              // 当前工作流根 id: 后端据此定位「本次执行」的预览缓存 —— 不带就会把别的
+              // 工作流同 id 节点缓存的音频存进来(跨工作流串音)
+              workflow_id: currentWorkflowId(),
             }),
           });
           const data = await resp.json().catch(() => ({}));
@@ -209,6 +250,14 @@ app.registerExtension({
 
       node._fallingtsPlayer = createPlayerWidget(node);
       styleSaveButtons();
+
+      // 后端是唯一事实来源: 工作流加载完成后从 /preview-audio/audio-url 读回播放源重建
+      // (原生 UI.PreviewAudio 是一次性 WebSocket 事件, 页面刷新后不重发)
+      const prevOnConfigure = node.onConfigure;
+      node.onConfigure = function (info) {
+        prevOnConfigure?.call(this, info);
+        refreshPlayer(node);
+      };
       refreshPlayer(node);
     };
   },
@@ -224,10 +273,11 @@ app.registerExtension({
     styleSaveButtons();
     new MutationObserver(styleSaveButtons).observe(document.body, { childList: true, subtree: true });
 
-    // onExecuted 在 V3 节点上不可靠(实测不触发), 改监听 api 事件 + 轮询兜底
+    // 只挂 executed / execution_success 两个低频事件(防抖 300ms 后拉源)。
+    // ⚠️ 不挂 progress —— 它每个采样步都发, 会把「跑完再拉一次」变成高频轮询;
+    // ⚠️ 也不用 setInterval 定时轮询 —— 后端是唯一事实来源, 没跑完源不会变。
     api.addEventListener("executed", () => refreshAllPlayers());
-    api.addEventListener("progress", () => refreshAllPlayers());
-    setInterval(refreshAllPlayers, 5000);
+    api.addEventListener("execution_success", () => refreshAllPlayers());
 
     const orig = app.queuePrompt?.bind(app);
     if (!orig) return;

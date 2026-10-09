@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from io import BytesIO
@@ -190,6 +191,108 @@ def _save_audio_no_counter(
 
 
 
+def _workflow_scope(extra_pnginfo) -> str:
+    """从 extra_pnginfo 取当前工作流的根 id, 作为缓存键的工作流作用域。
+
+    与 preview-image / preview-video 同口径: 该 id 就是工作流 JSON 的根 id(前端
+    graph.serialize().id; graphToPrompt() 把 graph.serialize() 整个塞进 extra_pnginfo.workflow,
+    所以这里取到的和前端 app.rootGraph.id 是同一个值)。
+
+    **为什么必须带工作流作用域**: 只按节点 id 缓存会跨工作流串音 —— 节点 id 在各工作流之间
+    大量重复, 打开工作流 B 时会把之前跑过的 A 的同 id 节点预览当成 B 的预览播出来。
+
+    参数:
+        extra_pnginfo (dict|None): hidden 里的额外元数据。
+
+    返回:
+        str: 工作流根 id; 取不到(如无头 API 直接提交)时返回空串。
+    """
+    if not isinstance(extra_pnginfo, dict):
+        return ""
+    workflow = extra_pnginfo.get("workflow")
+    if not isinstance(workflow, dict):
+        return ""
+    return str(workflow.get("id") or "").strip()
+
+
+def _scoped_key(node_id, workflow_id=None) -> str:
+    """把 (工作流 id, 节点 id) 拼成缓存键; 工作流 id 缺失时退回纯节点 id。
+
+    参数:
+        node_id (str|int|None): 节点唯一 ID。
+        workflow_id (str|None): 工作流根 id(见 _workflow_scope)。
+
+    返回:
+        str: 缓存键 "<工作流 id>::<节点 id>", 或纯 "<节点 id>"。
+    """
+    nid = str(node_id or "")
+    wid = str(workflow_id or "").strip()
+    return f"{wid}::{nid}" if wid and nid else nid
+
+
+def _cache_get(cache: dict, node_id, workflow_id=None):
+    """按 (工作流, 节点) 读缓存: 优先带工作流标识的键, 再退回纯节点 id。
+
+    退回纯节点 id 是为了兼容「那次执行没带工作流标识」的写入(无头 API 提交时
+    extra_pnginfo 为空), 否则页面刷新后这类预览就再也读不回来了。
+
+    参数:
+        cache (dict): 缓存字典(本模块即 _last_output)。
+        node_id (str|int|None): 节点唯一 ID。
+        workflow_id (str|None): 调用方声明的当前工作流根 id。
+
+    返回:
+        dict|None: 命中的缓存; 未命中返回 None。
+    """
+    keys = [str(node_id or "")]
+    if workflow_id:
+        keys.insert(0, _scoped_key(node_id, workflow_id))
+    for key in keys:
+        if key in cache:
+            return cache[key]
+    return None
+
+
+def _preview_temp_name(cache_key: str, file_format: str) -> str:
+    """给该缓存键算一个稳定的 temp 预览文件名(带工作流/节点作用域)。
+
+    文件名里必须带作用域: 只按节点 id 命名会让各工作流同 id 节点共用一份 temp 文件,
+    打开工作流 B 时直接播到 A 留下的音频(跨工作流串音)。
+
+    参数:
+        cache_key (str): 缓存键(见 _scoped_key)。
+        file_format (str): flac/mp3/opus。
+
+    返回:
+        str: 形如 FallingTS_preview_audio_<hash>.<format> 的文件名。
+    """
+    digest = hashlib.md5(str(cache_key).encode("utf-8")).hexdigest()[:10]
+    return f"FallingTS_preview_audio_{digest}.{file_format}"
+
+
+def _write_preview_temp(audio: dict, file_format: str, quality: str, file_name: str) -> str:
+    """把音频编码写进 temp 目录, 返回可直接 /view 的 URL。
+
+    参数:
+        audio (dict): 音频对象, 含 waveform(BxCxN) 与 sample_rate;
+        file_format (str): flac/mp3/opus;
+        quality (str): 编码质量;
+        file_name (str): temp 文件名。
+
+    返回:
+        str: /view?...&type=temp 形式的 URL。
+
+    异常:
+        Exception: 编码/写盘失败时向上抛, 由调用方转成 500 回前端。
+    """
+    waveform = audio["waveform"]
+    first = waveform[0] if getattr(waveform, "dim", lambda: 0)() > 2 else waveform
+    data = _encode_audio_waveform(first.cpu(), audio["sample_rate"], file_format, quality)
+    with open(os.path.join(folder_paths.get_temp_directory(), file_name), "wb") as f:
+        f.write(data)
+    return f"/view?filename={quote(file_name)}&type=temp"
+
+
 class PreviewAudioSaveNode(IO.ComfyNode):
     """音频预览保存节点: 预览(temp) + 「保存」写 output; 切段见 FallingTSAudioTrim。"""
 
@@ -278,7 +381,10 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             IO.NodeOutput: 音频 + UI.PreviewAudio 预览事件。
         """
         nid = str(getattr(cls.hidden, "unique_id", "") or "")
-        cached = _last_output.get(nid) or {}
+        # 工作流根 id: 给预览缓存加作用域, 只按节点 id 缓存会跨工作流串音
+        wid = _workflow_scope(getattr(cls.hidden, "extra_pnginfo", None))
+        key = _scoped_key(nid, wid)
+        cached = _cache_get(_last_output, nid, wid) or {}
 
         if audio is None:
             last_audio = cached.get("audio")
@@ -287,7 +393,7 @@ class PreviewAudioSaveNode(IO.ComfyNode):
             return IO.NodeOutput(last_audio, ui=UI.PreviewAudio(last_audio, cls=cls))
 
         if nid:
-            _last_output[nid] = {
+            _last_output[key] = {
                 "audio": audio,
                 "filename_prefix": filename_prefix,
                 "filename_suffix": filename_suffix,
@@ -341,7 +447,8 @@ async def _handle_audio_url(request: web.Request) -> web.Response:
         web.Response: {"status":"ok","url":...} 或 400/500。
     """
     nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid)
+    wid = (request.query.get("workflow_id") or "").strip()
+    cache = _cache_get(_last_output, nid, wid)
     if not cache or not cache.get("audio"):
         return web.json_response({"status": "error", "message": "没有可播放的音频数据"}, status=400)
 
@@ -349,18 +456,20 @@ async def _handle_audio_url(request: web.Request) -> web.Response:
     file_format = str(cache.get("format") or "flac")
     if file_format not in _FORMATS:
         file_format = "flac"
-    try:
-        waveform = audio["waveform"]
-        first = waveform[0] if getattr(waveform, "dim", lambda: 0)() > 2 else waveform
-        data = _encode_audio_waveform(first.cpu(), audio["sample_rate"], file_format, str(cache.get("quality") or "128k"))
-        name = f"FallingTS_preview_audio_{nid}.{file_format}"
-        with open(os.path.join(folder_paths.get_temp_directory(), name), "wb") as f:
-            f.write(data)
-    except Exception as e:  # noqa: BLE001 - 把真实原因回前端
-        logging.exception("[FallingTS] 生成可播放音频失败")
-        return web.json_response({"status": "error", "message": f"生成可播放音频失败: {e!r}"}, status=500)
-
-    return web.json_response({"status": "ok", "url": f"/view?filename={quote(name)}&type=temp"})
+    # temp 文件名带 (工作流, 节点) 作用域: 只按节点 id 命名会让各工作流同 id 节点共用一份
+    # temp 文件, 打开工作流 B 时直接播到 A 留下的音频(跨工作流串音)
+    name = _preview_temp_name(_scoped_key(nid, wid), file_format)
+    # temp 目录随时被清理: 文件还在就直接复用(不每次重编码), 不在才现场重编码一份
+    temp_path = os.path.join(folder_paths.get_temp_directory(), name)
+    if not os.path.isfile(temp_path):
+        try:
+            url = _write_preview_temp(audio, file_format, str(cache.get("quality") or "128k"), name)
+        except Exception as e:  # noqa: BLE001 - 把真实原因回前端
+            logging.exception("[FallingTS] 生成可播放音频失败")
+            return web.json_response({"status": "error", "message": f"生成可播放音频失败: {e!r}"}, status=500)
+    else:
+        url = f"/view?filename={quote(name)}&type=temp"
+    return web.json_response({"status": "ok", "url": url})
 
 
 
@@ -385,16 +494,21 @@ async def _handle_save(request: web.Request) -> web.Response:
         - 失败: 400, {"status": "error", "message": "没有预览数据, 请先运行到该节点"}。
     """
     nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid)
+    # workflow_id 由前端带过来(app.rootGraph.id): 保存必须用**当前工作流**的预览缓存,
+    # 只按节点 id 查会把别的工作流同 id 节点的音频存进来(跨工作流串音)
+    wid = None
+    try:
+        _body = await request.json()
+    except Exception:
+        _body = {}
+    if isinstance(_body, dict):
+        wid = str(_body.get("workflow_id") or "").strip() or None
+    data = _body if isinstance(_body, dict) else {}
+    cache = _cache_get(_last_output, nid, wid)
     if not cache or not cache.get("audio"):
         return web.json_response(
             {"status": "error", "message": "没有预览数据, 请先运行到该节点"}, status=400
         )
-
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
 
     filename_prefix = str(data.get("filename_prefix", "audio"))
     # 若 filename_prefix 输入被上游连线, widget 值是占位符:

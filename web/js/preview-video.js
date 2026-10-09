@@ -87,6 +87,28 @@ function currentWorkflowName() {
 }
 
 /**
+ * 取当前工作流的根 id(= 工作流 JSON 的根 id, 即 graph.serialize().id)。
+ *
+ * 后端拿它给预览缓存加作用域: 只按节点 id 缓存会让各工作流之间**同 id 的节点互相串片**
+ * (节点 id 在工作流之间大量重复, 实测 18 撞 6 个工作流), 打开工作流 B 时会把之前跑过的
+ * A 的同 id 节点预览当成 B 的预览播出来。后端在 execute 时从 extra_pnginfo.workflow.id
+ * 取到的是同一个值(前端 graphToPrompt() 把 graph.serialize() 整个塞进 extra_pnginfo.workflow)。
+ *
+ * @returns {string} 工作流根 id; 取不到时为空串(后端退回纯节点 id)
+ */
+function currentWorkflowId() {
+  try {
+    // 必须取**根图**: 前端 graphToPrompt() 默认序列化 rootGraph, extra_pnginfo.workflow.id
+    // 来自它; 取子图(node.graph)会拿到别的 id, 与后端存的键对不上
+    const g = app?.rootGraph ?? app?.graph;
+    if (!g) return "";
+    return String(g.id || g.serialize?.()?.id || "");
+  } catch {
+    return "";
+  }
+}
+
+/**
  * 遍历页面按钮, 对保存按钮套样式。
  *
  * @returns {void}
@@ -239,7 +261,8 @@ async function restoreVideo(node) {
   const fb = node._fallingtsVideoFallback;
   let url = null;
   try {
-    const r = await fetch("/preview-video/video-url/" + node.id);
+    const wid = encodeURIComponent(currentWorkflowId());
+    const r = await fetch(`/preview-video/video-url/${node.id}?workflow_id=${wid}`);
     const j = await r.json().catch(() => null);
     if (r.ok && j?.status === "ok") url = j.url;
   } catch {
@@ -343,8 +366,11 @@ app.registerExtension({
       timer = setTimeout(run, 600);
       setTimeout(run, 2500);
     };
+    // 只挂 executed / execution_success 两个低频事件: 原生 <video> 由 Vue 异步挂载,
+    // 比 onConfigure 晚, 跑完后按 600ms / 2.5s 两拍重判定一次即可。
+    // ⚠️ 不挂 progress —— 它每个采样步都发, 会把「跑完再判定」变成高频轮询。
     api.addEventListener("executed", refresh);
-    api.addEventListener("progress", refresh);
+    api.addEventListener("execution_success", refresh);
   },
 
   /**
@@ -379,6 +405,9 @@ app.registerExtension({
               filename_suffix_linked: suffixLinked,
               // 当前工作流名: 后端据此在 output 下建同名子目录再保存(取不到则由后端回退 output 根)
               workflow_name: currentWorkflowName(),
+              // 当前工作流根 id: 后端据此定位「本次执行」的预览缓存 —— 不带就会把别的
+              // 工作流同 id 节点缓存的视频存进来(跨工作流串片)
+              workflow_id: currentWorkflowId(),
             }),
           });
           const data = await resp.json().catch(() => null);

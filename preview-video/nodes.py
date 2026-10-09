@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import string
@@ -28,13 +29,76 @@ from output_subdir import resolve_subdir, safe_dir_name
 
 _NODE_NAME = "PreviewVideo"
 
-# 最近一次预览的视频缓存: node_id -> {"video", "filename_prefix", "filename_suffix", "file", "subfolder", "prompt"}
+# 最近一次预览的视频缓存: 缓存键 -> 视频数据
 # 点「保存」时前端把文件名 POST 过来, 后端直接用缓存处理(无需重跑工作流)
+# 缓存键 = "<工作流根 id>::<节点 id>"(见 _scoped_key), 只按节点 id 会跨工作流串片
 _last_output: dict[str, dict] = {}
 
 # 重置代际: /preview-video/reset 时递增, 纳入 fingerprint_inputs -> 每次 Run 后指纹必变,
 # 强制本节点重新执行(不被 ComfyUI 全局执行缓存跳过, 否则预览停在旧 temp 文件上)。
 _reset_generation: int = 0
+
+
+def _workflow_scope(extra_pnginfo) -> str:
+    """从 extra_pnginfo 取当前工作流的根 id, 作为缓存键的工作流作用域。
+
+    与 preview-image 同口径: 该 id 就是工作流 JSON 的根 id(前端 graph.serialize().id;
+    graphToPrompt() 把 graph.serialize() 整个塞进 extra_pnginfo.workflow, 所以这里取到的
+    和前端 app.rootGraph.id 是同一个值)。
+
+    **为什么必须带工作流作用域**: 只按节点 id 缓存会跨工作流串片 —— 节点 id 在各工作流之间
+    大量重复, 打开工作流 B 时会把之前跑过的 A 的同 id 节点预览当成 B 的预览播放出来。
+
+    参数:
+        extra_pnginfo (dict|None): hidden 里的额外元数据。
+
+    返回:
+        str: 工作流根 id; 取不到(如无头 API 直接提交)时返回空串。
+    """
+    if not isinstance(extra_pnginfo, dict):
+        return ""
+    workflow = extra_pnginfo.get("workflow")
+    if not isinstance(workflow, dict):
+        return ""
+    return str(workflow.get("id") or "").strip()
+
+
+def _scoped_key(node_id, workflow_id=None) -> str:
+    """把 (工作流 id, 节点 id) 拼成缓存键; 工作流 id 缺失时退回纯节点 id。
+
+    参数:
+        node_id (str|int|None): 节点唯一 ID。
+        workflow_id (str|None): 工作流根 id(见 _workflow_scope)。
+
+    返回:
+        str: 缓存键 "<工作流 id>::<节点 id>", 或纯 "<节点 id>"。
+    """
+    nid = str(node_id or "")
+    wid = str(workflow_id or "").strip()
+    return f"{wid}::{nid}" if wid and nid else nid
+
+
+def _cache_get(cache: dict, node_id, workflow_id=None):
+    """按 (工作流, 节点) 读缓存: 优先带工作流标识的键, 再退回纯节点 id。
+
+    退回纯节点 id 是为了兼容「那次执行没带工作流标识」的写入(无头 API 提交时
+    extra_pnginfo 为空), 否则页面刷新后这类预览就再也读不回来了。
+
+    参数:
+        cache (dict): 缓存字典(本模块即 _last_output)。
+        node_id (str|int|None): 节点唯一 ID。
+        workflow_id (str|None): 调用方声明的当前工作流根 id。
+
+    返回:
+        dict|None: 命中的缓存; 未命中返回 None。
+    """
+    keys = [str(node_id or "")]
+    if workflow_id:
+        keys.insert(0, _scoped_key(node_id, workflow_id))
+    for key in keys:
+        if key in cache:
+            return cache[key]
+    return None
 
 
 def _safe_dir_name(name) -> str:
@@ -55,6 +119,96 @@ def _workflow_output_dir(workflow_name, prompt=None) -> str:
     target = os.path.join(base, sub)
     os.makedirs(target, exist_ok=True)
     return target
+
+
+def _encode_temp_preview(video):
+    """把视频编码成一份 temp 预览 mp4, 返回 (文件名, 子目录)。
+
+    口径与 execute 完全一致(随机前缀 + 5 位计数 + mp4), 供「temp 被清理后现场重建」复用,
+    使重建出来的文件名与首次预览同形, 前端无需区分。
+
+    参数:
+        video: 视频对象(惰性内存对象)。
+
+    返回:
+        tuple[str, str]|None: (文件名, 子目录); 编码失败返回 None。
+    """
+    width, height = video.get_dimensions()
+    prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
+    full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+        prefix,
+        folder_paths.get_temp_directory(),
+        width,
+        height,
+    )
+    ext = Types.VideoContainer.get_extension("mp4")
+    file = f"{filename}_{counter:05}_.{ext}"
+    video.save_to(
+        os.path.join(full_output_folder, file),
+        format=Types.VideoContainer.MP4,
+        codec=Types.VideoCodec.AUTO,
+    )
+    return file, subfolder
+
+
+def _temp_preview_exists(cache: dict) -> bool:
+    """校验缓存里那份 temp 预览文件是否还在磁盘上。
+
+    temp 目录随时会被 ComfyUI 清理, 文件不在时绝不能把它的文件名返给前端 —— 前端播放器
+    指过去就是 404, 实测表现是节点上「视频加载失败 / Invalid URL」。
+
+    参数:
+        cache (dict): 预览缓存(含 file / subfolder)。
+
+    返回:
+        bool: 文件存在为 True。
+    """
+    file = cache.get("file")
+    if not file:
+        return False
+    path = os.path.join(folder_paths.get_temp_directory(), cache.get("subfolder") or "", file)
+    return os.path.isfile(path)
+
+
+def _ensure_temp_preview(cache: dict):
+    """保证缓存里有一份**真实存在**的 temp 预览文件, 没有就现场重编码一份。
+
+    与 load-video 的 _ensure_temp_preview 同口径: temp 被清理时用缓存的视频对象重编码,
+    并把新文件名写回缓存; 编不出来(视频对象已失效)返回 None, 由调用方决定兜底。
+
+    参数:
+        cache (dict): 预览缓存(含 video / file / subfolder)。
+
+    返回:
+        tuple[str, str]|None: (文件名, 子目录); 无法提供时返回 None。
+    """
+    if _temp_preview_exists(cache):
+        return cache.get("file"), cache.get("subfolder") or ""
+    video = cache.get("video")
+    if video is None:
+        return None
+    try:
+        encoded = _encode_temp_preview(video)
+    except Exception:  # noqa: BLE001 - 重编码失败只告警, 不让整次请求 500
+        logging.exception("[FallingTS] 重建视频 temp 预览失败")
+        return None
+    if not encoded:
+        return None
+    cache["file"], cache["subfolder"] = encoded
+    return encoded
+
+
+def _temp_url(file: str, subfolder: str = "") -> str:
+    """拼 temp 文件的 /view URL。
+
+    参数:
+        file (str): 文件名。
+        subfolder (str): 子目录(可空)。
+
+    返回:
+        str: 可播放的 /view URL。
+    """
+    return f"/view?filename={quote(file)}&subfolder={quote(subfolder)}&type=temp"
 
 
 class PreviewVideoNode(IO.ComfyNode):
@@ -116,42 +270,49 @@ class PreviewVideoNode(IO.ComfyNode):
         """
         nid = getattr(cls.hidden, "unique_id", None)
         nid_str = str(nid) if nid else ""
-        # 工作流 prompt 只能从 hidden 取 —— V3 节点的 hidden 不进 execute 实参。
+        # 工作流 prompt / extra_pnginfo 只能从 hidden 取 —— V3 节点的 hidden 不进 execute 实参。
         prompt = getattr(cls.hidden, "prompt", None)
+        # 工作流根 id: 给预览缓存加作用域, 只按节点 id 缓存会跨工作流串片
+        wid = _workflow_scope(getattr(cls.hidden, "extra_pnginfo", None))
+        key = _scoped_key(nid_str, wid)
 
         if video is None:
-            cached = _last_output.get(nid_str)
-            if cached and cached.get("file"):
+            cached = _cache_get(_last_output, nid_str, wid)
+            # 回放同样要保证 temp 文件真的还在: 不在就现场重编码一份, 编不出才不发预览事件
+            got = _ensure_temp_preview(cached) if cached else None
+            if got:
+                file, subfolder = got
                 return IO.NodeOutput(
                     cached.get("video"),
-                    ui=UI.PreviewVideo([UI.SavedResult(cached["file"], cached["subfolder"], IO.FolderType.temp)]),
+                    ui=UI.PreviewVideo([UI.SavedResult(file, subfolder, IO.FolderType.temp)]),
                 )
-            return IO.NodeOutput(None)
+            return IO.NodeOutput(cached.get("video") if cached else None)
 
-        width, height = video.get_dimensions()
-        prefix = "ComfyUI_temp_" + "".join(random.choice(string.ascii_lowercase) for _ in range(5))
-        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            prefix,
-            folder_paths.get_temp_directory(),
-            width,
-            height,
-        )
-        ext = Types.VideoContainer.get_extension("mp4")
-        file = f"{filename}_{counter:05}_.{ext}"
-        video.save_to(
-            os.path.join(full_output_folder, file),
-            format=Types.VideoContainer.MP4,
-            codec=Types.VideoCodec.AUTO,
-        )
+        encoded = _encode_temp_preview(video)
+        if encoded is None:
+            # 编码失败不中断工作流: 只告警, 照常把视频透传给下游
+            logging.warning("[FallingTS] PreviewVideo 编码 temp 预览失败, 本次不刷新预览")
+            if nid_str:
+                _last_output[key] = {
+                    "video": video,
+                    "filename_prefix": filename_prefix,
+                    "filename_suffix": filename_suffix,
+                    "prompt": prompt,
+                    "file": None,
+                    "subfolder": "",
+                }
+            return IO.NodeOutput(video)
 
-        _last_output[nid_str] = {
-            "video": video,
-            "filename_prefix": filename_prefix,
-            "filename_suffix": filename_suffix,
-            "prompt": prompt,
-            "file": file,
-            "subfolder": subfolder,
-        }
+        file, subfolder = encoded
+        if nid_str:
+            _last_output[key] = {
+                "video": video,
+                "filename_prefix": filename_prefix,
+                "filename_suffix": filename_suffix,
+                "prompt": prompt,
+                "file": file,
+                "subfolder": subfolder,
+            }
         return IO.NodeOutput(
             video,
             ui=UI.PreviewVideo([UI.SavedResult(file, subfolder, IO.FolderType.temp)]),
@@ -188,14 +349,19 @@ async def _handle_video_url(request: web.Request) -> web.Response:
     就空了。前端因此在节点上备一个 <video>, 页面加载/刷新时调本路由拿 URL 填上。
     """
     nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid) or {}
-    file = cache.get("file")
-    if not file:
+    wid = (request.query.get("workflow_id") or "").strip()
+    cache = _cache_get(_last_output, nid, wid)
+    if not cache or not cache.get("video"):
         return web.json_response({"status": "error", "message": "没有可预览的视频, 请先运行到该节点"}, status=400)
-    subfolder = cache.get("subfolder") or ""
-    return web.json_response(
-        {"status": "ok", "url": f"/view?filename={quote(file)}&subfolder={quote(subfolder)}&type=temp"}
-    )
+    # temp 目录随时被清理: 文件不在就现场重编码一份, 绝不把已删除的文件名返给前端
+    # (实测表现 = 节点上「视频加载失败 / Invalid URL」)
+    got = _ensure_temp_preview(cache)
+    if not got:
+        return web.json_response(
+            {"status": "error", "message": "预览文件已被清理且无法重建, 请重新运行到该节点"}, status=400
+        )
+    file, subfolder = got
+    return web.json_response({"status": "ok", "url": _temp_url(file, subfolder)})
 
 
 async def _handle_save(request: web.Request) -> web.Response:
@@ -206,16 +372,21 @@ async def _handle_save(request: web.Request) -> web.Response:
     全程不触发任何工作流重跑。文件名 = {filename_prefix}{filename_suffix}.mp4, 不带 _0001 序列后缀。
     """
     nid = request.match_info["node_id"].strip()
-    cache = _last_output.get(nid)
+    # workflow_id 由前端带过来(app.rootGraph.id): 保存必须用**当前工作流**的预览缓存,
+    # 只按节点 id 查会把别的工作流同 id 节点的预览存进来(跨工作流串片)
+    wid = None
+    try:
+        _body = await request.json()
+    except Exception:
+        _body = {}
+    if isinstance(_body, dict):
+        wid = str(_body.get("workflow_id") or "").strip() or None
+    data = _body if isinstance(_body, dict) else {}
+    cache = _cache_get(_last_output, nid, wid)
     if not cache or not cache.get("video"):
         return web.json_response(
             {"status": "error", "message": "没有预览数据, 请先运行到该节点"}, status=400
         )
-
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
 
     filename_prefix = str(data.get("filename_prefix", "video"))
     # 若 filename_prefix 输入被上游连线, widget 值是占位符: 用 execute 时实际接收到的值
