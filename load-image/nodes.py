@@ -40,7 +40,11 @@ r"""FallingTS 加载图像 (来自输出)。
    ⚠️ 序列号排在 image **之后**: V1 节点按 widgets_values 数组的**下标**恢复旧工作流,
    插在中间会让老工作流的 image 值整体错位。
 
-5. **remote 不设 control_after_refresh —— 刷新只更新候选, 不改写已选值**:
+5. **prefix 输出**(2026-10-07, 输出 2 排在 IMAGE/MASK 之后): `<序列号>_<名称>`
+   (口径同「加载视频」的 prefix, 取自 output_subdir.sequence_prefix), 接各保存节点的
+   filename_prefix —— 拆图/拼板这类工作流因此不必再手输文件名前缀(0016_建模拆图)。
+
+6. **remote 不设 control_after_refresh —— 刷新只更新候选, 不改写已选值**:
    内置 LoadImageOutput 设了 control_after_refresh="first", 前端 remote 组件因此在每次
    刷新(含跑完流程后的 Auto-refresh)后把 widget.value 换成候选首项; 候选按 mtime 倒序 ⇒
    刚保存的产物必然夺走选中权, 用户选的子目录资源被顶掉。本节点只保留 refresh_button,
@@ -62,7 +66,7 @@ from aiohttp import web
 from PIL import Image, ImageOps, ImageSequence
 from server import PromptServer
 
-from output_subdir import next_sequence, safe_dir_name, sequence_dir
+from output_subdir import next_sequence, safe_dir_name, sequence_dir, sequence_prefix
 
 import comfy.model_management
 import node_helpers
@@ -206,10 +210,12 @@ class FallingTSLoadImageNode:
     CATEGORY = "FallingTS"
     DESCRIPTION = (
         "从 output 目录加载图片(含数字目录内部的资源); 「名称」供遮罩编辑器保存时"
-        "按 0010_灰度遮罩 的自增编号命名成品; 「序列号」是该工作流产物目录里下一个可用编号。"
+        "按 0010_灰度遮罩 的自增编号命名成品; 「序列号」是该工作流产物目录里下一个可用编号; "
+        "prefix 输出 =「序列号_名称」, 接各保存节点的 filename_prefix。"
     )
     SEARCH_ALIASES = ["load image", "output image", "加载图像", "来自输出"]
-    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("IMAGE", "MASK", "prefix")
     FUNCTION = "load_image"
 
     def load_image(self, image, name=None, sequence=None):
@@ -228,7 +234,11 @@ class FallingTSLoadImageNode:
                 if components.alpha is not None
                 else torch.zeros((components.images.shape[0], 64, 64), dtype=dtype, device=device)
             )
-            return (components.images.to(device=device, dtype=dtype), mask)
+            return (
+                components.images.to(device=device, dtype=dtype),
+                mask,
+                sequence_prefix(sequence, name),
+            )
 
         # pyav 读不了的动图(如 animated webp)走 PIL
         img = node_helpers.pillow(Image.open, image_path)
@@ -261,6 +271,7 @@ class FallingTSLoadImageNode:
         return (
             output_image.to(device=device, dtype=dtype),
             output_mask.to(device=device, dtype=dtype),
+            sequence_prefix(sequence, name),
         )
 
     @classmethod
