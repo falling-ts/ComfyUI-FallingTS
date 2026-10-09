@@ -169,8 +169,13 @@ function keepStoredImage(node, info) {
       }
       return;
     }
-    // 候选还没拉到: 此刻被改只可能是占位默认值(Loading...), 直接回正
-    if (widget.value !== stored) widget.value = stored;
+    // 候选还没拉到时**不做任何回正** —— 之前这里有一句无条件回拨
+    // 「if (widget.value !== stored) widget.value = stored」, 把守护窗口(4s)内
+    // 用户自己在下拉里选的值也一并拨回存档值。实测 2026-10-09: 打开 0016_建模拆图 后
+    // 立刻选 0011_万物建模/00001_陈落.png, 提交给后端的却是存档里的
+    // 灰度遮罩_纯白.png(见 /history 里 prompt[2]["2"].inputs.image),
+    // 于是拆解结果整片纯白。remote 候选是异步拉的, 窗口内经常还没到位,
+    // 「值被占位默认值(Loading...)顶掉」并不需要本扩展兜底 —— 提交前还有一次。
   }, POLL_MS);
 
   const onRemoved = node.onRemoved;
