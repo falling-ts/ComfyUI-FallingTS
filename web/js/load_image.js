@@ -13,11 +13,11 @@
  *      control_after_refresh, 前端 useRemoteWidget 的 onRefresh() 直接 no-op, 不需要前端参与;
  *    - 首次加载(打开工作流): useRemoteWidget 的 onFirstLoad 是无条件的, 它只认远端候选
  *      列表, 不分青红皂白把 widget.value 设成候选首项(候选按 mtime 倒序 ⇒ 最近改动的文件)。
- *      上游没有开关可关, 所以在节点 configure 之后开一个短守护窗口: 一旦发现值被换成了
- *      候选首项(且不是工作流里存的那个), 就恢复成工作流存的值。
+ *      上游没有开关可关, 所以在节点 configure 之后开一个短守护窗口: 只有当当前值
+ *      **不在候选列表里**时(占位默认值 Loading... 被写进 widget), 才恢复成工作流存的值。
  *
- * 守护只持续数秒、且只在"值恰好等于候选首项"时动作一次, 因此用户自己在下拉里选第一项
- * 不会被回拨; 窗口之外本扩展完全不管。
+ * 守护只持续数秒, 且只在"值不在候选列表里"时动作一次, 因此用户自己在下拉里选的
+ * 任何一项(哪怕正好是候选首项)都不会被回拨; 窗口之外本扩展完全不管。
  *
  * ⚠️ 若存档值指向的文件已被删除/改名, 这里会保留该值(而不是跳到首项) —— 提交时由后端
  * VALIDATE_INPUTS 报 "Invalid image file", 明确报错好过静默换图。
@@ -161,13 +161,22 @@ function keepStoredImage(node, info) {
       return;
     }
     const values = widget.options?.values;
-    if (Array.isArray(values) && values.length) {
-      // 只认"被换成了候选首项"这一种自动改值, 纠正后即收手
-      if (widget.value === values[0] && values[0] !== stored) {
-        widget.value = stored;
-        clearInterval(timer);
-      }
-      return;
+    if (!Array.isArray(values) || !values.length) return;
+
+    // 只回正一种情形: 当前值**不在候选列表里** —— 那是前端占位默认值
+    // (Loading.../空串) 被写进 widget 的结果, 不是用户选的。下拉里选的值
+    // 必然在列表中, 因此不可能被误判。
+    //
+    // 实测 2026-10-09(两次定位):
+    //  1) 早期版本这里是无条件回拨, 把守护窗口(4s)内用户选的值也拨回存档值;
+    //  2) 改成"值 === 候选首项就回正" 后仍然脏 —— 候选只有两项时(存档值是
+    //     「灰度遮罩_纯白.png」, 候选首项恰好是用户想选的
+    //     「0011_万物建模/00001_陈落.png」), 每 150ms 被当成自动改值拨回,
+    //     并 clearInterval 收手 => 提交给后端的仍是灰度遮罩
+    //     (见 /history prompt[2]["2"].inputs.image), 拆解结果整片纯白。
+    if (!values.includes(widget.value)) {
+      widget.value = stored;
+      clearInterval(timer);
     }
     // 候选还没拉到时**不做任何回正** —— 之前这里有一句无条件回拨
     // 「if (widget.value !== stored) widget.value = stored」, 把守护窗口(4s)内
