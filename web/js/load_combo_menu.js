@@ -345,6 +345,18 @@ function install() {
  * @param {string} widgetName combo widget 的名字(image / video)
  * @returns {void}
  */
+/**
+ * 当前打开着下拉弹窗的那个节点(没有则返回 null)。
+ *
+ * 弹窗是挂在 body 下的 portal, 不在节点 DOM 里 —— 别的扩展想知道"用户正在操作哪个
+ * 加载节点的下拉"只能靠这里记录的 current。
+ *
+ * @returns {LGraphNode|null} 节点
+ */
+export function armedComboNode() {
+  return current && !current.node?.removed ? current.node : null;
+}
+
 export function armComboMenu(node, widgetName) {
   const widget = node.widgets?.find((w) => w.name === widgetName);
   if (!widget || widget._fallingtsMenuArmed) return;

@@ -21,17 +21,68 @@
 const COMBO_POLL_MS = 4000;
 
 /**
+ * 修掉"远端候选还没进缓存时 values 退化成字符串"的上游缺陷。
+ *
+ * 带 remote 的 combo 由 addComboWidget → bindDynamicValuesOption 把 options.values
+ * 换成访问器对: get 返回 useRemoteWidget.getValue(), 而它在候选还没进缓存时给的是
+ * getDefaultValue() —— **spec.options[0] 那个字符串**(只有 set 才写回数组)。Vue 侧
+ * computeProcessedWidgets 用对象展开合并 options({...r.options}), 会当场把 getter
+ * **取一次值**, 于是候选没到位时那个字符串被拍进 widgets 描述符;
+ * useWidgetSelectItems 的 inputItems 再判 Array.isArray(values) 为假 ⇒ 候选全空,
+ * 下拉只剩"当前值不在候选里"补出来的那一项。
+ *
+ * 实测 0016_建模拆图(两个加载节点): 先渲染的那个下拉只显示 1 项(冻结在
+ * 0010_灰度遮罩/00001_陈落换装.png, 正是 /object_info 快照的 options[0]), 后渲染的
+ * 因为候选已进缓存而正常显示 13 项 —— 所以"只有一个加载节点"的工作流必中, 有两个时
+ * 是第一个中招。
+ *
+ * 兜底加在访问器上: get 拿到的不是非空数组时, 依次回退到 ① 最后一次见到的真数组、
+ * ② 注册时从 nodeData 抄下来的静态候选(/object_info 现扫, 见 load_image.js 传入)。
+ *
+ * @param {object} widget combo widget
+ * @param {string[]} staticValues 注册时抄下的静态候选(可为空)
+ * @returns {void}
+ */
+function repairRemoteValues(widget, staticValues) {
+  if (widget._fallingtsValuesFixed) return;
+  const descriptor = Object.getOwnPropertyDescriptor(widget.options, "values");
+  if (!descriptor?.get || !descriptor?.set) return;
+  widget._fallingtsValuesFixed = true;
+
+  const fallback = Array.isArray(staticValues) && staticValues.length ? staticValues.slice() : null;
+  let last = fallback;
+  Object.defineProperty(widget.options, "values", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      const value = descriptor.get.call(this);
+      if (Array.isArray(value) && value.length) {
+        last = value;
+        return value;
+      }
+      return last ?? value;
+    },
+    set(value) {
+      if (Array.isArray(value) && value.length) last = value;
+      descriptor.set.call(this, value);
+    },
+  });
+}
+
+/**
  * 给节点上的 combo widget 装上"点开即最新"。
  *
  * 同一个 widget 只装一次; 没有 remote(即没有 refresh 方法)的普通 combo 直接跳过。
  *
  * @param {LGraphNode} node 节点
  * @param {string} widgetName combo widget 的名字(image / video)
+ * @param {string[]} [staticValues] 注册时从 nodeData 抄下的静态候选(喂给 repairRemoteValues)
  * @returns {void}
  */
-export function armComboRefresh(node, widgetName) {
+export function armComboRefresh(node, widgetName, staticValues) {
   const widget = node.widgets?.find((w) => w.name === widgetName);
   if (!widget || widget._fallingtsComboArmed) return;
+  repairRemoteValues(widget, staticValues);
   if (typeof widget.refresh !== "function") return;
   widget._fallingtsComboArmed = true;
 

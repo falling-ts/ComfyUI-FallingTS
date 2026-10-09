@@ -28,14 +28,15 @@ r"""FallingTS 加载图像 (来自输出)。
    写 " [output]"/" [input]" 标注的值依然按标注走(annotated_filepath 优先看后缀)。
 本工作区 input/ 与 output/ 是同一物理目录的软链, 故 type=input 的预览图也读得到。
 
-⚠️ INPUT_TYPES 里**故意不声明** image_upload / image_folder(2026-10-07 排查后移除):
-声明它们会让前端 WidgetSelect 走 image 资产控件分支(1.52.7 useWidgetSelectItems),
-缩略图一律由 getMediaUrl(value, "input", image) 算, 与本模块的候选来源分道扬镳;
-同弹窗里 output 资产项又硬编码 name 带 " [output]"、preview 用 type=output ——
-而本机 input/output 是同一物理目录的软链, 同一张图会因命中哪条流而显示成两个名字,
-combo 按钮上的文字与节点实际值对不上(实测 0016: 按钮印 0010_灰度遮罩/…, 值是
-0016_建模拆图/00001_陈落_左边.png)。不声明 ⇒ 标签 = 值 = 预览, 三者一致。
-副作用: 下拉里不再有"上传"分类(要上传走遮罩编辑器的 /upload/image)。
+⚠️ image_upload / image_folder **必须声明**(2026-10-07 确认): 前端 Comfy.UploadImage
+扩展只认 INPUT_TYPES 里的这两个开关(isMediaUploadComboInput), 命中后才给这个 combo 补一个
+IMAGEUPLOAD 控件 —— 于是才有: ① 节点内预览(useNodeImage 把控件值经 setNodeOutputs 变成节点
+输出图); ② 选中节点后左上角的「编辑遮罩」按钮(isImageNode 依赖 previewMediaType==="image");
+③ 从媒体库把图片拖进节点、以及从系统拖入文件(onDragOver/onDragDrop); ④ 粘贴图片
+(pasteFiles)。不声明时这四项全部消失, 表现为"没有预览、没有遮罩按钮、拖进去没反应"。
+代价是下拉里会多一个「上传」入口, 这是原生 LoadImage 的行为。缩略图/标签/值三者的一致性由
+web/js/load_combo_menu.js 兜底(它把候选名末尾的 " [output]" 标注从弹窗文本与 widget.value
+上同时抹掉; load_image 用 default_dir=output 解析, 带不带标注都命中)。
 
 3. **下拉候选同时在 INPUT_TYPES 里给一份「现扫」的 options**(每次 /object_info 都重新扫
    目录, 故页面加载/新建节点时拿到的就已经是含子目录的完整列表) —— 只靠 remote 的话,
@@ -186,12 +187,12 @@ class FallingTSLoadImageNode:
                 "image": (
                     "COMBO",
                     {
-                        # ⚠️ 故意**不**声明 image_upload / image_folder:
-                        # 一旦声明, 前端 WidgetSelect 会把这个下拉当 image 资产控件渲染,
-                        # 缩略图改走 getMediaUrl(value, "input", "image"), 与这里的候选来源
-                        # 分道扬镳 —— 本机 input/output 是同一物理目录的软链, 同一张图会因
-                        # 命中哪条流而显示成两个名字, 标签与预览对不上(2026-10-07 排查结论)。
-                        # 不声明 ⇒ 标签 = 值 = 预览, 三者一致。
+                        # 前端 Comfy.UploadImage 扩展据此给这个 combo 补 IMAGEUPLOAD 控件,
+                        # 节点内预览 / 左上角「编辑遮罩」/ 拖放与粘贴加载四项能力都由它触发
+                        # (见模块 docstring)。image_folder 让上传落到 output 目录 ——
+                        # 与下拉候选同源(本机 input/output 是同一物理目录的软链)。
+                        "image_upload": True,
+                        "image_folder": "output",
                         # 现扫一份候选: 前端页面加载 / 新建节点时即为完整列表(含子目录),
                         # 不必等 remote 拉取、也不必先点刷新按钮(见模块 docstring 第 3 条)
                         "options": _list_relative(folder_paths.get_output_directory()),

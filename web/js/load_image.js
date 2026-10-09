@@ -8,7 +8,16 @@
  * 2. 下拉候选"点开即最新" —— 见 load_combo_refresh.js(补上"点开下拉/点节点/每 4 秒"
  *    三个拉取时机; 后端 INPUT_TYPES 里也已经现扫一份候选, 页面加载时列表就是完整的)。
  *
- * 3. 短守护 —— 让"刷新"和"打开工作流"都不再改写已选的子目录资源:
+ * 3. 节点内预览 / 左上角「编辑遮罩」/ 拖放与粘贴加载 —— **一律不在这里实现**。
+ *    这四项都由前端内置的 Comfy.UploadImage 扩展提供: 它只认 INPUT_TYPES 里的
+ *    image_upload(见 load-image/nodes.py docstring), 命中后给 image 这个 combo 补一个
+ *    IMAGEUPLOAD 控件, 于是 ① 值变化时 useNodeImage + setNodeOutputs 把选中图变成节点
+ *    输出图(节点内预览), ② isImageNode 依据 previewMediaType==="image" 让选中节点后左上角
+ *    出现「编辑遮罩」按钮, ③ 从媒体库拖入 / 从系统拖入文件走 onDragOver/onDragDrop,
+ *    ④ 粘贴图片走 pasteFiles。早期版本在这里自建过 addDOMWidget("<img>"), 与内置预览
+ *    功能重叠、还多出一个会写进 widgets_values 的控件, 已删除。
+ *
+ * 4. 短守护 —— 让"刷新"和"打开工作流"都不再改写已选的子目录资源:
  *    - 刷新(手动点刷新按钮 / 跑完流程后的 Auto-refresh): 后端 remote 配置里不设
  *      control_after_refresh, 前端 useRemoteWidget 的 onRefresh() 直接 no-op, 不需要前端参与;
  *    - 首次加载(打开工作流): useRemoteWidget 的 onFirstLoad 是无条件的, 它只认远端候选
@@ -25,11 +34,9 @@
 
 import { app } from "../../../scripts/app.js";
 import { armComboRefresh } from "./load_combo_refresh.js";
-import { armComboMenu } from "./load_combo_menu.js";
+import { armComboMenu, armedComboNode } from "./load_combo_menu.js";
 
 const NODE_CLASS = "FallingTSLoadImage";
-// 预览逻辑版本戳(改下方预览相关代码时 +1)
-const PREVIEW_BUILD = "imgprev-20261007-b";
 const ROUTE = "/fallingts_load_image";
 // 编号显示宽度: 与产物目录的 5 位编号口径一致(00001, 00002 …)
 const SEQ_WIDTH = 5;
@@ -93,11 +100,18 @@ function setSequence(node, value) {
 /**
  * 从后端重算序列号并写入节点。
  *
+ * 「节点创建时自动取一次」与「打开工作流时用存档值」是并发的两件事: 若存档值先落地、
+ * 异步 fetch 后返回, 就会把存档值覆盖成当前的下一个编号(实测 0016: 存档 00002 被
+ * 覆盖回 00001, 两条流还都变成同一个号)。用节点上的代际序号做闸门 —— configure
+ * 写存档值时递增它, 令在途的那次自动刷新作废(与 load_audio.js 同一套)。
+ *
  * @param {LGraphNode} node 节点
  * @param {boolean} notify 是否弹提示(手动点刷新时为真)
- * @returns {Promise<number>} 重算后的编号; 失败时返回 -1
+ * @returns {Promise<number>} 重算后的编号; 失败/作废时返回 -1
  */
 async function refreshSequence(node, notify) {
+  const token = (node._fallingtsSeqToken || 0) + 1;
+  node._fallingtsSeqToken = token;
   try {
     const url = ROUTE + "/next_sequence?workflow_name=" + encodeURIComponent(currentWorkflowName());
     const r = await fetch(url);
@@ -106,6 +120,7 @@ async function refreshSequence(node, notify) {
       if (notify) app.extensionManager.toast.add({ severity: "error", summary: "刷新序列号失败", life: 3000 });
       return -1;
     }
+    if (node._fallingtsSeqToken !== token) return -1;
     setSequence(node, j.sequence);
     if (notify) {
       app.extensionManager.toast.add({ severity: "info", summary: "序列号已刷新: " + sequenceText(j.sequence), life: 3000 });
@@ -118,128 +133,6 @@ async function refreshSequence(node, notify) {
   }
 }
 
-/**
- * 给 image 控件补回前端需要的 asset spec —— 只为「缩略图」, 不为了上传。
- *
- * 1.52.7 的 WidgetSelect 用 useWidgetSelectItems() 给每条候选算缩略图:
- *   preview_url = getMediaUrl(name, "input", assetKind)
- * 而 getMediaUrl() 第一行就是
- *   if (!["image","video","audio"].includes(kind)) return "";
- * assetKind 又**只**从 widget.spec 推导(getAssetKind: 读 image_upload /
- * animated_image_upload / video_upload / audio_upload / mesh_upload 五个开关)。
- * 所以 spec 里一旦没有 image_upload, assetKind = "unknown", 下拉里 13 条候选
- * 全部拿到空 preview_url —— 表现为「子目录里的图片资源全都没有缩略图/预览」。
- *
- * 【副作用】补回 image_upload 同时也会把下拉顶部的
- * 「上传」入口带回来(FormDropdownMenuFilter 里由 allowUpload
- * 驱动的 isUploadButtonEnabled)。这是可接受的 —— 原来
- * 手流程就应该能上传,。
- *
- * 为什么仍从 type=input 取图: 本工作区 ComfyUI\\input 与 ComfyUI\\output 是
- * 同一物理目录(media\\<项目>)的两条软链, type=input 同样能读到, 且名字不带
- * " [output]" 标注, 与 widget.value 严格一致。
- *
- * @param {LGraphNode} node 节点
- * @returns {void}
- */
-function ensureImageAssetSpec(node) {
-  const widget = node.widgets?.find((w) => w.name === "image");
-  if (!widget || widget._fallingtsAssetSpec) return;
-  widget._fallingtsAssetSpec = true;
-  widget.spec = { ...(widget.spec || {}), image_upload: true, image_folder: "input" };
-}
-
-/**
- * 由 image 控件当前值算出图片 URL。
- *
- * 用 /view?filename=..&type=input 而不是 /view?type=output: 本工作区 ComfyUI\\input 与
- * ComfyUI\\output 是同一物理目录(media\\<项目>)的两条软链, 两者都能取到, 但 type=input
- * 下的 filename 就是 widget.value 原文(不带 " [output]" 标注), 不必再做字符串修补。
- *
- * @param {string} value image 控件的值(相对 output/input 的路径)
- * @returns {string} 图片 URL; 取不到时返回空串
- */
-function imageUrlFor(value) {
-  const v = String(value ?? "").trim();
-  if (!v) return "";
-  return `/view?filename=${encodeURIComponent(v)}&type=input`;
-}
-
-/**
- * 更新节点下方预览图的 src —— 全文件唯一的写 src 入口。
- *
- * 只看 widget.value, 不看「上次执行结果」, 因此换下拉值即刻刷新, 不会与 combo 脱节。
- * src 相同就整段跳过, 避免重复赋值导致图片重新解码闪一下。
- *
- * @param {LGraphNode} node 节点
- * @returns {void}
- */
-function updateImagePreview(node) {
-  const imgEl = node?._fallingtsPreviewImg;
-  if (!imgEl) return;
-  const widget = node.widgets?.find((w) => w.name === "image");
-  const src = imageUrlFor(widget?.value);
-  if (node._fallingtsPreviewSrc === src) return;
-  node._fallingtsPreviewSrc = src;
-  imgEl.dataset.src = src;
-  imgEl.dataset.fallback = "0";
-  // input 取不到时(某些部署 input/output 不同目录)退回 output —— 同一张图只要有一边通就行
-  imgEl.onerror = () => {
-    if (imgEl.dataset.fallback === "1") return;
-    imgEl.dataset.fallback = "1";
-    imgEl.src = "/view?filename=" + encodeURIComponent(String(widget?.value ?? "").trim()) + "&type=output";
-  };
-  imgEl.src = src;
-  node.setDirtyCanvas?.(true, false);
-}
-
-/**
- * 在节点下方挂一个 <img> 预览, 并接上「值变了就刷新」的钩子。
- *
- * - 初次打开工作流(onNodeCreated/onConfigure)立刻 updateImagePreview 一次;
- * - 之后 wrap widget.callback, 下拉里选中别的图、序列号刷新带回来的值、
- *   以及 keepStoredImage 的回正, 全都会走到它 ⇒ 任何改值路径都不会漏。
- *
- * @param {LGraphNode} node 节点
- * @returns {void}
- */
-function armImagePreview(node) {
-  if (node._fallingtsPreviewImg) return;
-
-  const root = document.createElement("div");
-  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;";
-
-  const imgEl = document.createElement("img");
-  imgEl.style.cssText =
-    "display:block;width:100%;max-height:320px;object-fit:contain;background:#111;border-radius:6px;";
-  imgEl.alt = "";
-  root.appendChild(imgEl);
-
-  const widget = node.addDOMWidget("image_preview", "image", root, {
-    serialize: false,
-    hideOnZoom: false,
-    getValue: () => "",
-    setValue: () => {},
-  });
-  widget.computeSize = (width) => [width, 0];
-  widget.element = root;
-  node._fallingtsPreviewWidget = widget;
-  node._fallingtsPreviewImg = imgEl;
-
-  const imageWidget = node.widgets?.find((w) => w.name === "image");
-  if (imageWidget && !imageWidget._fallingtsPreviewHooked) {
-    imageWidget._fallingtsPreviewHooked = true;
-    const orig = imageWidget.callback;
-    imageWidget.callback = function (value) {
-      updateImagePreview(node);
-      return orig?.apply(this, arguments);
-    };
-  }
-
-  // 版本戳: 改本文件后浏览器必须 Ctrl+Shift+R, 节点上会显示这串, 便于确认新代码已生效
-  widget.element.dataset.fallingtsPreview = PREVIEW_BUILD;
-  updateImagePreview(node);
-}
 /**
  * 取工作流里存的 image 值(configure 时传入的节点数据)。
  *
@@ -264,6 +157,21 @@ function storedImageValue(node, info) {
 /**
  * 短守护: 把被 onFirstLoad 换掉的 image 值恢复成工作流里存的那个。
  *
+ * 上游 useRemoteWidget 的 onFirstLoad 是**无条件**的: 它拿到远端候选后直接把
+ * widget.value 设成候选首项(候选按 mtime 倒序)。而它的候选缓存以
+ * (route, query_params) 为键**全局共享**($b 这个 Map) —— 同一个工作流里的第二个加载节点
+ * 一创建就看到"缓存已初始化", 于是立刻触发自己的 onFirstLoad, 把自己存档里的图
+ * 换成候选首项。实测 0016_建模拆图: 节点 1 存 0016_.../00001_陈落_左边.png、
+ * 节点 2 存 0012_.../00001_陈落出门装.png, 打开工作流后两个节点都加载了节点 1 那张,
+ * 相当于静默改图。这里在 configure 之后开一个短守护窗口, 把这类**非用户操作**的自动改值
+ * 拨回存档值。
+ *
+ * 「非用户操作」靠一次性的 pointerdown 判定: 只要用户碰过这个节点的 DOM、在画布上点过
+ * 它的 widget、或点过属于它的下拉弹窗(弹窗是 body 下的 portal, 靠 armedComboNode()
+ * 认领), 就把 touched 置真, 此后**再也不回拨** —— 用户自己选的值(哪怕正好是候选首项)
+ * 因此不可能被误判。这与早期版本"值不在候选列表里才回正"的区别在于: onFirstLoad
+ * 换成的候选首项**本身就在候选列表里**, 那条判据抓不到它。
+ *
  * @param {LGraphNode} node 节点
  * @param {object} info configure 数据
  * @returns {void}
@@ -278,42 +186,40 @@ function keepStoredImage(node, info) {
   // configure 与 onFirstLoad 的先后不确定, 先立刻回正一次
   if (widget.value !== stored) widget.value = stored;
 
+  let touched = false;
+  const markTouched = (event) => {
+    if (touched) return;
+    if (app.canvas?.node_widget?.[0] === node) {
+      touched = true;
+      return;
+    }
+    const target = event?.target;
+    if (target?.closest?.("[data-node-id]")?.dataset?.nodeId === String(node.id)) {
+      touched = true;
+      return;
+    }
+    // 下拉弹窗挂在 body 下, 不在节点 DOM 里; 只有"正打开着本节点下拉"才算用户操作
+    if (target?.closest?.('[data-pc-name="popover"]') && armedComboNode() === node) {
+      touched = true;
+    }
+  };
+  document.addEventListener("pointerdown", markTouched, true);
+
   const deadline = Date.now() + GUARD_MS;
   const timer = setInterval(() => {
     if (node.removed || Date.now() > deadline) {
       clearInterval(timer);
+      document.removeEventListener("pointerdown", markTouched, true);
       return;
     }
-    const values = widget.options?.values;
-    if (!Array.isArray(values) || !values.length) return;
-
-    // 只回正一种情形: 当前值**不在候选列表里** —— 那是前端占位默认值
-    // (Loading.../空串) 被写进 widget 的结果, 不是用户选的。下拉里选的值
-    // 必然在列表中, 因此不可能被误判。
-    //
-    // 实测 2026-10-09(两次定位):
-    //  1) 早期版本这里是无条件回拨, 把守护窗口(4s)内用户选的值也拨回存档值;
-    //  2) 改成"值 === 候选首项就回正" 后仍然脏 —— 候选只有两项时(存档值是
-    //     「灰度遮罩_纯白.png」, 候选首项恰好是用户想选的
-    //     「0011_万物建模/00001_陈落.png」), 每 150ms 被当成自动改值拨回,
-    //     并 clearInterval 收手 => 提交给后端的仍是灰度遮罩
-    //     (见 /history prompt[2]["2"].inputs.image), 拆解结果整片纯白。
-    if (!values.includes(widget.value)) {
-      widget.value = stored;
-      clearInterval(timer);
-    }
-    // 候选还没拉到时**不做任何回正** —— 之前这里有一句无条件回拨
-    // 「if (widget.value !== stored) widget.value = stored」, 把守护窗口(4s)内
-    // 用户自己在下拉里选的值也一并拨回存档值。实测 2026-10-09: 打开 0016_建模拆图 后
-    // 立刻选 0011_万物建模/00001_陈落.png, 提交给后端的却是存档里的
-    // 灰度遮罩_纯白.png(见 /history 里 prompt[2]["2"].inputs.image),
-    // 于是拆解结果整片纯白。remote 候选是异步拉的, 窗口内经常还没到位,
-    // 「值被占位默认值(Loading...)顶掉」并不需要本扩展兜底 —— 提交前还有一次。
+    // 用户还没碰过这个节点 ⇒ 此刻值变了只可能是 onFirstLoad 那一次自动改值, 拨回去
+    if (!touched && widget.value !== stored) widget.value = stored;
   }, POLL_MS);
 
   const onRemoved = node.onRemoved;
   node.onRemoved = function () {
     clearInterval(timer);
+    document.removeEventListener("pointerdown", markTouched, true);
     return onRemoved?.apply(this, arguments);
   };
 }
@@ -331,13 +237,21 @@ app.registerExtension({
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_CLASS) return;
 
+    // 注册时抄一份静态候选 —— 远端 combo 的 options.values 会被换成访问器, 候选没进缓存
+    // 之前它返回的是字符串默认值, Vue 侧对象展开会把那个字符串拍进控件描述符(见
+    // load_combo_refresh.js 的 repairRemoteValues)。这里抄下来当兜底。
+    const staticValues = nodeData.input?.required?.image?.[1]?.options;
+
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
 
-      ensureImageAssetSpec(node);
-      armImagePreview(node);
+      // upload 按钮自己声明了 options.serialize:false, 但 1.52.7 存盘只看 widget.serialize
+      // (options 那份没拷上来), 它会照样占掉 widgets_values 的一格。配合上面的「钉到最尾」,
+      // 这里再补一刀: 它排在尾部且不序列化 ⇒ 存盘长度与旧存档(6 格)一致, 恢复也不移位。
+      const uploadWidget = node.widgets?.find((w) => w.name === "upload");
+      if (uploadWidget) uploadWidget.serialize = false;
 
       // ── 序列号刷新按钮: 插到「序列号」控件之后 ──
       const seqWidget = node.widgets?.find((w) => w.name === "sequence");
@@ -354,13 +268,29 @@ app.registerExtension({
       // 更晚挂上 ⇒ 分两拍把「序列号 + 刷新序列号」挪到这些控件之后(节点最底部的一组)。
       // ⚠️ 序列号绝不能提到 image 之前: V1 节点按 widgets_values 的**下标**恢复旧工作流,
       // 旧数组是 [name, image], 提前会让 image 值整体错位。
+      // ⚠️ 控件顺序 = 存档下标, 不能随意动:
+      // 1.52.7 的 Comfy.Workflow.NamedValuesRestore 默认 **false**, configure 走
+      //    「按位置」恢复 —— 它用一个只数**可序列化**控件的计数器去读 widgets_values,
+      //    而存盘时写的是控件的**数组下标**(非序列化项留空洞)。两者只有在"空洞都在
+      //    尾巴上"时才一致。前端 Comfy.UploadImage 会依 image_upload 自动补一个 upload
+      //    按钮, 若让它插在中间, 下标就会整体错位一格(「序列号」读到 refresh 那一格)。
+      //    因此这里把 upload 钉到控件表**最尾**, 并让「序列号 + 刷新序列号」排在
+      //    refresh 之后 —— 恢复出来的下标与加 image_upload 之前的旧存档完全一致。
       const reflow = () => {
         const widgets = node.widgets;
         if (!widgets) return;
+        const upload = widgets.find((w) => w.name === "upload");
+        if (upload) {
+          const at = widgets.indexOf(upload);
+          if (at >= 0 && at !== widgets.length - 1) {
+            widgets.splice(at, 1);
+            widgets.push(upload);
+          }
+        }
         const seq = widgets.find((w) => w.name === "sequence");
         const btn = widgets.find((w) => w.name === "刷新序列号");
         if (!seq || !btn) return;
-        const tail = widgets.find((w) => w.name === "upload") || widgets.find((w) => w.name === "refresh");
+        const tail = widgets.find((w) => w.name === "refresh");
         for (const w of [seq, btn]) {
           const at = widgets.indexOf(w);
           if (at >= 0) widgets.splice(at, 1);
@@ -368,12 +298,18 @@ app.registerExtension({
         const pos = tail ? widgets.indexOf(tail) : -1;
         if (pos < 0) widgets.push(seq, btn);
         else widgets.splice(pos + 1, 0, seq, btn);
+        // 再钉一次: 上面插入可能又把 upload 挤到中间
+        const again = widgets.indexOf(upload);
+        if (again >= 0 && again !== widgets.length - 1) {
+          widgets.splice(again, 1);
+          widgets.push(upload);
+        }
       };
       reflow();
       setTimeout(reflow, 300);
 
       // ── 下拉候选: 点开/点节点即自动刷新(见 load_combo_refresh.js) ──
-      armComboRefresh(node, "image");
+      armComboRefresh(node, "image", staticValues);
 
       // ── 下拉弹窗: 抹掉 " [output]" 标注 + 「排序方式」左侧的刷新按钮(见 load_combo_menu.js) ──
       armComboMenu(node, "image");
@@ -386,13 +322,13 @@ app.registerExtension({
     nodeType.prototype.onConfigure = function (info) {
       const result = onConfigure?.apply(this, arguments);
       const stored = info?.widgets_values_named?.sequence;
+      // 存档值优先: 先递增代际让 onNodeCreated 那次在途的自动刷新作废, 再写存档值
+      this._fallingtsSeqToken = (this._fallingtsSeqToken || 0) + 1;
       if (sequenceUnset(stored)) {
         refreshSequence(this, false);
       } else {
         setSequence(this, stored);
       }
-      armImagePreview(this);
-      updateImagePreview(this);
       keepStoredImage(this, info);
       return result;
     };
