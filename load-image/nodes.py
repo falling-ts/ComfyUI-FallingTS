@@ -28,6 +28,15 @@ r"""FallingTS 加载图像 (来自输出)。
    写 " [output]"/" [input]" 标注的值依然按标注走(annotated_filepath 优先看后缀)。
 本工作区 input/ 与 output/ 是同一物理目录的软链, 故 type=input 的预览图也读得到。
 
+⚠️ INPUT_TYPES 里**故意不声明** image_upload / image_folder(2026-10-07 排查后移除):
+声明它们会让前端 WidgetSelect 走 image 资产控件分支(1.52.7 useWidgetSelectItems),
+缩略图一律由 getMediaUrl(value, "input", image) 算, 与本模块的候选来源分道扬镳;
+同弹窗里 output 资产项又硬编码 name 带 " [output]"、preview 用 type=output ——
+而本机 input/output 是同一物理目录的软链, 同一张图会因命中哪条流而显示成两个名字,
+combo 按钮上的文字与节点实际值对不上(实测 0016: 按钮印 0010_灰度遮罩/…, 值是
+0016_建模拆图/00001_陈落_左边.png)。不声明 ⇒ 标签 = 值 = 预览, 三者一致。
+副作用: 下拉里不再有"上传"分类(要上传走遮罩编辑器的 /upload/image)。
+
 3. **下拉候选同时在 INPUT_TYPES 里给一份「现扫」的 options**(每次 /object_info 都重新扫
    目录, 故页面加载/新建节点时拿到的就已经是含子目录的完整列表) —— 只靠 remote 的话,
    节点刚建好时 widget.options.values 还是空的, 用户"第一次点开下拉"会看到空列表,
@@ -177,8 +186,12 @@ class FallingTSLoadImageNode:
                 "image": (
                     "COMBO",
                     {
-                        "image_upload": True,
-                        "image_folder": "output",
+                        # ⚠️ 故意**不**声明 image_upload / image_folder:
+                        # 一旦声明, 前端 WidgetSelect 会把这个下拉当 image 资产控件渲染,
+                        # 缩略图改走 getMediaUrl(value, "input", "image"), 与这里的候选来源
+                        # 分道扬镳 —— 本机 input/output 是同一物理目录的软链, 同一张图会因
+                        # 命中哪条流而显示成两个名字, 标签与预览对不上(2026-10-07 排查结论)。
+                        # 不声明 ⇒ 标签 = 值 = 预览, 三者一致。
                         # 现扫一份候选: 前端页面加载 / 新建节点时即为完整列表(含子目录),
                         # 不必等 remote 拉取、也不必先点刷新按钮(见模块 docstring 第 3 条)
                         "options": _list_relative(folder_paths.get_output_directory()),

@@ -77,19 +77,35 @@ function buttonLabel(button) {
  * widget.value = item.name, 而资产项的 name 带标注。序列化(保存工作流)与提交
  * (graphToPrompt)读的都是 widget.value, 因此装在这里两边都干净。
  *
+ * 2026-10-09: 访问器改成转发到 widget._state.value(见函数内注释) —— 只做剥标注,
+ * 不再自己存值, 否则 combo 按钮显示的路径与实际提交/预览的路径会永久分家。
+ *
  * @param {object} widget combo widget
  * @returns {void}
  */
 function cleanWidgetValue(widget) {
   if (widget._fallingtsCleanValue) return;
   widget._fallingtsCleanValue = true;
-  let raw = stripTag(widget.value);
+
+  // ⚠️ 访问器必须转发到 widget._state.value(2026-10-09 修):
+  // 1.52.7 里 combo 的显示文本由 Vue 组件从 widget._state.value 读
+  // (safeWidgetMapper 的 createWidgetUpdateHandler 写 _state, 再经 pinia 的
+  // widgetValue store 驱动重渲染), 与这个访问器毫无关系。早期版本用闭包 raw
+  // 存值: widget.value 写进去后, 提交的确实是新值(graphToPrompt 读
+  // widget.value), 但 combo 按钮上的文字纹丝不动 —— 用户看到
+  // 0010_灰度遮罩/… 实际加载的却是 0016_建模拆图/…; 反过来改 _state.value
+  // 又会与 raw 分家, 两边永久不一致。正确做法是让访问器只做「剥标注」的转发:
+  // 读 _state.value, 写 _state.value。
+  const initial = stripTag(widget.value);
+  if (widget._state) widget._state.value = initial;
   Object.defineProperty(widget, "value", {
     configurable: true,
     enumerable: true,
-    get: () => raw,
+    get: () => (widget._state ? stripTag(widget._state.value) : initial),
     set: (value) => {
-      raw = stripTag(value);
+      const clean = stripTag(value);
+      if (widget._state) widget._state.value = clean;
+      widget.triggerDraw?.();
     },
   });
 }
