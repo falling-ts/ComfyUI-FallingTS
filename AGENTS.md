@@ -198,12 +198,13 @@ ComfyUI-FallingTS/
 - **`setup()` 不得 POST `/clear` 之类的清状态端点** —— 那会让刷新丢掉上一次的结果;
 - **媒体预览一律用「拉模式」, 不依赖 `UI.Preview*` 事件** —— 原生 `UI.PreviewImage` / `UI.PreviewVideo` / `UI.PreviewAudio` 是**一次性 WebSocket 事件**, 页面刷新后不会重发, 依赖它的节点预览区就空了。四个预览节点因此都: ① 后端提供 `GET /xxx-url/{id}` 返回 `/view` URL(复用 execute 时的缓存, 不重新编码); ② 前端在 `onConfigure` 拉 URL 填到节点上 —— **优先填 ComfyUI 渲染的原生 `<img>`/`<video>`, 找不到才显示自备的备用元素**(备用默认 `display:none`, 避免出现两个播放器):
   - `preview-image` → `GET /preview-image/image-url/{id}?workflow_id=<app.rootGraph.id>` → `restoreImages()`
-  - `preview-video` → `GET /preview-video/video-url/{id}` → `restoreVideo()`
-  - `preview-audio` → `GET /preview-audio/audio-url/{id}` → `refreshPlayer()`
+  - `preview-video` → `GET /preview-video/video-url/{id}?workflow_id=<app.rootGraph.id>` → `restoreVideo()`
+  - `preview-audio` → `GET /preview-audio/audio-url/{id}?workflow_id=<app.rootGraph.id>` → `refreshPlayer()`
   - `audio-trim` → `GET /audio-trim/audio-url/{id}` → `refreshWaveform()` 内一并设置
 - 在 `onConfigure`(工作流加载完成)末尾调用"读回重建":
   - `audio-trim` → `refreshWaveform()`:GET `/audio-trim/waveform/{id}` 一次拿回 peaks + segments;
   - `load-video` → `restoreFrames()`:GET `/fallingts_load_video/state/{id}` 拿帧号, 再逐个 POST `/fallingts_load_video/frame/{id}`(`append=false` + `nodePayload()` 的 video/name/sequence)取 PNG 转 blob URL —— 带 video 是让后端在缓存为空时(重启后)现场拆帧, 帧列表才不会因内存缓存丢失而空掉;
+- ⚠️ **返回预览 URL 前必须确认那个 temp 文件还在, 不在就用缓存媒体现场重编码一份再返回** —— temp 目录随时会被 ComfyUI 清理, 而纯内存缓存里的文件名不会跟着消失, 原样返给前端就是 404(实测表现: 节点上「视频加载失败 / Invalid URL」、音频播放器点了没声)。`preview-image` 用 `_temp_file_exists` 过滤死条目; `preview-video` 用 `_ensure_temp_preview` 现场重编码兜底(编不出再退回源文件的 `/view` URL); `preview-audio` 的 temp 名按 (工作流, 节点) 哈希生成, 存在就复用、不在才重编码。**绝不把已删除的文件名返给前端**。
 - 界面态同步要**双向且含空值**: `Array.isArray(data.segments)` 为真就写回(即便是空数组), 否则删光段后刷新会残留旧列表。
 - ⚠️ **每一个 `app.extensionManager.toast.add({...})` 都必须显式带 `life: 3000`** —— PrimeVue 的 `ToastMessage` 只在 `message.life` 为真时才起定时器(`vendor-primevue-*.js`:`this.message.life&&(this.closeTimeout=setTimeout(...))`), **没有默认值**;漏写 `life` 的 toast 会永久挂在右上角不消失(2026-10-01 实测: 本插件原有 29 处漏写, 全是「保存/截帧/完成/继续」的成功与失败提示)。插件自绘的右下角 toast(`task_notify.js`)同样按 3000ms 收口。
 
@@ -222,7 +223,8 @@ ComfyUI-FallingTS/
 - `GET /preview-image/image-url/{id}` 必须带 `?workflow_id=`;`POST /preview-image/save/{id}` 必须带 body 字段 `workflow_id`;
 - 读缓存一律走 `_cache_get(cache, node_id, workflow_id)`:优先带作用域的键, 再退回纯节点 id —— 退回是为了兼容「那次执行没带工作流标识」的写入(无头 API 提交时 `extra_pnginfo` 为空), 否则页面刷新后这类预览再也读不回来;
 - `image-url` 返回前用 `_temp_file_exists()` 过滤掉指向已被清理的 temp 文件的死条目(纯内存缓存 + 会被清理的 temp 目录 ⇒ 死条目必然出现, 不过滤就会在节点上挂一张加载失败的图);
-- ⚠️ **`preview-video` / `preview-audio` / `audio-trim` 的 `_last_output` 目前仍只按节点 id 索引**, 有同样的跨工作流串图风险(它们的备用播放器会在执行后被收起, 所以可见症状限于"跑之前显示别的工作流的媒体")。要修就照本节同一套做法。
+- `preview-video` / `preview-audio` 2026-10-08 起同口径: 缓存键也是 `<工作流根 id>::<节点 id>`, `video-url` / `audio-url` 带 `?workflow_id=`, `save` 路由 body 带 `workflow_id`;
+- ⚠️ **`audio-trim` 的 `_last_output` 仍只按节点 id 索引**, 有同样的跨工作流串音风险。要修就照本节同一套做法。
 
 #### 预览区「两个图片 / 两个播放器」的通用根因
 
@@ -230,7 +232,7 @@ ComfyUI-FallingTS/
 
 **所以每个预览节点都必须在执行结束后再判定一次**: `api.addEventListener("executed" / "execution_success")` 后按 600ms / 2.5s 两拍重跑 `restoreXxx()`(第二拍给 Vue 异步挂载留余量)。
 
-- `preview-video`(挂 `executed` / `progress`)、`preview-audio`(同)已有;
+- `preview-video` / `preview-audio` 2026-10-08 起都只挂 `executed` / `execution_success`(此前挂的 `progress` 与 `preview-audio` 的 5s `setInterval` 定时轮询都已移除);
 - `preview-image` 2026-09-24 补上, 只挂 `executed` / `execution_success` —— **不挂 `progress`**: progress 每个采样步都发, 会把"跑完再判定"变成高频轮询(每个预览节点一次 HTTP)。
 
 #### 为什么必须有 `_reset_generation`
