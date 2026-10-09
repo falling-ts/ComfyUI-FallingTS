@@ -148,6 +148,88 @@ function ensureImageAssetSpec(node) {
 }
 
 /**
+ * 由 image 控件当前值算出图片 URL。
+ *
+ * 用 /view?filename=..&type=input 而不是 /view?type=output: 本工作区 ComfyUI\\input 与
+ * ComfyUI\\output 是同一物理目录(media\\<项目>)的两条软链, 两者都能取到, 但 type=input
+ * 下的 filename 就是 widget.value 原文(不带 " [output]" 标注), 不必再做字符串修补。
+ *
+ * @param {string} value image 控件的值(相对 output/input 的路径)
+ * @returns {string} 图片 URL; 取不到时返回空串
+ */
+function imageUrlFor(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return "";
+  return `/view?filename=${encodeURIComponent(v)}&type=input`;
+}
+
+/**
+ * 更新节点下方预览图的 src —— 全文件唯一的写 src 入口。
+ *
+ * 只看 widget.value, 不看「上次执行结果」, 因此换下拉值即刻刷新, 不会与 combo 脱节。
+ * src 相同就整段跳过, 避免重复赋值导致图片重新解码闪一下。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {void}
+ */
+function updateImagePreview(node) {
+  const imgEl = node?._fallingtsPreviewImg;
+  if (!imgEl) return;
+  const widget = node.widgets?.find((w) => w.name === "image");
+  const src = imageUrlFor(widget?.value);
+  if (node._fallingtsPreviewSrc === src) return;
+  node._fallingtsPreviewSrc = src;
+  imgEl.dataset.src = src;
+  imgEl.src = src;
+  node.setDirtyCanvas?.(true, false);
+}
+
+/**
+ * 在节点下方挂一个 <img> 预览, 并接上「值变了就刷新」的钩子。
+ *
+ * - 初次打开工作流(onNodeCreated/onConfigure)立刻 updateImagePreview 一次;
+ * - 之后 wrap widget.callback, 下拉里选中别的图、序列号刷新带回来的值、
+ *   以及 keepStoredImage 的回正, 全都会走到它 ⇒ 任何改值路径都不会漏。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {void}
+ */
+function armImagePreview(node) {
+  if (node._fallingtsPreviewImg) return;
+
+  const root = document.createElement("div");
+  root.style.cssText = "width:100%;box-sizing:border-box;padding:0 4px;";
+
+  const imgEl = document.createElement("img");
+  imgEl.style.cssText =
+    "display:block;width:100%;max-height:320px;object-fit:contain;background:#111;border-radius:6px;";
+  imgEl.alt = "";
+  root.appendChild(imgEl);
+
+  const widget = node.addDOMWidget("image_preview", "image", root, {
+    serialize: false,
+    hideOnZoom: false,
+    getValue: () => "",
+    setValue: () => {},
+  });
+  widget.computeSize = (width) => [width, 0];
+  widget.element = root;
+  node._fallingtsPreviewWidget = widget;
+  node._fallingtsPreviewImg = imgEl;
+
+  const imageWidget = node.widgets?.find((w) => w.name === "image");
+  if (imageWidget && !imageWidget._fallingtsPreviewHooked) {
+    imageWidget._fallingtsPreviewHooked = true;
+    const orig = imageWidget.callback;
+    imageWidget.callback = function (value) {
+      updateImagePreview(node);
+      return orig?.apply(this, arguments);
+    };
+  }
+
+  updateImagePreview(node);
+}
+/**
  * 取工作流里存的 image 值(configure 时传入的节点数据)。
  *
  * 优先 widgets_values_named(按 widget 名索引, 不受 widget 顺序变化影响),
@@ -244,6 +326,7 @@ app.registerExtension({
       const node = this;
 
       ensureImageAssetSpec(node);
+      armImagePreview(node);
 
       // ── 序列号刷新按钮: 插到「序列号」控件之后 ──
       const seqWidget = node.widgets?.find((w) => w.name === "sequence");
@@ -297,6 +380,8 @@ app.registerExtension({
       } else {
         setSequence(this, stored);
       }
+      armImagePreview(this);
+      updateImagePreview(this);
       keepStoredImage(this, info);
       return result;
     };
