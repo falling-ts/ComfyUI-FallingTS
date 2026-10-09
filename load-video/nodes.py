@@ -282,7 +282,7 @@ def _decode_frames(loaded) -> dict:
             "fps": float(components.frame_rate) if components.frame_rate else 0.0,
         }
     except Exception as e:
-        logging.warning("[FallingTS] 视频拆帧失败: %s", e)
+        logging.warning("[FallingTS] 视频截帧失败: %s", e)
         return {"images": None, "audio": None, "fps": 0.0}
 
 
@@ -393,7 +393,7 @@ def _build_cache_from_file(nid: str, video_value, name: str = "", sequence: str 
         return None, f"打开视频失败: {e}"
     parts = _decode_frames(loaded)
     if parts["images"] is None:
-        return None, "视频拆帧失败(帧集合为空)"
+        return None, "视频截帧失败(帧集合为空)"
 
     try:
         sequence_value = int(str(sequence).strip() or 0)

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""拆解类工作流的生成: 0050_视频拆帧 / 0051_视频拆音 / 0070_截取声音 + 0040..0044 尾部清空。
+"""拆解类工作流的生成: 0050_视频截帧 / 0051_视频拆音 / 0070_截取声音 + 0040..0044 尾部清空。
 
 四件事(幂等, 可反复跑):
 
-1. 0050_视频拆帧: 用 FallingTSLoadVideo(加载视频) 取代核心 GetVideoComponents,
+1. 0050_视频截帧: 用 FallingTSLoadVideo(加载视频) 取代核心 GetVideoComponents,
    并照搬「0044_参考视频」PreviewVideo 之后的三个图片保存节点(首帧/关键帧/尾帧) ——
    2026-10-05 起统一用 **AutoSaveImage(图片自动保存)**: 执行即落盘, 没有「保存」按钮。
 2. 0051_视频拆音: 加载视频的 audio 输出 → FallingTSAudioTrim(波形截段) →
@@ -18,7 +18,7 @@
 **这三个工作流不要 md 数据表节点**(2026-10-02): 源文件由加载节点自身的下拉给出(节点本身
 就是"起始的加载"), 文件名前缀 = 加载节点的 prefix 输出「序列号_名称」(见
 output_subdir.sequence_prefix), 一条线分发给本图所有预览/保存节点 —— 前缀不再来自 MD 表的 ID 列。
-故成品目录退回工作流名(0050_视频拆帧/ 等), 与「没有 md 表就退回工作流名」的既有口径一致。
+故成品目录退回工作流名(0050_视频截帧/ 等), 与「没有 md 表就退回工作流名」的既有口径一致。
 
 5. 0040..0044: 删掉 PreviewVideo 之后的截帧链(首帧/关键帧/尾帧保存)与整条截音链
    (截段 + 三个音频保存) + 分发文件名前缀的 Reroute; 预览视频节点只留 video 输出,
@@ -384,7 +384,7 @@ def audio_trim() -> dict:
 
 
 def build_0050() -> dict:
-    wf = load("0050_视频拆帧")
+    wf = load("0050_视频截帧")
     nodes = [
         place(load_video_node((0, 0), (930, 1300), 0, 3), 1, (0, 0), (930, 1300), order=0),
         place(save_image("_首帧", "预览保存-首帧"), 2, (1010, 0), (640, 760), order=1),
@@ -907,7 +907,7 @@ def build_0070() -> dict:
 
 def main() -> None:
     results = {
-        "0050_视频拆帧": build_0050(),
+        "0050_视频截帧": build_0050(),
         "0051_视频拆音": build_0051(),
         "0070_截取声音": build_0070(),
         "0035_场景截帧": fix_0035(),
@@ -918,7 +918,7 @@ def main() -> None:
     problems = []
     for name, wf in results.items():
         problems += integrity(name, wf)
-        if name in ("0035_场景截帧", "0050_视频拆帧", "0051_视频拆音", "0070_截取声音"):
+        if name in ("0035_场景截帧", "0050_视频截帧", "0051_视频拆音", "0070_截取声音"):
             problems += check(name, wf)
         save(name, wf)
         types = {}

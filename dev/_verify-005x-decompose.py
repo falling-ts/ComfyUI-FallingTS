@@ -216,7 +216,7 @@ def check_auto_save_end_to_end():
     if made_wav:
         make_probe_wav(wav)
     _Image.new("RGB", (8, 8), (10, 20, 30)).save(png)
-    target = ROOT / "media" / "七纹刻印" / "0050_视频拆帧" / "00007_自动保存探针_首帧.png"
+    target = ROOT / "media" / "七纹刻印" / "0050_视频截帧" / "00007_自动保存探针_首帧.png"
     target.unlink(missing_ok=True)
     try:
         prompt = {
@@ -230,7 +230,7 @@ def check_auto_save_end_to_end():
                              "format": "png", "bit_depth": "8-bit", "input_color_space": "sRGB"}},
         }
         res = post("/prompt", {"prompt": prompt, "client_id": "verify-005x",
-                               "extra_data": {"extra_pnginfo": {"workflow_name": "0050_视频拆帧"}}})
+                               "extra_data": {"extra_pnginfo": {"workflow_name": "0050_视频截帧"}}})
         pid = res.get("prompt_id")
         check("自动保存: 图提交", bool(pid), res)
         if not pid:
@@ -285,8 +285,8 @@ def main():
         cdp.js(LOADER_JS)
         cdp.js("window.__errs=[];window.addEventListener('error',e=>window.__errs.push(String(e.message)))")
 
-        # ── 0050_视频拆帧 ──────────────────────────────────────────────
-        d = load(cdp, "0050_视频拆帧")
+        # ── 0050_视频截帧 ──────────────────────────────────────────────
+        d = load(cdp, "0050_视频截帧")
         check("0050 节点构成 = 加载视频 + 3 自动保存 + 说明(无数据表)",
               len(nodes_of(d, "FallingTSLoadVideo")) == 1 and len(nodes_of(d, "AutoSaveImage")) == 3
               and not nodes_of(d, "PreviewImageSave")

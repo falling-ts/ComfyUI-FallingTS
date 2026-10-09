@@ -76,7 +76,7 @@ wne = autosave.workflow_name_from_extra
 check(wne(None) == "" and wne({}) == "", "无 extra_pnginfo → 空串")
 check(wne({"workflow_name": "0044_参考视频"}) == "0044_参考视频", "顶层 workflow_name 通道")
 check(
-    wne({"workflow": {"extra": {autosave.WORKFLOW_NAME_EXTRA_KEY: "0050_视频拆帧"}}}) == "0050_视频拆帧",
+    wne({"workflow": {"extra": {autosave.WORKFLOW_NAME_EXTRA_KEY: "0050_视频截帧"}}}) == "0050_视频截帧",
     "workflow.extra 注入通道",
 )
 check(
@@ -85,7 +85,7 @@ check(
     "顶层为空时退回注入通道",
 )
 check(
-    wne({"workflow_name": "0044_参考视频", "workflow": {"extra": {autosave.WORKFLOW_NAME_EXTRA_KEY: "0050_视频拆帧"}}})
+    wne({"workflow_name": "0044_参考视频", "workflow": {"extra": {autosave.WORKFLOW_NAME_EXTRA_KEY: "0050_视频截帧"}}})
     == "0044_参考视频",
     "顶层优先于注入通道",
 )
@@ -139,9 +139,9 @@ check(
 
 # ② 没有 md 表 → 子目录 = 工作流名(经 workflow.extra 注入通道)
 run("00002_书房旋镜视频", "_关键帧", {"1": {"class_type": "EmptyImage", "inputs": {}}},
-    {"workflow": {"extra": {autosave.WORKFLOW_NAME_EXTRA_KEY: "0050_视频拆帧"}}})
+    {"workflow": {"extra": {autosave.WORKFLOW_NAME_EXTRA_KEY: "0050_视频截帧"}}})
 check(
-    "0050_视频拆帧/00002_书房旋镜视频_关键帧.png" in files_under(out_root),
+    "0050_视频截帧/00002_书房旋镜视频_关键帧.png" in files_under(out_root),
     "无 md 表 → 工作流名作子目录(注入通道)",
     ", ".join(files_under(out_root)),
 )
