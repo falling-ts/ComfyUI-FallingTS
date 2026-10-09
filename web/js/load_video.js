@@ -23,6 +23,9 @@ const MAX_FRAMES = 64;
 const ROUTE = "/fallingts_load_video";
 // 编号显示宽度: 与产物目录的 5 位编号口径一致(00001, 00002 …)
 const SEQ_WIDTH = 5;
+// 存档值守护窗口: remote 首次 fetch 通常几百毫秒内完成, 4 秒足够覆盖慢盘/大目录
+const GUARD_MS = 4000;
+const POLL_MS = 150;
 
 /**
  * 取当前工作流的名字, 用于让后端把产物写进 output 下的同名子目录。
@@ -150,6 +153,75 @@ function setSequence(node, value) {
 }
 
 /**
+ * 取工作流里存的视频值(configure 时传入的节点数据)。
+ *
+ * 与「加载音频」的 storedAudioValue 同口径: 优先按 widget 名取, 退回 widgets_values 的
+ * 同下标项。区分"存的就是空串"(0050/0051 那种下拉不选、靠 video_in 的存档)与"没有存档值"。
+ *
+ * @param {LGraphNode} node 节点
+ * @param {object} info configure 数据
+ * @returns {string|null} 存档值; 没有存档值时返回 null
+ */
+function storedVideoValue(node, info) {
+  const named = info?.widgets_values_named;
+  if (named && typeof named.video === "string") return named.video;
+
+  const list = info?.widgets_values;
+  if (!Array.isArray(list)) return null;
+  const index = node.widgets?.findIndex((w) => w.name === "video") ?? -1;
+  const value = index >= 0 ? list[index] : undefined;
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * 短守护: 把被 onFirstLoad 换掉的 video 值恢复成工作流里存的那个。
+ *
+ * ⚠️ 与「加载图像」的区别: 视频下拉的候选**未必**包含存档值所指的文件 —— 0035 存的是
+ * 0031_首帧场景/00001_书房旋镜.mp4, 而候选来自 output 全目录。所以不能照搬
+ * "值不在候选列表里就回正"(那样每次都会被判成要回正), 而是用一次性 pointerdown 判定
+ * "用户碰过这个节点没有": 没碰过 ⇒ 此刻值变了只可能是 onFirstLoad 那一次自动改值, 拨回
+ * 存档值; 碰过 ⇒ 再不回拨, 用户自己选的值不会被误判(与 load_image.js 同一套)。
+ *
+ * @param {LGraphNode} node 节点
+ * @param {object} info configure 数据
+ * @returns {void}
+ */
+function keepStoredVideo(node, info) {
+  const stored = storedVideoValue(node, info);
+  if (stored === null) return;
+
+  const widget = node.widgets?.find((w) => w.name === "video");
+  if (!widget) return;
+  if (node._fallingtsVideoGuarded) return;
+  node._fallingtsVideoGuarded = true;
+
+  // 空串也是有效存档(0050/0051 是"下拉不选、走 video_in"), 必须一并守护 ——
+  // 否则 onFirstLoad 会静默把候选首项填进来, 无头运行就用了错的源视频。
+  if (widget.value !== stored) widget.value = stored;
+
+  let touched = false;
+  const markTouched = () => { touched = true; };
+  document.addEventListener("pointerdown", markTouched, true);
+
+  const deadline = Date.now() + GUARD_MS;
+  const timer = setInterval(() => {
+    if (node.removed || Date.now() > deadline) {
+      clearInterval(timer);
+      document.removeEventListener("pointerdown", markTouched, true);
+      return;
+    }
+    if (!touched && widget.value !== stored) widget.value = stored;
+  }, POLL_MS);
+
+  const onRemoved = node.onRemoved;
+  node.onRemoved = function () {
+    clearInterval(timer);
+    document.removeEventListener("pointerdown", markTouched, true);
+    return onRemoved?.apply(this, arguments);
+  };
+}
+
+/**
  * 从后端重算序列号并写入节点(供 prefix 文件名前缀使用)。
  *
  * @param {LGraphNode} node 节点
@@ -157,6 +229,8 @@ function setSequence(node, value) {
  * @returns {Promise<number>} 重算后的编号; 失败时返回 -1
  */
 async function refreshSequence(node, notify) {
+  const token = (node._fallingtsSeqToken || 0) + 1;
+  node._fallingtsSeqToken = token;
   try {
     const url = ROUTE + "/next_sequence?workflow_name=" + encodeURIComponent(currentWorkflowName());
     const r = await fetch(url);
@@ -165,6 +239,8 @@ async function refreshSequence(node, notify) {
       if (notify) app.extensionManager.toast.add({ severity: "error", summary: "刷新序列号失败", life: 3000 });
       return -1;
     }
+    // 打开工作流时以存档值优先: configure 里递增过代际, 令这次在途的自动刷新作废
+    if (node._fallingtsSeqToken !== token) return -1;
     setSequence(node, j.sequence);
     if (notify) {
       app.extensionManager.toast.add({ severity: "info", summary: "序列号已刷新: " + sequenceText(j.sequence), life: 3000 });
@@ -676,13 +752,17 @@ app.registerExtension({
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_CLASS) return;
 
+    // 注册时抄一份静态候选 —— 远端 combo 的 options.values 在候选进缓存前返回字符串
+    // 默认值, Vue 侧对象展开会把那个字符串拍进控件描述符(见 load_combo_refresh.js)
+    const staticValues = nodeData.input?.required?.video?.[1]?.options;
+
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
 
       // ── 下拉候选: 点开/点节点即自动刷新(见 load_combo_refresh.js) ──
-      armComboRefresh(node, "video");
+      armComboRefresh(node, "video", staticValues);
 
       // ── 下拉弹窗: 抹掉 " [output]" 标注 + 「排序方式」左侧的刷新按钮(见 load_combo_menu.js) ──
       armComboMenu(node, "video");
@@ -835,6 +915,8 @@ app.registerExtension({
         if (!node._fallingtsFrameList) return;
         // 存档值优先: 工作流里存过序列号就沿用(用户可能手动改过), 只有空值才自动取
         const stored = info?.widgets_values_named?.sequence;
+        // 存档值优先: 先递增代际让 onNodeCreated 那次在途的自动刷新作废, 再写存档值
+        node._fallingtsSeqToken = (node._fallingtsSeqToken || 0) + 1;
         if (sequenceUnset(stored)) {
           refreshSequence(node, false);
         } else {
@@ -860,6 +942,7 @@ app.registerExtension({
         // 后端是唯一事实来源: 从它读回截帧列表与视频预览并重建前端(刷新不丢)
         restoreFrames(node, node._fallingtsFrameList);
         restoreVideo(node);
+        keepStoredVideo(node, info);
       };
     };
   },

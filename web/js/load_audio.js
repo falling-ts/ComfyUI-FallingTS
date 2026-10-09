@@ -147,6 +147,12 @@ function storedAudioValue(node, info) {
 /**
  * 短守护: 把被 onFirstLoad 换掉的 audio 值恢复成工作流里存的那个。
  *
+ * 与「加载图像」「加载视频」同一套: 用一次性 pointerdown 判定"用户碰过这个节点没有"。
+ * 早期版本用"值 === 候选首项 就回正"的启发式 —— 那个判据会误伤用户: 存档值不是候选首项时,
+ * 用户在下拉里选的恰好是首项, 就会被当成自动改值拨回存档值(加载图像那边实测踩过,
+ * 见 load_image.js 的注释), 而且它首次纠正后就 clearInterval 收手, 之后完全不再保护。
+ * 改成 touched 判定后两个方向都不会错: 没碰过 ⇒ 改值必是自动的, 拨回; 碰过 ⇒ 再不回拨。
+ *
  * @param {LGraphNode} node 节点
  * @param {object} info configure 数据
  * @returns {void}
@@ -161,29 +167,24 @@ function keepStoredAudio(node, info) {
   // configure 与 onFirstLoad 的先后不确定, 先立刻回正一次
   if (widget.value !== stored) widget.value = stored;
 
+  let touched = false;
+  const markTouched = () => { touched = true; };
+  document.addEventListener("pointerdown", markTouched, true);
+
   const deadline = Date.now() + GUARD_MS;
   const timer = setInterval(() => {
     if (node.removed || Date.now() > deadline) {
       clearInterval(timer);
+      document.removeEventListener("pointerdown", markTouched, true);
       return;
     }
-    const values = widget.options?.values;
-    if (Array.isArray(values) && values.length) {
-      // 只认"被换成了候选首项"这一种自动改值, 纠正后即收手
-      if (widget.value === values[0] && values[0] !== stored) {
-        widget.value = stored;
-        widget.callback?.(stored);
-        clearInterval(timer);
-      }
-      return;
-    }
-    // 候选还没拉到: 此刻被改只可能是占位默认值(Loading...), 直接回正
-    if (widget.value !== stored) widget.value = stored;
+    if (!touched && widget.value !== stored) widget.value = stored;
   }, POLL_MS);
 
   const onRemoved = node.onRemoved;
   node.onRemoved = function () {
     clearInterval(timer);
+    document.removeEventListener("pointerdown", markTouched, true);
     return onRemoved?.apply(this, arguments);
   };
 }
@@ -200,6 +201,10 @@ app.registerExtension({
    */
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_CLASS) return;
+
+    // 注册时抄一份静态候选 —— 远端 combo 的 options.values 在候选进缓存前返回字符串
+    // 默认值, Vue 侧对象展开会把那个字符串拍进控件描述符(见 load_combo_refresh.js)
+    const staticValues = nodeData.input?.required?.audio?.[1]?.options;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -225,7 +230,7 @@ app.registerExtension({
       }
 
       // ── 下拉候选: 点开/点节点即自动刷新(见 load_combo_refresh.js) ──
-      armComboRefresh(node, "audio");
+      armComboRefresh(node, "audio", staticValues);
 
       // ── 下拉弹窗: 抹掉 " [output]" 标注 + 「排序方式」左侧的刷新按钮(见 load_combo_menu.js) ──
       armComboMenu(node, "audio");
