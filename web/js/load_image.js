@@ -28,6 +28,8 @@ import { armComboRefresh } from "./load_combo_refresh.js";
 import { armComboMenu } from "./load_combo_menu.js";
 
 const NODE_CLASS = "FallingTSLoadImage";
+// 预览逻辑版本戳(改下方预览相关代码时 +1)
+const PREVIEW_BUILD = "imgprev-20261007-b";
 const ROUTE = "/fallingts_load_image";
 // 编号显示宽度: 与产物目录的 5 位编号口径一致(00001, 00002 …)
 const SEQ_WIDTH = 5;
@@ -180,6 +182,13 @@ function updateImagePreview(node) {
   if (node._fallingtsPreviewSrc === src) return;
   node._fallingtsPreviewSrc = src;
   imgEl.dataset.src = src;
+  imgEl.dataset.fallback = "0";
+  // input 取不到时(某些部署 input/output 不同目录)退回 output —— 同一张图只要有一边通就行
+  imgEl.onerror = () => {
+    if (imgEl.dataset.fallback === "1") return;
+    imgEl.dataset.fallback = "1";
+    imgEl.src = "/view?filename=" + encodeURIComponent(String(widget?.value ?? "").trim()) + "&type=output";
+  };
   imgEl.src = src;
   node.setDirtyCanvas?.(true, false);
 }
@@ -227,6 +236,8 @@ function armImagePreview(node) {
     };
   }
 
+  // 版本戳: 改本文件后浏览器必须 Ctrl+Shift+R, 节点上会显示这串, 便于确认新代码已生效
+  widget.element.dataset.fallingtsPreview = PREVIEW_BUILD;
   updateImagePreview(node);
 }
 /**
