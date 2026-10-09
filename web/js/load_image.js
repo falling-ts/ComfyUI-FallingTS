@@ -117,6 +117,37 @@ async function refreshSequence(node, notify) {
 }
 
 /**
+ * 给 image 控件补回前端需要的 asset spec —— 只为「缩略图」, 不为了上传。
+ *
+ * 1.52.7 的 WidgetSelect 用 useWidgetSelectItems() 给每条候选算缩略图:
+ *   preview_url = getMediaUrl(name, "input", assetKind)
+ * 而 getMediaUrl() 第一行就是
+ *   if (!["image","video","audio"].includes(kind)) return "";
+ * assetKind 又**只**从 widget.spec 推导(getAssetKind: 读 image_upload /
+ * animated_image_upload / video_upload / audio_upload / mesh_upload 五个开关)。
+ * 所以 spec 里一旦没有 image_upload, assetKind = "unknown", 下拉里 13 条候选
+ * 全部拿到空 preview_url —— 表现为「子目录里的图片资源全都没有缩略图/预览」。
+ *
+ * 【副作用】补回 image_upload 同时也会把下拉顶部的
+ * 「上传」入口带回来(FormDropdownMenuFilter 里由 allowUpload
+ * 驱动的 isUploadButtonEnabled)。这是可接受的 —— 原来
+ * 手流程就应该能上传,。
+ *
+ * 为什么仍从 type=input 取图: 本工作区 ComfyUI\\input 与 ComfyUI\\output 是
+ * 同一物理目录(media\\<项目>)的两条软链, type=input 同样能读到, 且名字不带
+ * " [output]" 标注, 与 widget.value 严格一致。
+ *
+ * @param {LGraphNode} node 节点
+ * @returns {void}
+ */
+function ensureImageAssetSpec(node) {
+  const widget = node.widgets?.find((w) => w.name === "image");
+  if (!widget || widget._fallingtsAssetSpec) return;
+  widget._fallingtsAssetSpec = true;
+  widget.spec = { ...(widget.spec || {}), image_upload: true, image_folder: "input" };
+}
+
+/**
  * 取工作流里存的 image 值(configure 时传入的节点数据)。
  *
  * 优先 widgets_values_named(按 widget 名索引, 不受 widget 顺序变化影响),
@@ -211,6 +242,8 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
+
+      ensureImageAssetSpec(node);
 
       // ── 序列号刷新按钮: 插到「序列号」控件之后 ──
       const seqWidget = node.widgets?.find((w) => w.name === "sequence");
