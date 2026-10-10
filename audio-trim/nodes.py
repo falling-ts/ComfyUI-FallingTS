@@ -30,12 +30,13 @@ from comfy_api.latest import IO, UI
 from comfy_execution.graph_utils import ExecutionBlocker
 import folder_paths
 
+# 音频重采样走核心 comfy.audio(上游已移除 torchaudio 依赖, 签名与 torchaudio.functional.resample 一致)
 try:
-    import torchaudio
+    from comfy.audio import resample as _resample_waveform
 
-    TORCH_AUDIO_AVAILABLE = True
+    AUDIO_RESAMPLE_AVAILABLE = True
 except ImportError:
-    TORCH_AUDIO_AVAILABLE = False
+    AUDIO_RESAMPLE_AVAILABLE = False
 
 _OPUS_RATES = [8000, 12000, 16000, 24000, 48000]
 _FORMATS = {"flac", "mp3", "opus"}
@@ -86,9 +87,9 @@ def _encode_audio_waveform(waveform: torch.Tensor, sample_rate: int, file_format
             if sample_rate not in _OPUS_RATES:
                 sample_rate = 48000
         if sample_rate != original_rate:
-            if not TORCH_AUDIO_AVAILABLE:
-                raise RuntimeError("torchaudio 不可用, 无法将音频重采样到 Opus 支持采样率")
-            waveform = torchaudio.functional.resample(waveform, original_rate, sample_rate)
+            if not AUDIO_RESAMPLE_AVAILABLE:
+                raise RuntimeError("comfy.audio 不可用, 无法将音频重采样到 Opus 支持采样率")
+            waveform = _resample_waveform(waveform, original_rate, sample_rate)
         out_stream = container.add_stream("libopus", rate=sample_rate, layout=layout)
         if quality == "64k":
             out_stream.bit_rate = 64000

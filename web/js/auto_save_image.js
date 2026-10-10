@@ -64,7 +64,7 @@ function currentWorkflowId() {
 // 各格式合法的 位深 / 色彩空间(与后端 _encode_image 支持的组合一致)
 const FORMAT_OPTIONS = {
   png: { bit_depth: ["8-bit", "16-bit"], colorspace: ["sRGB"] },
-  exr: { bit_depth: ["32-bit float"], colorspace: ["sRGB", "HDR", "linear"] },
+  exr: { bit_depth: ["16-bit float", "32-bit float"], colorspace: ["sRGB", "HDR", "HDR PQ", "linear", "HDR LogC3", "HDR ACEScct"] },
 };
 
 /**

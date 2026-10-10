@@ -151,8 +151,8 @@ class PreviewImageSaveNode:
             - "required".filename_prefix: 保存文件名(不含扩展名, 同名覆盖);
             - "required".filename_suffix: 文件名后缀(紧跟 filename_prefix; 不含扩展名, 默认空, 拼接在 filename_prefix 之后);
             - "required".format: png/exr;
-            - "required".bit_depth: 位深(png→8/16bit, exr→32bit float);
-            - "required".input_color_space: 输入色彩空间(png→sRGB, exr→sRGB/HDR/linear);
+            - "required".bit_depth: 位深(png→8/16bit, exr→16/32bit float);
+            - "required".input_color_space: 输入色彩空间(png→sRGB, exr→sRGB/HDR/HDR PQ/linear/HDR LogC3/HDR ACEScct);
             - "hidden".prompt/extra_pnginfo/id: 元数据与节点 id。
         """
         return {
@@ -180,21 +180,21 @@ class PreviewImageSaveNode:
                     ["png", "exr"],
                     {
                         "default": "png",
-                        "tooltip": "保存的文件格式: png(8/16-bit, sRGB) 或 exr(32-bit float)",
+                        "tooltip": "保存的文件格式: png(8/16-bit, sRGB) 或 exr(16/32-bit float)",
                     },
                 ),
                 "bit_depth": (
-                    ["8-bit", "16-bit", "32-bit float"],
+                    ["8-bit", "16-bit", "16-bit float", "32-bit float"],
                     {
                         "default": "8-bit",
-                        "tooltip": "位深: png → 8-bit/16-bit; exr → 32-bit float",
+                        "tooltip": "位深: png → 8-bit/16-bit; exr → 16-bit float/32-bit float(16-bit float 体积约省一半, 精度对绝大多数场景足够)",
                     },
                 ),
                 "input_color_space": (
-                    ["sRGB", "HDR", "linear"],
+                    ["sRGB", "HDR", "HDR PQ", "linear", "HDR LogC3", "HDR ACEScct"],
                     {
                         "default": "sRGB",
-                        "tooltip": "输入色彩空间: png → sRGB; exr → sRGB/HDR/linear",
+                        "tooltip": "输入色彩空间: png → sRGB; exr → sRGB/HDR/HDR PQ/linear/HDR LogC3/HDR ACEScct",
                     },
                 ),
             },
@@ -252,7 +252,7 @@ class PreviewImageSaveNode:
             images (torch.Tensor): BxHxWxC 批张量;
             filename_prefix (str): 文件名前缀(可含 %batch_num% 按批号区分);
             file_format (str): png/exr;
-            bit_depth (str): 位深(8-bit/16-bit/32-bit float);
+            bit_depth (str): 位深(8-bit/16-bit/16-bit float/32-bit float);
             colorspace (str): 输入色彩空间(sRGB/HDR/linear);
             prompt (dict|None): 工作流 prompt(注入元数据; 同时用于解析产物子目录名);
             extra_pnginfo (dict|None): 额外元数据;

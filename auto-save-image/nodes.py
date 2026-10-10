@@ -119,8 +119,8 @@ class AutoSaveImageNode(PreviewImageSaveNode):
             filename_prefix (str, 默认 "preview"): 文件名前缀(默认值同父类, 便于手输);
             filename_suffix (str, 默认 ""): 文件名后缀(紧跟前缀, 拼接后整体可含 %batch_num%);
             format (str, 默认 "png"): png/exr;
-            bit_depth (str, 默认 "8-bit"): 位深(png→8/16-bit, exr→32-bit float);
-            input_color_space (str, 默认 "sRGB"): 输入色彩空间(png→sRGB, exr→sRGB/HDR/linear);
+            bit_depth (str, 默认 "8-bit"): 位深(png→8/16-bit, exr→16/32-bit float);
+            input_color_space (str, 默认 "sRGB"): 输入色彩空间(png→sRGB, exr→sRGB/HDR/HDR PQ/linear/HDR LogC3/HDR ACEScct);
             prompt (dict|None): 工作流 prompt(注入元数据 + 解析 md 表子目录);
             extra_pnginfo (dict|None): 额外元数据(兼取当前工作流名, 见 workflow_name_from_extra);
             id (str|None): 节点唯一 ID, 用作预览缓存键的一部分(另一半是工作流作用域)。
