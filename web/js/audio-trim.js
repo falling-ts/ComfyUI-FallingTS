@@ -186,72 +186,6 @@ function collectOutputsAfter(startNode) {
   return [...targets];
 }
 
-/**
- * 给 canvas 版「截段」按钮 widget 套样式: 覆写 draw 绘制青绿渐变圆角按钮。
- *
- * Nodes 2.0 以 DOM <button> 渲染为主, 这里是旧渲染模式(canvas)的兜底,
- * 与 PreviewVideo 的 styleFrameButton 同构。
- *
- * @param {LGraphNode} node 节点
- * @returns {void}
- */
-function styleSegmentButton(node) {
-  const btn = node.widgets?.find((w) => w.type === "button" && w.name === "截段");
-  if (!btn) return;
-
-  btn.computedHeight = 56;
-  const origMouse = btn.mouse;
-
-  /**
-   * 自定义绘制: 阴影层 + 青绿渐变圆角主体 + 白字「截段」; _pressed 时下压。
-   *
-   * @param {CanvasRenderingContext2D} ctx 上下文
-   * @param {LGraphNode} _n 节点(未用)
-   * @param {number} widget_width 控件宽
-   * @param {number} y 顶边 y
-   * @returns {void}
-   */
-  btn.draw = function (ctx, _n, widget_width, y) {
-    const W = widget_width;
-    const dy = this._pressed ? 1 : 0;
-    const BH = 52;
-    roundRectPath(ctx, 6, y + 6, W - 12, BH - 8, 10);
-    ctx.fillStyle = "rgba(0,0,0,.22)";
-    ctx.fill();
-    roundRectPath(ctx, 6, y + 3 + dy, W - 12, BH - 8, 10);
-    const g = ctx.createLinearGradient(0, y, 0, y + BH);
-    g.addColorStop(0, this._pressed ? "#0c9e6a" : "#0bb47d");
-    g.addColorStop(1, this._pressed ? "#12c98c" : "#17d9a0");
-    ctx.fillStyle = g;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.2)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "700 16px 'Segoe UI','Microsoft YaHei',sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("截段", W / 2, y + BH / 2 + 1 + dy);
-  };
-
-  /**
-   * 鼠标事件: 记录按下状态(下压反馈), 其余交给原 mouse 触发点击回调。
-   *
-   * @param {Event} event 事件
-   * @param {Array} pos 节点局部坐标
-   * @param {LGraphNode} n2 节点
-   * @returns {*} 原 mouse 返回值
-   */
-  btn.mouse = function (event, pos, n2) {
-    const inBtn =
-      this.last_y != null && pos[1] >= this.last_y && pos[1] <= this.last_y + (this.computedHeight || 20);
-    if (event.type === "mousedown") this._pressed = true;
-    if (event.type === "mouseup" || (event.type === "mousedown" && !inBtn)) this._pressed = false;
-    return origMouse ? origMouse.call(this, event, pos, n2) : false;
-  };
-
-  node.setDirtyCanvas(true, true);
-}
 
 /**
  * 只提交「本节点下游」的部分执行(partial execution)。
@@ -953,7 +887,6 @@ app.registerExtension({
         onExecuted?.apply(this, arguments);
         refreshWaveform(node, waveWidget, segList);
       };
-      styleSegmentButton(node);
       segList.render();
       node.setSize([Math.max(340, node.size?.[0] ?? 340), Math.max(300, node.size?.[1] ?? 300)]);
 
