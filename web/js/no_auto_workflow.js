@@ -3,16 +3,20 @@
 // 目标状态: 关闭工作流之后, 标签里既没有打开的工作流, 也没有未保存的占位工作流
 //           —— 标签栏为空 + 画布空白 + 没有活动工作流(activeWorkflow === null)。
 //
-// 背景(前端包 1.52.7 源码, 两条硬编码路径, 都没有设置开关):
+// 背景(前端包 1.53.10 源码, 两条硬编码路径, 都没有设置开关):
 //
 //   ① workflowService.ts 的 closeWorkflow():
+//        let e = workflowStore.getMostRecentWorkflow()
+//        if (e) { await openWorkflow(e) }
+//        else if (await loadDefaultWorkflow() === false) return false
+//        ...
+//        await workflowStore.closeWorkflow(workflow)
 //        workflowDraftStore.removeDraft(workflow.path)
-//        // If this is the last workflow, create a new default temporary workflow
-//        if (workflowStore.openWorkflows.length === 1) {
-//          await loadDefaultWorkflow()          // → app.loadGraphData(defaultGraph)
-//        }
-//      → 关掉最后一个标签时会先塞一个 "Unsaved Workflow"(默认图: SD1.5 + Z-Image Turbo 两组节点),
-//        再把原来那个关掉, 于是永远残留一个未保存工作流。
+//      → 关掉最后一个标签(没有更近的标签可切)时会先塞一个 "Unsaved Workflow"
+//        (默认图: SD1.5 + Z-Image Turbo 两组节点), 再把原来那个关掉, 于是永远残留一个未保存工作流。
+//      ⚠️ 1.52.7 里这段顺序是反的(先 removeDraft 与 closeWorkflow, 再判
+//        openWorkflows.length === 1 才 loadDefaultWorkflow); 1.53.x 把"塞默认工作流"
+//        提到前面, 于是旧版 removeDraft 前哨失效 —— 这是本插件一度失效的根因。
 //
 //   ② useWorkflowPersistenceV2.ts 的 resolveStartupOutcome():
 //        Comfy.TutorialCompleted ? await comfyApp.loadGraphData()   // 零实参 → defaultGraph
@@ -26,9 +30,15 @@
 //   1. 包住 app.loadGraphData —— 这是"打开工作流"的唯一入口(内部经 afterLoadNewGraph
 //      → activateLoadedWorkflow → createNewTemporary 建标签)。
 //   2. 识别两个"自动打开"时机:
-//      a) 关闭最后一个工作流: 用 workflowDraftV2 store 的 removeDraft 做前哨 —— 上游在
-//         塞默认工作流之前刚好同步调它, 且它只被 close/delete 调用(见 workflowStore.ts)。
-//         判定"正在关最后一个": openWorkflows.length === 1 且那一个正是被 remove 的 path。
+//      a) 关闭最后一个工作流: 用 workflow store 的 getMostRecentWorkflow 做前哨 ——
+//         上游 closeWorkflow() 在"塞默认工作流"之前同步调它找下一个要切换的标签:
+//         返回 null(没有更近的)且 openWorkflows 只剩那一个活动工作流时, 紧接着就调
+//         loadDefaultWorkflow()。它只被 closeWorkflow 这一条路径调用(见 workflowStore),
+//         所以这里能精确识别"正在关最后一个"。
+//         ⚠️ 前端 1.53.x 把"塞默认工作流"挪到了 t.closeWorkflow()/removeDraft() 之前
+//         (旧版是之后), 所以用 removeDraft 做前哨的写法永远等不到 —— 关闭时 openWorkflows
+//         里已经多了新塞进来的 Unsaved Workflow, open.length === 1 与 removeDraft(path)
+//         的判定都不再成立。改用 getMostRecentWorkflow 后与上游同步点重新对齐。
 //      b) 页面启动: 零实参的 loadGraphData() 在整个前端只有启动这一处(其余调用都至少带图数据);
 //         另有未完成新手引导时的启动分支 loadBlankWorkflow() → loadGraphData(空白图),
 //         用"启动时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。
@@ -98,15 +108,19 @@ window.addEventListener('keydown', () => (userInteracted = true), {
 /** 已挂前哨的 store(避免重复包装) */
 const sentinelInstalled = new WeakSet();
 
-/** 正在被关闭、且是最后一个的工作流 path(由 removeDraft 前哨写入, 只在一个事件循环拍内有效) */
-let pendingCloseLastPath = null;
+/**
+ * 是否正处于"关闭最后一个工作流"的同步块内(由 getMostRecentWorkflow 前哨写入)。
+ * 上游 closeWorkflow() 在这一步之后同步调用 loadDefaultWorkflow() → loadGraphData,
+ * 中间没有 await 点会把这个标记拖到别的调用上, 故用布尔量即可。
+ */
+let closingLastWorkflow = false;
 
 let loadGraphDataHooked = false;
 
 /**
  * 从 Vue pinia store 按 id 取 store 对象。
  *
- * @param {string} id store id(如 "workflow" / "workflowDraftV2")
+ * @param {string} id store id(如 "workflow" / "execution")
  * @returns {object|null} pinia store 对象; 不可用时返回 null
  */
 function getStore(id) {
@@ -179,40 +193,47 @@ function isEmptyGraph(graphData) {
 }
 
 /**
- * 给 workflowDraftV2 store 的 removeDraft 挂前哨。
+ * 给 workflow store 的 getMostRecentWorkflow 挂前哨。
  *
- * 上游 closeWorkflow() 在"塞默认工作流"之前会同步调 removeDraft(workflow.path),
- * 而 removeDraft 只被 close/delete 两条路径调用, 所以这里能精确识别"正在关最后一个"。
- * 标记只保留到当前事件循环拍结束 —— 关最后一个时紧接着(同一同步块)就会调 loadGraphData,
- * 而其它调用点(discardStartupBlankDraft)后面不会跟着加载, 于是不会误伤。
+ * 上游 closeWorkflow() 在"塞默认工作流"之前会同步调 getMostRecentWorkflow() 找下一个标签:
+ *   let e = t.getMostRecentWorkflow()
+ *   if (n) { openWorkflow(n) } else if (await loadDefaultWorkflow() === false) return
+ * 这里正是判定"正在关最后一个"的位置 —— 没有更近的标签(返回 null)且打开列表此刻只剩
+ * 那个正要被关的活动工作流, 接下来的 loadDefaultWorkflow 就该被拦截。
+ * 它只被 closeWorkflow 调用, 其它路径不会触发, 所以不会误伤。
+ *
+ * getMostRecentWorkflow 是"基于现状算一次"的普通函数: 上游在此刻打开列表里还只有那一个
+ * 工作流(新标签是稍后在 closeWorkflow 内才塞进来的), 所以 open.length === 1 成立。
+ * 标记只在同步块内有效 —— 紧接着的 loadGraphData 同步发生, 不跨 await。
  *
  * @returns {boolean} 前哨已就位返回 true(store 还没挂出来则 false, 由调用方重试)
  */
-function installDraftSentinel() {
-  const draftStore = getStore('workflowDraftV2');
-  if (!draftStore || typeof draftStore.removeDraft !== 'function') return false;
-  if (sentinelInstalled.has(draftStore)) return true;
+function installCloseSentinel() {
+  const ws = workflowStore();
+  if (!ws || typeof ws.getMostRecentWorkflow !== 'function') return false;
+  if (sentinelInstalled.has(ws)) return true;
   if (isDisabledByQuery()) return false;
 
-  const original = draftStore.removeDraft;
-  draftStore.removeDraft = function (path, ...rest) {
+  const original = ws.getMostRecentWorkflow;
+  ws.getMostRecentWorkflow = function (...args) {
+    const result = original.apply(this, args);
     try {
-      const ws = workflowStore();
-      const open = ws?.openWorkflows;
-      if (open?.length === 1 && open[0]?.path === path) {
-        pendingCloseLastPath = path;
+      const open = this.openWorkflows ?? [];
+      if (result == null && open.length === 1) {
+        closingLastWorkflow = true;
+        // 兜底: 上游若因异常没走到 loadGraphData, 标记不许跨拍存活(它会同步发生在微任务里)
         setTimeout(() => {
-          if (pendingCloseLastPath === path) pendingCloseLastPath = null;
+          closingLastWorkflow = false;
         }, 0);
       }
     } catch (e) {
-      console.warn(LOG, 'removeDraft 前哨判定失败', e);
+      console.warn(LOG, 'getMostRecentWorkflow 前哨判定失败', e);
     }
-    return original.call(this, path, ...rest);
+    return result;
   };
 
-  sentinelInstalled.add(draftStore);
-  console.log(LOG, 'removeDraft 前哨已就位(用于识别"正在关闭最后一个工作流")');
+  sentinelInstalled.add(ws);
+  console.log(LOG, 'getMostRecentWorkflow 前哨已就位(用于识别"正在关闭最后一个工作流")');
   return true;
 }
 
@@ -232,12 +253,12 @@ function classifyAutoOpen(args) {
   if (!ws) return null;
 
   // (a) 关闭最后一个工作流时塞进来的默认工作流
-  if (OPTIONS.suppressOnClose && pendingCloseLastPath) {
+  // 前哨在上游调用 getMostRecentWorkflow() 时置位(此刻打开列表里还只有那一个工作流),
+  // 紧接着的 loadDefaultWorkflow() → loadGraphData(Hd) 落到这里; 用后立即复位。
+  if (OPTIONS.suppressOnClose && closingLastWorkflow) {
+    closingLastWorkflow = false;
     const open = ws.openWorkflows ?? [];
-    if (open.length === 1 && open[0]?.path === pendingCloseLastPath) {
-      pendingCloseLastPath = null;
-      return 'close-last';
-    }
+    if (open.length === 1) return 'close-last';
   }
 
   // (b) 页面启动时自动打开默认/空白工作流
@@ -336,7 +357,7 @@ app.registerExtension({
 
     let tries = 0;
     const timer = setInterval(() => {
-      if (installDraftSentinel() || ++tries > 240) clearInterval(timer);
+      if (installCloseSentinel() || ++tries > 240) clearInterval(timer);
     }, 50);
   },
 });

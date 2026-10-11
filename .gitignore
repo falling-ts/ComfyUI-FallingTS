@@ -25,3 +25,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# 验证脚本产生的无头浏览器用户数据(非源码, 不入库; _verify-no-auto-workflow.js 运行时生成)
+dev/_verify-noauto-profile/
+dev/_verify-noauto-profile-*/
