@@ -225,7 +225,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 
 **挂点**:`app.queuePrompt` —— 前端唯一的提交入口。运行按钮(`Comfy.QueuePrompt`)与 Ctrl+Enter 都走它, 所以一处包装即覆盖两种触发方式;**只对「默认 Run」生效**, 继续/截帧那类带显式 `queueNodeIds` 的 partial 提交故意跳过。
 
-**工作目录**:Comfy 工作区根(`custom_nodes` 的上一级, 本机 `D:\AI\Comfy`), 由本文件位置 realpath 反推 —— 项目搬家后自动跟随, 不写死盘符。因此 `.venv\Scripts\python.exe scripts\prep.py` 这类相对路径可直接写。
+**工作目录**:Comfy 工作区根(`custom_nodes` 的上一级, 本机 `D:\AI\Comfy`), 由本文件位置 realpath 反推 —— 项目搬家后自动跟随, 不写死盘符。因此 `.venv\Scripts\python.exe <你的脚本>` 这类相对路径可直接写。
 
 **HTTP 路由**:`POST /fallingts_prerun/run`(body `{"command": "..."}`)。子进程输出逐个候选编码严格试解(`utf-8` → 本地编码 → Windows `oem` → `mbcs`)—— `cmd` 内建命令即使是 `PYTHONUTF8=1` 也会把 GBK 写进管道。命令原文、退出码、耗时与输出都进 ComfyUI 日志。**改后端后必须重启 ComfyUI;前端 js 强刷即可。**
 

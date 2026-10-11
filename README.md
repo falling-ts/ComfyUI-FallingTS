@@ -225,7 +225,7 @@ The mirror of many-to-one selection: many-to-one is "multi-group multi-input →
 
 **Hook point**: `app.queuePrompt` — the single submit entry point of the frontend. The Run button (`Comfy.QueuePrompt`) and Ctrl+Enter both go through it, so both triggers are covered by one wrapper. It is invoked **only for a default Run**; partial submits (Continue / frame-grab, which pass explicit `queueNodeIds`) are skipped on purpose.
 
-**Working directory**: the Comfy workspace root (the parent of `custom_nodes`, e.g. `D:\AI\Comfy`), derived from this file's realpath — a project move is followed automatically, no hard-coded drive letter. Relative paths like `.venv\Scripts\python.exe scripts\prep.py` therefore work as-is.
+**Working directory**: the Comfy workspace root (the parent of `custom_nodes`, e.g. `D:\AI\Comfy`), derived from this file's realpath — a project move is followed automatically, no hard-coded drive letter. Relative paths like `.venv\Scripts\python.exe <your-script>` therefore work as-is.
 
 **HTTP route**: `POST /fallingts_prerun/run` (body `{"command": "..."}`). Child output is decoded by trying `utf-8` → locale → Windows `oem` → `mbcs` (a `cmd` builtin writes GBK to a pipe even when `PYTHONUTF8=1` is inherited). The command line, exit code, duration and output are written to the ComfyUI log. **Restart ComfyUI after changing the backend; a hard browser refresh is enough for the JS.**
 
