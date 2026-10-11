@@ -21,7 +21,7 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | Audio preview save | `PreviewAudioSave` | `audio` | Preview into the temp directory; clicking **Save** writes to output per `filename_prefix`+`filename_suffix` + format (flac/mp3/opus, **same name overwritten, no sequence number**) |
 | Video components | `FallingTSVideoComponents` | `FallingTS/Utility` | Splits a reference video into frames/audio/fps/bit depth/color space (**None-safe**, replacing the core `GetVideoComponents`): `video` is an **optional input**, so when it is unwired or None (empty mdtable field / no upstream value) **all outputs are None and nothing crashes**, letting the downstream H3 Ref2VA skip that reference slot as "no reference"; the core node raises AttributeError on None, so workflows whose `<Video N>` column may be left empty need this node |
 
-### Web frontend enhancements (15, ready to use on install, no configuration)
+### Web frontend enhancements (27, ready to use on install, no configuration)
 
 | File | Function |
 |------|------|
@@ -32,6 +32,16 @@ ComfyUI custom node plugin: a set of **general-purpose utility nodes** + **front
 | `web/js/auto_save_image.js` | Auto-save image node: format-linked bit depth/color space + rebuild preview after a refresh + inject the current workflow name into `POST /prompt` (`extra_pnginfo`) so the node can resolve its output subdirectory at execute time |
 | `web/js/preview-video.js` | Video preview node "Save" button |
 | `web/js/preview-audio.js` | Audio preview node "Save" button |
+| `web/js/audio-trim.js` | Audio-trim node: waveform selection (drag to pick a range) + segment list + "Trim" / "Done" / "Save" buttons |
+| `web/js/load_image.js` | Load Image node: sequence number (resolved from the current workflow's output dir) + "refresh sequence" button + combo-candidate refresh + a short guard restoring the saved value when `onFirstLoad` overwrites it |
+| `web/js/load_video.js` | Load Video node: sequence number + frame-grab / Done (partial submit runs only downstream) + save-frames + selected-frame list + fallback player (`restoreVideo`); output port layout = video + audio + prefix + image_1..N |
+| `web/js/load_audio.js` | Load Audio node: sequence number + combo refresh / menu enhancement + a short guard on the saved value; the in-node player comes from the backend-declared `audioUI` control, so this file builds no player |
+| `web/js/load_combo_menu.js` | Shared by both loaders: strip the ` [output]` / ` [input]` suffix from dropdown items + insert a refresh button left of "sort by"; reopening the popup is required because the candidate list is computed once per open |
+| `web/js/load_combo_refresh.js` | Shared by both loaders: refresh combo candidates on node creation / mouse-down on the node / every 4 s, so newly added subdirectories show up without a manual refresh |
+| `web/js/composite.js` | Image-composite node: grow/shrink `image_i` ports + `label_i` annotation textareas by `total` |
+| `web/js/mask-rename.js` | Mask-editor save hook (carries the Load Image node's "name" box so the backend auto-numbers into `0010_灰度遮罩/`) |
+| `web/js/auto_unload.js` | Auto-unload models after a run: on `execution_success` POST `/fallingts_auto_unload/unload`; the backend decides (skips while the queue is non-empty) |
+| `web/js/no_auto_workflow.js` | Truly "open no workflow on startup": empty tab bar + blank canvas + no active workflow (the frontend otherwise falls back to the default graph) |
 | `web/js/table_lookup.js` | Table DOM controls (Excel grid + selection dropdown + first-column ID) |
 | `web/js/md_table.js` | Markdown data table DOM controls: system picker for file + data popup (search/pagination/single-select) + type-rendered form + refresh |
 | `web/js/selector.js` | Many-to-one selection: `total` group count × `items` group-name count adds/removes input ports (labels are group names) + show/hide each group's selected-value outputs + dropdown option linkage |
@@ -248,7 +258,7 @@ After installing, **restart ComfyUI** (same after code changes; after changing f
 ```
 ComfyUI-FallingTS/
 ├── __init__.py       # entry: WEB_DIRECTORY + NODE_CLASS_MAPPINGS + sys.path
-├── plugin.py         # node registration (V1 NODE_CLASS_MAPPINGS + V3 ComfyExtension, dual-track)
+├── plugin.py         # node registration (V1 NODE_CLASS_MAPPINGS, 22 nodes total + V3 ComfyExtension, dual-track)
 ├── proceed/          # segmented execution control node (block/continue, cache-based)
 │   ├── nodes.py      #   FallingTSContinue + HTTP routes (continue/reset/restart)
 │   └── __init__.py
@@ -289,7 +299,7 @@ ComfyUI-FallingTS/
 
 **Notes**:
 - The plugin's `web/js/*.js` are loaded at runtime by ComfyUI's `GET /extensions` endpoint and **do not participate in the frontend build**; upgrading/rebuilding the frontend package directory does not affect this plugin;
-- Node registration is dual-track: V1 via `NODE_CLASS_MAPPINGS` (4 nodes), V3 via `DesktopPluginsExtension.get_node_list()` (`PreviewVideo`);
+- Node registration is dual-track: V1 via `NODE_CLASS_MAPPINGS` (13 nodes, incl. `FallingTSContinue` / `PreviewImageSave` / `AutoSaveImage`), V3 via `DesktopPluginsExtension.get_node_list()` (9 `IO.ComfyNode` subclasses: `FallingTSLoadVideo` / `FallingTSLoadAudio` / `FallingTSH3AddGuide` / `PreviewVideo` / `PreviewAudioSave` / `FallingTSAudioTrim` / `WorldRefinePLY` / `WorldSurroundPanorama` / `WorldPanoramaViews`);
 - Subpackage `__init__.py` files use relative imports and don't depend on sys.path order.
 
 ## License

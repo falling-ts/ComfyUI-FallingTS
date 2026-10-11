@@ -21,16 +21,27 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 音频预览保存 | `PreviewAudioSave` | `audio` | 预览到 temp 目录;点「**保存**」按 `filename_prefix`+`filename_suffix`+格式 写 output(flac/mp3/opus,**同名覆盖、无序号**) |
 | 视频拆解 | `FallingTSVideoComponents` | `FallingTS/工具` | 把参考视频拆成 帧序列/音频/帧率/位深/色彩空间(**None 安全**,核心 `GetVideoComponents` 的替代):`video` 是**可选输入**,未连接或为 None(mdtable 空字段/上游无值)时**全部输出 None 且不报错**,让下游 H3 Ref2VA 的参考视频位按"无参考"跳过;核心节点收到 None 会 AttributeError,故 `<Video N>` 参考列允许留空的工作流须用本节点 |
 
-### Web 前端增强(15 个,安装即用,无需配置)
+### Web 前端增强(27 个,安装即用,无需配置)
 
 | 文件 | 功能 |
 |------|------|
+| `web/js/task_notify.js` | 浏览器任务完成/失败提示音(Web Audio 合成, 不发声系统音):`execution_success` 播成功音、`execution_error`/`execution_interrupted` 播失败音;成功/失败两组独立音量/频率/衰减设置 + Win11 风格 toast;设置面板 **设置 → FallingTS → 任务提示音** |
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
 | `web/js/route.js` | 路由节点:按 `total` 动态增删各组端口 + 假分支真正执行:partial 提交时把 switch=false 的各组输出下游输出节点并入 targets,保存本段并停止 |
 | `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
 | `web/js/auto_save_image.js` | 自动保存图片节点:format 联动位深/色彩空间 + 刷新后重建预览 + 提交时把当前工作流名注入 `POST /prompt`(`extra_pnginfo`),供节点在 execute 里解析产物子目录 |
 | `web/js/preview-video.js` | 视频预览节点「保存」按钮 |
 | `web/js/preview-audio.js` | 音频预览节点「保存」按钮 |
+| `web/js/audio-trim.js` | 音频截段节点:波形拖选时间段 + 段列表 + 「截段 / 完成 / 保存」按钮 |
+| `web/js/load_image.js` | 加载图像节点:序列号(按当前工作流产物目录解析)+ 「刷新序列号」按钮 + combo 候选刷新 + 短守护(`onFirstLoad` 改写已选值时恢复存档值) |
+| `web/js/load_video.js` | 加载视频节点:序列号 + 截帧/完成(partial 只跑下游)+ 保存帧 + 选中帧列表 + 备用播放器(`restoreVideo`);输出端口布局 = video + audio + prefix + image_1..N |
+| `web/js/load_audio.js` | 加载音频节点:序列号 + combo 刷新/弹窗增强 + 已选值短守护;节点内播放器由后端声明的 `audioUI` 控件提供,故本文件不建播放器 |
+| `web/js/load_combo_menu.js` | 两个加载节点共用:抹掉下拉项末尾的 ` [output]` / ` [input]` 标注 + 在「排序方式」左侧插一个刷新按钮;候选列表是「打开时算一次」,故刷新后需重开弹窗 |
+| `web/js/load_combo_refresh.js` | 两个加载节点共用:节点创建后 / 在节点上按下鼠标 / 每 4 秒刷新 combo 候选,新出现的子目录无需手动刷新即可进列表 |
+| `web/js/composite.js` | 图片合成节点:按 `total` 增删 `image_i` 端口 + `label_i` 标注文本框 |
+| `web/js/mask-rename.js` | 遮罩编辑器保存联动(带上加载图像节点的「名称」框,后端按 `0010_灰度遮罩/` 自增编号) |
+| `web/js/auto_unload.js` | 跑完自动卸载模型:`execution_success` 时 POST `/fallingts_auto_unload/unload`;后端裁定(队列非空则跳过) |
+| `web/js/no_auto_workflow.js` | 真正「不打开任何工作流」:标签栏为空 + 画布空白 + 无活动工作流(前端默认会回落到默认图) |
 | `web/js/table_lookup.js` | 表格 DOM 控件(Excel 网格 + 选择下拉 + 首列ID) |
 | `web/js/md_table.js` | MarkDown 数据表 DOM 控件:系统选择器选文件 + 数据弹窗(搜索/分页/单选) + 按类型渲染表单 + 刷新 |
 | `web/js/selector.js` | 多对一选择:`total` 组数 × `items` 组名数量 增删输入端口(标签为组名)+ 各组 选中值 输出显隐 + 下拉选项联动 |
@@ -247,7 +258,7 @@ mklink /D ComfyUI-FallingTS ..\..\ComfyUI-FallingTS
 ```
 ComfyUI-FallingTS/
 ├── __init__.py       # 入口:WEB_DIRECTORY + NODE_CLASS_MAPPINGS + sys.path
-├── plugin.py         # 节点注册(V1 NODE_CLASS_MAPPINGS + V3 ComfyExtension,双轨)
+├── plugin.py         # 节点注册(V1 NODE_CLASS_MAPPINGS,共 22 节点 + V3 ComfyExtension,双轨)
 ├── proceed/          # 分段执行控制节点(阻塞/继续,缓存式)
 │   ├── nodes.py      #   FallingTSContinue + HTTP 路由(continue/reset/restart)
 │   └── __init__.py
@@ -286,7 +297,7 @@ ComfyUI-FallingTS/
 
 **说明**:
 - 插件 `web/js/*.js` 由 ComfyUI 的 `GET /extensions` 接口运行时加载,**不参与前端打包**;升级/重建前端打包目录不影响本插件;
-- 节点注册双轨:V1 走 `NODE_CLASS_MAPPINGS`(4 个),V3 走 `DesktopPluginsExtension.get_node_list()`(`PreviewVideo`);
+- 节点注册双轨:V1 走 `NODE_CLASS_MAPPINGS`(13 个,含 `FallingTSContinue` / `PreviewImageSave` / `AutoSaveImage`),V3 走 `DesktopPluginsExtension.get_node_list()`(9 个 `IO.ComfyNode` 子类:`FallingTSLoadVideo` / `FallingTSLoadAudio` / `FallingTSH3AddGuide` / `PreviewVideo` / `PreviewAudioSave` / `FallingTSAudioTrim` / `WorldRefinePLY` / `WorldSurroundPanorama` / `WorldPanoramaViews`);
 - 子包 `__init__.py` 使用相对导入,不依赖 sys.path 顺序。
 
 ## License

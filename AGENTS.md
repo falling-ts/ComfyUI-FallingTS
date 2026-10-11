@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 19 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 22 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
@@ -82,7 +82,7 @@ ComfyUI-FallingTS/
 │   └── nodes.py                # 运行前命令后端: POST /fallingts_prerun/run (工作区根 cwd 执行命令, 空则跳过, 非0/超时即拦截本次提交)
 ├── auto-unload/
 │   └── nodes.py                # 跑完自动卸载模型后端: POST /fallingts_auto_unload/unload (队列为空时逐出全部已加载模型释放显存, 否则跳过; 直调内置按钮同款核心函数, 不用 /free 置旗)
-├── dev/                        # **开发/验收工具链**(43 个脚本, 含 1 个 Node 版浏览器验收, 不参与 ComfyUI 加载): 拆解类工作流的生成脚本(`build-decompose-workflows.py`, 幂等: 重建 0050_视频截帧 / 0051_视频拆音 / 0070_截取声音(三者不再要 md 数据表, 文件名前缀取自加载节点的 prefix 输出)+ 清空 0040..0044 的 PreviewVideo 尾部 + 0035 端口/前缀归一与**布局归一**(四列网格: 同列左对齐、行距 60、列距 80), 两条链的图片保存节点统一归一为 **AutoSaveImage**(0050 直接生成、0035 由 `normalize_auto_save()` 就地升级旧存档), 自带布局六规范自检 —— 0050/0051/0070/0035 四个都跑)与它们的验收(`_verify-005x-decompose.py` / `_verify-0070-trim-audio.py`, 需临时实例跑在 8189)、加载音频节点的后端/浏览器验收(`_verify-load-audio.py` / `_verify-load-audio-ui.py`, 同上)、**离线单测** `_unit-validate-inputs.py`(校验 "连线输入的实参是 None" 这个坑, 不需要起服务)、 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检、跑完自动卸载的离线自检、加载图像与遮罩编号自检(`_verify-load-image.py` / `_verify-load-image-ui.py`)、两个加载节点的下拉候选/序列号浏览器验收(`_verify-load-dropdown.py`), 下拉弹窗增强(抹掉 ` [output]` 标注 + 「排序方式」左侧的刷新按钮)的浏览器验收(`_verify-combo-menu.py`, 传 `custom_nodes\ComfyUI-FallingTS\dev\_verify-combo-menu.py` 跑)、加载视频「截帧后播放报 视频加载失败」的 HTTP + 浏览器验收(`_verify-video-preview-recover.py`, 需运行中的 8188)、`no_auto_workflow` 的**零依赖 Node 版**浏览器验收(`_verify-no-auto-workflow.js`, 无头 Edge + CDP, `--off` 跑基线对照, 需运行中的 8188; 见「不打开任何工作流」小节)。**根仓库 `scripts\` 只放临时文件(随时可清空), 凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
+├── dev/                        # **开发/验收工具链**(47 个脚本, 含 1 个 Node 版浏览器验收, 不参与 ComfyUI 加载): 拆解类工作流的生成脚本(`build-decompose-workflows.py`, 幂等: 重建 0050_视频截帧 / 0051_视频拆音 / 0070_截取声音(三者不再要 md 数据表, 文件名前缀取自加载节点的 prefix 输出)+ 清空 0040..0044 的 PreviewVideo 尾部 + 0035 端口/前缀归一与**布局归一**(四列网格: 同列左对齐、行距 60、列距 80), 两条链的图片保存节点统一归一为 **AutoSaveImage**(0050 直接生成、0035 由 `normalize_auto_save()` 就地升级旧存档), 自带布局六规范自检 —— 0050/0051/0070/0035 四个都跑)与它们的验收(`_verify-005x-decompose.py` / `_verify-0070-trim-audio.py`, 需临时实例跑在 8189)、加载音频节点的后端/浏览器验收(`_verify-load-audio.py` / `_verify-load-audio-ui.py`, 同上)、**离线单测** `_unit-validate-inputs.py`(校验 "连线输入的实参是 None" 这个坑, 不需要起服务)、 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检、跑完自动卸载的离线自检、加载图像与遮罩编号自检(`_verify-load-image.py` / `_verify-load-image-ui.py`)、两个加载节点的下拉候选/序列号浏览器验收(`_verify-load-dropdown.py`), 下拉弹窗增强(抹掉 ` [output]` 标注 + 「排序方式」左侧的刷新按钮)的浏览器验收(`_verify-combo-menu.py`, 传 `custom_nodes\ComfyUI-FallingTS\dev\_verify-combo-menu.py` 跑)、加载视频「截帧后播放报 视频加载失败」的 HTTP + 浏览器验收(`_verify-video-preview-recover.py`, 需运行中的 8188)、`no_auto_workflow` 的**零依赖 Node 版**浏览器验收(`_verify-no-auto-workflow.js`, 无头 Edge + CDP, `--off` 跑基线对照, 需运行中的 8188; 见「不打开任何工作流」小节)。**根仓库 `scripts\` 只放临时文件(随时可清空), 凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
 └── web/
     ├── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
         ├── assets_tab_rename.js        # 「已导入」→「已保存」(左侧媒体资产面板 + 节点下拉弹窗的分类按钮)。⚠️ 1.52.7 的 `globalProperties.$i18n` 是 **null-prototype 普通对象**(无 `t`/`mergeLocaleMessage`) ⇒ i18n 合并不可用, 只能靠 `MutationObserver`+`TreeWalker` 做 DOM 文本兜底(弹窗是 body 下的 portal, 属新增子树)
@@ -145,7 +145,7 @@ ComfyUI-FallingTS/
 
 注:`preview-image` / `auto-save-image` / `preview-video` / `preview-audio` / `audio-trim` / `load-image` / `load-video` / `load-audio` 目录名含连字符,不能直接 `from xxx import`,入口经 `importlib` 按名加载(`auto-save-image.nodes` 自己再 `import_module("preview-image.nodes")` 拿父类, 与入口拿到的是同一个模块对象 ⇒ 与 preview-image 共享同一份 `_last_ui`/`_last_output` 缓存)。
 
-注(分类, 2026-10-02): **20 个节点 CATEGORY 统一为顶级 `FallingTS`**(V1 `CATEGORY=`, V3 `category=`) —— 双击画布的选择面板里都在同一 `FallingTS` 分组下, 原有子分组与核心 `image`/`video`/`audio` 归属均已收拢。
+注(分类, 2026-10-02): **21 个节点 CATEGORY 统一为顶级 `FallingTS`**(V1 `CATEGORY=`, V3 `category=`) —— 双击画布的选择面板里都在同一 `FallingTS` 分组下, 原有子分组与核心 `image`/`video`/`audio` 归属均已收拢。
 
 注(灰度遮罩, 2026-10-02): **灰度遮罩资源表已废弃** —— `stories/<故事库>/0010_灰度遮罩.md` 与 `stories/template/0010_灰度遮罩.md` 已删除。遮罩改为「加载图像」节点(`FallingTSLoadImage`, 工作流 `0010_灰度遮罩`)加载原图 → 遮罩编辑器绘制 → 保存进 `output/0010_灰度遮罩/<5位编号>_名称.png`(编号自增)。资源表侧只需在万物变化的 `灰度遮罩(MASK)` 列写 `@{0010_灰度遮罩/编号_名称}` —— `@{}` 按 output/input 目录找文件, **不读数据表**, 故删表不影响引用解析。
 
@@ -162,7 +162,7 @@ ComfyUI-FallingTS/
 
 ⚠️ **V3 节点的 hidden 不进 `execute` 实参** —— `execution.py` 的 `get_finalized_class_inputs` 把 hidden 单独摘出,只能经 `cls.hidden.<name>` 取(`HiddenHolder.__getattr__` 对未知键返回 None)。所以 `preview-video` / `preview-audio` 的 `execute` 里**不能**写 `prompt=None` 形参(写了恒为 None, 静默失效),prompt 一律从 `cls.hidden.prompt` 读;`preview-image` 是 V1 节点(`"hidden": {"prompt": "PROMPT"}`),prompt 才是真正的 execute 实参。**加/改任何依赖 hidden 的 V3 节点逻辑前先确认这一点。**
 
-### None 容忍约定(全部 19 节点)
+### None 容忍约定(全部 22 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -181,7 +181,7 @@ ComfyUI-FallingTS/
 - **世界模型 —— 360 视频/全景源**(world-panorama 两节点):`video`+`images` 全空 → `panorama=None`;`panorama=None` → `images/extrinsics/intrinsics` 全 None;**故意不做 sticky** —— 回放上一次的长图/视角会把另一段视频的世界模型张冠李戴(与 video-components 同一条理由);`WorldRefinePLY` 则相反: 它是**输出类**节点, `images=None` 时回放**上次产出的 PLY 路径**(无产出则空串, 下游视口显示 not found 不崩), 这样单独点视口节点不会把整条重建链拉回来重跑;
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
-### 前端状态与后端同步约定(全部 19 节点)
+### 前端状态与后端同步约定(全部 22 节点)
 
 **核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
 
