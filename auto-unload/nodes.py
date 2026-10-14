@@ -16,6 +16,10 @@ r"""跑完自动卸载模型: 每次工作流跑完(成功)且队列为空时, �
 - **队列非空则跳过**(返回 `skipped: true`): 多任务连跑时只有最后一个真正卸载,
   避免中途把模型逐掉导致下一个任务被迫重新加载;
 - 卸载放在线程池 executor 里跑(逐大模型 + empty_cache 可能耗时数秒, 不能阻塞 aiohttp 事件循环);
+- 卸载完再追加一步**容器内存清理**(通用, 非显存): 子进程跑 `scripts/clear_page_cache.py`,
+  对模型大文件执行 posix_fadvise(DONTNEED) 丢弃文件页缓存 —— 页缓存堆积会把 cgroup
+  内存限额吃满导致分配被限流; 无 cgroup 限制(裸机)时脚本自己安全退出; 脚本缺失或
+  清理失败不报错, 不影响卸载结果;
 - 前端在 `execution_success` 事件后触发(见 web/js/auto_unload.js): 此时该 prompt 已被
   `task_done` 从队列 pop、`queue_updated` 已推送, 与执行线程无竞态; 唯一竞态是"跑完立刻又提交
   新任务", 最坏情况 = 新任务的模型多加载一次(与内置按钮在运行中被点击等效), 不崩溃。
@@ -28,6 +32,9 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import os
+import subprocess
+import sys
 import time
 
 from aiohttp import web
@@ -38,6 +45,39 @@ from comfy import model_management
 logger = logging.getLogger(__name__)
 
 _MB = 1024 * 1024
+
+
+def _clear_page_cache() -> None:
+    """追加的容器内存清理: 丢弃模型大文件的页缓存, 释放 cgroup 内存压力。
+
+    页缓存堆积会把 cgroup 限额吃满(分配被限流/OOM), 而宿主内存充裕时内核不主动
+    回收; 对模型目录跑 fadvise(DONTNEED) 精确丢弃干净页缓存即可。无 cgroup 限制
+    (裸机/Windows)时脚本自己退出; 脚本缺失/失败只记 debug 日志, 不影响卸载。
+    """
+    # auto-unload/nodes.py → auto-unload → ComfyUI-FallingTS → custom_nodes → 工作区根(scripts/ 所在)
+    script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))),
+        "scripts", "clear_page_cache.py",
+    )
+    if not os.path.isfile(script):
+        logger.debug("[FallingTS.AutoUnload] 页缓存清理脚本不存在, 跳过: %s", script)
+        return
+    try:
+        proc = subprocess.run(
+            [sys.executable, script],
+            capture_output=True, text=True, timeout=120,
+        )
+        if proc.returncode != 0:
+            logger.warning(
+                "[FallingTS.AutoUnload] 页缓存清理脚本退出码 %d: %s",
+                proc.returncode, (proc.stderr or "").strip()[:200],
+            )
+        elif proc.stdout.strip():
+            for line in proc.stdout.strip().splitlines():
+                logger.info("[FallingTS.AutoUnload] %s", line)
+    except Exception:  # 清理失败绝不影响卸载主流程
+        logger.exception("[FallingTS.AutoUnload] 页缓存清理异常, 已忽略")
 
 
 def _do_unload() -> dict:
@@ -64,6 +104,7 @@ def _do_unload() -> dict:
         free_mb,
         ms,
     )
+    _clear_page_cache()
     return {"freed_mb": freed_mb, "free_mb": free_mb, "ms": ms}
 
 
