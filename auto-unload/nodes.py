@@ -16,10 +16,12 @@ r"""跑完自动卸载模型: 每次工作流跑完(成功)且队列为空时, �
 - **队列非空则跳过**(返回 `skipped: true`): 多任务连跑时只有最后一个真正卸载,
   避免中途把模型逐掉导致下一个任务被迫重新加载;
 - 卸载放在线程池 executor 里跑(逐大模型 + empty_cache 可能耗时数秒, 不能阻塞 aiohttp 事件循环);
-- 卸载完再追加一步**容器内存清理**(通用, 非显存): 子进程跑 `scripts/clear_page_cache.py`,
-  对模型大文件执行 posix_fadvise(DONTNEED) 丢弃文件页缓存 —— 页缓存堆积会把 cgroup
-  内存限额吃满导致分配被限流; 无 cgroup 限制(裸机)时脚本自己安全退出; 脚本缺失或
+- 卸载完再追加一步**容器内存清理**(通用, 非显存): 子进程跑同目录的 `clear_page_cache.py`,
+  对模型与解释器的大文件执行 posix_fadvise(DONTNEED) 丢弃文件页缓存 —— 页缓存堆积会把
+  cgroup 内存限额吃满导致分配被限流; 无 cgroup 限制(裸机)时脚本自己安全退出; 脚本缺失或
   清理失败不报错, 不影响卸载结果;
+  ⚠️ 脚本**必须随本节点一起放**(同目录), 不依赖工作区根的 `scripts/` —— 插件被单独安装时
+  那里没有这个文件, 清理会静默失效; 缺失时记 info 而非 debug, 便于发现;
 - 前端在 `execution_success` 事件后触发(见 web/js/auto_unload.js): 此时该 prompt 已被
   `task_done` 从队列 pop、`queue_updated` 已推送, 与执行线程无竞态; 唯一竞态是"跑完立刻又提交
   新任务", 最坏情况 = 新任务的模型多加载一次(与内置按钮在运行中被点击等效), 不崩溃。
@@ -48,20 +50,17 @@ _MB = 1024 * 1024
 
 
 def _clear_page_cache() -> None:
-    """追加的容器内存清理: 丢弃模型大文件的页缓存, 释放 cgroup 内存压力。
+    """追加的容器内存清理: 丢弃模型与解释器大文件的页缓存, 释放 cgroup 内存压力。
 
     页缓存堆积会把 cgroup 限额吃满(分配被限流/OOM), 而宿主内存充裕时内核不主动
     回收; 对模型目录跑 fadvise(DONTNEED) 精确丢弃干净页缓存即可。无 cgroup 限制
-    (裸机/Windows)时脚本自己退出; 脚本缺失/失败只记 debug 日志, 不影响卸载。
+    (裸机/Windows)时脚本自己退出; 脚本缺失记 info、执行失败记 warning, 均不影响卸载。
     """
-    # auto-unload/nodes.py → auto-unload → ComfyUI-FallingTS → custom_nodes → 工作区根(scripts/ 所在)
-    script = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))))),
-        "scripts", "clear_page_cache.py",
-    )
+    # 脚本与本文件同目录(随插件分发), 不依赖工作区根的 scripts/ —— 插件被单独安装时
+    # 那里没有这个文件。用 realpath: 经 custom_nodes 软链加载时 __file__ 是软链路径。
+    script = os.path.join(os.path.dirname(os.path.realpath(__file__)), "clear_page_cache.py")
     if not os.path.isfile(script):
-        logger.debug("[FallingTS.AutoUnload] 页缓存清理脚本不存在, 跳过: %s", script)
+        logger.info("[FallingTS.AutoUnload] 页缓存清理脚本不存在, 跳过: %s", script)
         return
     try:
         proc = subprocess.run(

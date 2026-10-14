@@ -81,7 +81,8 @@ ComfyUI-FallingTS/
 ├── pre-run/
 │   └── nodes.py                # 运行前命令后端: POST /fallingts_prerun/run (工作区根 cwd 执行命令, 空则跳过, 非0/超时即拦截本次提交)
 ├── auto-unload/
-│   └── nodes.py                # 跑完自动卸载模型后端: POST /fallingts_auto_unload/unload (队列为空时逐出全部已加载模型释放显存, 否则跳过; 直调内置按钮同款核心函数, 不用 /free 置旗)
+│   ├── nodes.py                # 跑完自动卸载模型后端: POST /fallingts_auto_unload/unload (队列为空时逐出全部已加载模型释放显存, 否则跳过; 直调内置按钮同款核心函数, 不用 /free 置旗)
+│   └── clear_page_cache.py     # 容器内存清理脚本(**运行期硬依赖, 必须与 nodes.py 同目录随插件分发**): 对 ComfyUI 模型目录 + 当前解释器 lib 的大文件执行 posix_fadvise(DONTNEED) 丢弃文件页缓存; 目录运行时探测(优先 folder_paths, 尊重 extra_model_paths.yaml), 不写死路径
 ├── dev/                        # **开发/验收工具链**(47 个脚本, 含 1 个 Node 版浏览器验收, 不参与 ComfyUI 加载): 拆解类工作流的生成脚本(`build-decompose-workflows.py`, 幂等: 重建 0050_视频截帧 / 0051_视频拆音 / 0070_截取声音(三者不再要 md 数据表, 文件名前缀取自加载节点的 prefix 输出)+ 清空 0040..0044 的 PreviewVideo 尾部 + 0035 端口/前缀归一与**布局归一**(四列网格: 同列左对齐、行距 60、列距 80), 两条链的图片保存节点统一归一为 **AutoSaveImage**(0050 直接生成、0035 由 `normalize_auto_save()` 就地升级旧存档), 自带布局六规范自检 —— 0050/0051/0070/0035 四个都跑)与它们的验收(`_verify-005x-decompose.py` / `_verify-0070-trim-audio.py`, 需临时实例跑在 8189)、加载音频节点的后端/浏览器验收(`_verify-load-audio.py` / `_verify-load-audio-ui.py`, 同上)、**离线单测** `_unit-validate-inputs.py`(校验 "连线输入的实参是 None" 这个坑, 不需要起服务)、 0034 世界模型的生成/验收、world-panorama 展开的合成真值/转速谱系/方位对拍/布局校验、运行前命令的离线与浏览器自检、跑完自动卸载的离线自检、加载图像与遮罩编号自检(`_verify-load-image.py` / `_verify-load-image-ui.py`)、两个加载节点的下拉候选/序列号浏览器验收(`_verify-load-dropdown.py`), 下拉弹窗增强(抹掉 ` [output]` 标注 + 「排序方式」左侧的刷新按钮)的浏览器验收(`_verify-combo-menu.py`, 传 `custom_nodes\ComfyUI-FallingTS\dev\_verify-combo-menu.py` 跑)、加载视频「截帧后播放报 视频加载失败」的 HTTP + 浏览器验收(`_verify-video-preview-recover.py`, 需运行中的 8188)、`no_auto_workflow` 的**零依赖 Node 版**浏览器验收(`_verify-no-auto-workflow.js`, 无头 Edge + CDP, `--off` 跑基线对照, 需运行中的 8188; 见「不打开任何工作流」小节)。**凡"随时要能复跑"的脚本一律放这里**; 脚本一律按工作区根相对路径跑(如 `.venv\Scripts\python.exe custom_nodes\ComfyUI-FallingTS\dev\_verify-0034-360.py`), 内部用 `Path(__file__).resolve().parent.parent.parent.parent` 反推工作区根。⚠️ 插件的**运行期**硬依赖不放这里 —— 精修脚本 `refine_0034_gs.py` 放在用它的节点旁边(`world-refine\`)
 └── web/
     ├── js/                     # 前端扩展脚本 (经 GET /extensions 加载,不参与前端打包)
@@ -344,6 +345,12 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 **只监听 success**: 失败/中断时保留模型, 下次重试不必重新加载(大模型重载约 60s)。时序安全: `execution_success` 到达浏览器时该 prompt 已被 `task_done` 从队列 pop、`queue_updated` 已推送, 与执行线程无竞态; 唯一竞态是"跑完立刻又提交新任务", 最坏情况 = 新任务的模型多加载一次(与内置按钮在运行中被点击等效), 不崩溃。
 
+**容器内存清理(显存卸载之后的第二步)**: 卸载完模型后追加一步**页缓存清理**(通用, 非显存) —— 子进程跑同目录的 `auto-unload/clear_page_cache.py`, 对 ComfyUI 模型目录 + 当前解释器 `lib` 里的大文件执行 `posix_fadvise(DONTNEED)` 丢弃文件页缓存。动机: 容器 cgroup 限额常远小于宿主内存, 进程读过的文件页缓存全部计入限额并堆积到顶, 而宿主内存充裕时内核不主动回收 ⇒ `memory.current` 逼近 `memory.max`、分配被限流(`memory.events` 的 max 计数增长)。
+
+⚠️ **脚本必须与 `nodes.py` 同目录随插件分发** —— 不要依赖工作区根的 `scripts/`(插件被单独安装时那里没有该文件)。脚本定位用 `os.path.dirname(os.path.realpath(__file__))`, **不能用 `abspath`**: ComfyUI 经 `custom_nodes` 目录软链加载插件, `abspath` 不解析软链 ⇒ 上溯层级会落到错误目录、拼出不存在的路径。实测 2026-10-14: 旧版上溯四级用 `abspath` 得到 `<根>/ComfyUI/scripts/…`(不存在), 清理被**静默跳过**, `comfyui.prev.log` 里连续 8 次 `已卸载全部模型` 之后一条清理输出都没有; 脚本缺失时记 `info`(**不是 debug**, 免得再次静默失效)、执行失败记 `warning`, 均不影响卸载结果。
+
+脚本的目录**运行时探测**, 不写死路径: 优先 `import folder_paths` 取其 `folder_names_and_paths` / `models_dir`(尊重 `extra_model_paths.yaml` 等额外路径), 且做**去重 + 父子剪枝**(folder_paths 会把 `models/` 下每个槽位各列一条, 30+ 条全被父目录覆盖 ⇒ 只保留父目录, 否则同一批文件被重复 walk 多遍; 实测 31 条剪到 3 条); `folder_paths` 不可用(独立运行/离线自检)时从本文件位置反推 `models` 目录兜底。另加当前解释器 `lib`(含 site-packages 动态库) —— 实测那里 ≥20M 的文件合计 5.4GiB, 是第二大缓存来源。`--min-size` 默认 **20M**(按 ≥512M 会只覆盖到 1 个文件、整片漏掉); 无 cgroup 限制(裸机/Windows)时脚本安全退出, 退出码 0。
+
 **404/405 处理**同运行前命令: 前端 js 经 `/extensions` 从磁盘即时加载, 后端路由却要重启才注册 ⇒ "新前端 + 旧后端"混搭时**只提示一次并放行**。
 
 **设置项**: 系统设置 → 常规 › 其它 → 「跑完自动卸载模型」(内置 `type: "boolean"`, 默认开, 单元素 category + `sortOrder: 5` ⇒ 排在「开始前命令」(10) 下面; 提示音 20 > 开始前命令 10 > 本项 5)。
@@ -351,7 +358,8 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 **验证**(改后端后**必须重启 ComfyUI**; 前端 js 只需强刷):
 
 - 离线路由自检 `dev\_verify-auto-unload.py`(桩掉 `PromptServer` 与 `model_management`, 直调 handler): 队列非空 → `skipped` 且**完全不调用**卸载; 队列为空 → 卸载 + 显存差值正确 + 调用顺序 `unload → soft_empty_cache`; 逐不动(空闲不涨)时 `freed_mb` 不为负 —— 全 PASS;
-- 真实实例(8189 临时实例, `--cpu`): `/extensions` 含 `auto_unload.js`; 提交 prompt 后紧循环打路由, 同时抓到 `(skipped, remaining=1)` 与真正卸载两种状态; 日志出现 `[FallingTS.AutoUnload] 已卸载全部模型` 行。
+- 清理脚本单跑(不经 ComfyUI, 用它自己的解释器): `python custom_nodes/ComfyUI-FallingTS/auto-unload/clear_page_cache.py`, 正常输出「处理 N 个文件 … memory.current X→YGiB」; `--help` 可见默认阈值 20M;
+- 真实实例(8189 临时实例, `--cpu`): `/extensions` 含 `auto_unload.js`; 提交 prompt 后紧循环打路由, 同时抓到 `(skipped, remaining=1)` 与真正卸载两种状态; 日志出现 `[FallingTS.AutoUnload] 已卸载全部模型` 行, 且其后直接跟 `[clear_page_cache] …` 行(此前旧版这里**没有**清理行, 是回归判据)。
 - ⚠️ 主实例(8188)重启前跑的是旧后端: 强刷页面后前端会提示一次「自动卸载模型未生效」, 属预期, 重启即好。
 
 ## 软链接映射
