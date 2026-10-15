@@ -13,6 +13,18 @@
 因此四宫的 `_左上.png` 与九宫的 `_左上.png` 前缀不同(各自的序列号_名称),
 即便落到同一目录也不会互相覆盖。
 
+**运行方式: 每条流末尾一个 `FallingTSRunGroup`(分组运行)节点, 不用「继续」闸门。**
+两套流各自完全独立, 点哪个运行节点上的「▶ 运行本组」按钮, 就只跑哪一套:
+
+    点「运行本组 · 四宫」 → 提交时以该节点为唯一 partial_execution_targets
+                         → 引擎从它沿非 lazy 输入向上游遍历
+                         → 只执行 四宫加载 → 网格 → 取块 → 4 个保存, 九宫完全不动
+
+这样做的原因: `FallingTSContinue` 闸门的语义是"先跑上游、停下等你点继续、再跑下游",
+同一个工作流里放两个闸门时, 想只跑其中一套仍要先让**两套**上游都跑一遍(全量 Run 会把
+两条流都拉起来)。分组运行节点把"只跑本组"变成提交期的目标选择, 上游根本不进执行列表。
+本节点**没有输出端口**(后端 `RETURN_TYPES = ()`), 纯粹是本组的唯一执行锚点。
+
 两处口径说明:
 - **网格拆分 = `easy imageSplitGrid`**(ComfyUI-Easy-Use, 已装): 输入 images + row/column
   两个**格数**整数, 内部 `width // column` 等分后沿批维拼接, 不重叠。它与易混淆的
@@ -46,12 +58,14 @@ LOAD_W, LOAD_H = 420, 560
 SPLIT_W, SPLIT_H = 300, 150
 PICK_W, PICK_H = 280, 140
 SAVE_W, SAVE_H = 320, 400
+RUN_W, RUN_H_BASE, RUN_ROW_H = 300, 170, 22
 
 # ── 列 x(横距一律 80, 落在 (50,100) 中部) ────────────────────────────────
 X_LOAD = 0
 X_SPLIT = X_LOAD + LOAD_W + 80          # 500
 X_PICK = X_SPLIT + SPLIT_W + 80         # 880
 X_SAVE = X_PICK + PICK_W + 80           # 1240
+X_RUN = X_SAVE + SAVE_W + 80            # 1640
 
 # ── 行 y ──────────────────────────────────────────────────────────────────
 # 每条流内部的纵向次序, 由「端口顺序规范」倒推(做法同 0035 把加载节点压到同一水平带):
@@ -288,9 +302,9 @@ def build() -> dict:
         dst["link"] = lid
         return lid
 
-    def build_flow(base, load_id, split_id, rows, cols, suffixes, titles,
+    def build_flow(base, load_id, split_id, run_id, rows, cols, suffixes, titles,
                    name_widget, sequence_widget, title_tag):
-        """铺一套**完全独立**的流: 自己的加载图片节点 + 网格 + 逐块自动保存。"""
+        """铺一套**完全独立**的流: 自己的加载图片节点 + 网格 + 逐块自动保存 + 分组运行。"""
         nonlocal order
         n = cols * rows
         y_pick, y_split, y_load, y_save = band_y(base, n, n)
@@ -338,6 +352,7 @@ def build() -> dict:
         order += 1
         add_link(load_id, 0, split_id, 0, "IMAGE")
 
+        save_ids: list[int] = []
         for i, (suffix, cell) in enumerate(zip(suffixes, titles)):
             pick_id = split_id + 1 + i
             save_id = pick_id + 1000
@@ -381,8 +396,33 @@ def build() -> dict:
             nodes.append(save)
             node_by_id[save_id] = save
             order += 1
+            save_ids.append(save_id)
             add_link(pick_id, 0, save_id, 0, "IMAGE")
             add_link(load_id, 2, save_id, 1, "STRING")
+
+        # 分组运行节点: 本组所有保存节点的输出统一收进它, 它自己**无输出**。
+        # 点节点上的「▶ 运行本组」→ 以它为唯一 partial 目标提交 → 引擎从它沿非 lazy
+        # 输入向上游遍历 ⇒ 只执行本组这一条流, 另一组完全不跑(不再需要「继续」闸门)。
+        run_inputs = [
+            _in(f"input{i + 1}", "*", None, f"输入 {i + 1}", widget=False)
+            for i in range(len(save_ids))
+        ]
+        run = _node(
+            run_id,
+            "FallingTSRunGroup",
+            (X_RUN, y_save),
+            (RUN_W, RUN_H_BASE + (n - 1) * RUN_ROW_H),
+            run_inputs,
+            [],
+            title=f"运行本组 · {title_tag}(点按钮=只跑{title_tag} {n} 张)",
+            widgets=[n],
+            order=order,
+        )
+        nodes.append(run)
+        node_by_id[run_id] = run
+        order += 1
+        for i, sid in enumerate(save_ids):
+            add_link(sid, 0, run_id, i, "IMAGE")
 
         # 本流最低点(供下一条流从下方起带, 保证两带不重叠)
         return max(y_load + LOAD_H, y_split + SPLIT_H,
@@ -391,9 +431,9 @@ def build() -> dict:
 
     # 流一: 四宫(上带)。流二: 九宫(下带)。
     BAND_GAP = 300
-    bottom4 = build_flow(0, 1, 10, 2, 2, SUFFIX4, SUFFIX4_TITLES,
+    bottom4 = build_flow(0, 1, 10, 1300, 2, 2, SUFFIX4, SUFFIX4_TITLES,
                          "建模拆图", "00001", "四宫")
-    build_flow(bottom4 + BAND_GAP, 2, 30, 3, 3, SUFFIX9, SUFFIX9_TITLES,
+    build_flow(bottom4 + BAND_GAP, 2, 30, 1301, 3, 3, SUFFIX9, SUFFIX9_TITLES,
                "建模拆图", "00002", "九宫")
 
     workflow = {

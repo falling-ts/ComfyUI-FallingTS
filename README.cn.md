@@ -9,6 +9,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 | 节点 | Node ID | 分类 | 功能 |
 |------|---------|------|------|
 | 继续节点 | `FallingTSContinue` | `FallingTS/控制` | 工作流**分段执行**:默认阻塞下游,「继续」放行一段,逐段运行到底(靠执行缓存,不重复算上游) |
+| 分组运行 | `FallingTSRunGroup` | `FallingTS/控制` | **一条工作流并列多条独立流**时,把每条流的全部输出节点收拢到一个本节点(左侧 `input1..inputN`,`total` 决定个数),点它的「**▶ 运行本组**」只跑那一条流,**替代「继续」闸门**。节点**本身无输出**(不产出数据,只是汇聚点);提交时以 `partial_execution_targets=[本节点 id]` 触发,执行引擎从本节点沿输入边向上游把本组整条流拉起(输入是 ANY 且**非 lazy**,故会遍历上游)。适用于 0016 建模拆图这类「四宫流 / 九宫流各跑各的」场景 |
 | 路由节点 | `FallingTSRoute` | `FallingTS/控制` | total 组路由(参考分组开关):一个 `switch` 同时路由 total 组,每组 = 为假时/为真时/输出 (ANY),total 最少 1 |
 | 通用表格 | `FallingTSTable` | `FallingTS/表格` | Excel 式表格(数据内嵌工作流):顶部「选择」下拉选行,输出该行 A/B/C... 各列字符串;行/列数可调,输出端口随列数增减 |
 | MarkDown 数据表 | `FallingTSMarkDownTable` | `FallingTS/表格` | **从 md 文件解析数据表**:系统选择器选文件 → 弹窗按字段搜索+分页单选一行 → 节点内按「标题(类型)」渲染可编辑表单(IMAGE/VIDEO/AUDIO/MASK/STRING/INT/FLOAT/BOOLEAN/TEXT),刷新按 ID 重查 md;输出选中行各字段(按类型)+ 整行数据 JSON |
@@ -27,6 +28,7 @@ ComfyUI 自定义节点插件:一组**通用工具节点** + **前端增强**。
 |------|------|
 | `web/js/task_notify.js` | 浏览器任务完成/失败提示音(Web Audio 合成, 不发声系统音):`execution_success` 播成功音、`execution_error`/`execution_interrupted` 播失败音;成功/失败两组独立音量/频率/衰减设置 + Win11 风格 toast;设置面板 **设置 → FallingTS → 任务提示音** |
 | `web/js/proceed.js` | 继续节点按钮 + 分段执行逻辑 |
+| `web/js/run_group.js` | 分组运行节点:按 `total` 动态增删左侧 `input1..inputN` 端口 + 追加「▶ 运行本组」按钮;点按钮以 `partial_execution_targets=[本节点]` 直接 `POST /prompt`,只跑本组一条流(未连线的组点按钮会提示) |
 | `web/js/route.js` | 路由节点:按 `total` 动态增删各组端口 + 假分支真正执行:partial 提交时把 switch=false 的各组输出下游输出节点并入 targets,保存本段并停止 |
 | `web/js/preview-image.js` | 预览保存节点「保存」按钮 + format 联动位深/色彩空间 |
 | `web/js/auto_save_image.js` | 自动保存图片节点:format 联动位深/色彩空间 + 刷新后重建预览 + 提交时把当前工作流名注入 `POST /prompt`(`extra_pnginfo`),供节点在 execute 里解析产物子目录 |

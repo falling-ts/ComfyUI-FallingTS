@@ -25,6 +25,8 @@ from fps.nodes import FallingTSFrameRateConvertNode
 from composite.nodes import FallingTSImageCompositeNode
 # load-image 目录名含连字符, 需经 importlib 按名加载(加载图像: 来自输出 + 数字目录下拉 + 名称输入框)
 LoadImageNode = import_module("load-image.nodes").FallingTSLoadImageNode
+# run-group 目录名含连字符(分组运行: total 个 ANY 输入聚合本组各输出节点, 无输出, 点浮窗按钮只跑本组)
+RunGroupNode = import_module("run-group.nodes").FallingTSRunGroupNode
 # load-video 目录名含连字符(加载视频: 来自输出 + 数字目录下拉 + 序列号/名称 + 截帧)
 LoadVideoNode = import_module("load-video.nodes").FallingTSLoadVideoNode
 # load-audio 目录名含连字符(加载音频: 来自输出 + 数字目录下拉 + 序列号/名称 + 节点内试听)
@@ -63,6 +65,7 @@ numbered_subdirs.apply()
 
 NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSContinue": FallingTSContinueNode,
+    "FallingTSRunGroup": RunGroupNode,
     "FallingTSRoute": FallingTSRouteNode,
     "FallingTSFanout": FallingTSFanoutNode,
     "FallingTSSelector": FallingTSSelectorNode,
@@ -91,6 +94,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSTable": "FallingTS 通用表格 (Excel 式)",
     "FallingTSSwitch": "FallingTS 分组开关 (total组)",
     "FallingTSContinue": "FallingTS 继续节点",
+    "FallingTSRunGroup": "FallingTS 分组运行",
     "FallingTSRoute": "FallingTS 路由节点 (total组)",
     "FallingTSFanout": "FallingTS 扇出选择 (total组)",
     "FallingTSMarkDownTable": "FallingTS MarkDown 数据表",

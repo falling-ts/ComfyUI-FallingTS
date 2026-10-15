@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 22 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 23 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
@@ -25,6 +25,9 @@ ComfyUI-FallingTS/
 │       └── nodeDefs.json       # 中文节点定义/显示名
 ├── proceed/
 │   └── nodes.py                # FallingTSContinueNode 继续节点
+├── run-group/
+│   ├── __init__.py
+│   └── nodes.py                # FallingTSRunGroupNode 分组运行 (total 个 ANY 输入聚合本组各输出节点 + **无输出**; OUTPUT_NODE=True 使 partial_execution_targets=[本节点] 生效, 输入非 lazy 使执行引擎从本节点向上游拉整条流; 点节点上「▶ 运行本组」只跑本组一条流, 替代「继续」闸门)
 ├── route/
 │   └── nodes.py                # FallingTSRouteNode 路由节点 (total组路由, 参考分组开关)
 ├── fanout/
@@ -102,6 +105,7 @@ ComfyUI-FallingTS/
         ├── preview-audio.js            # PreviewAudioSave 底部保存按钮 + 内置播放器
         ├── audio-trim.js               # FallingTSAudioTrim 波形+播放器+截段/完成按钮+段列表(刷新后从后端重建)
         ├── proceed.js                  # 继续节点前端 (节点缓存 + partial execution)
+        ├── run_group.js                # 分组运行节点前端: total 联动增删左侧 input1..inputN 端口(仅从尾部增删 ⇒ 已有连线的槽位索引不漂移) + onConfigure 按存档 total 对齐 + fitHeight 收回构造器撑高的高度 + 追加「▶ 运行本组」按钮。按钮把**本节点自身**作为唯一 partial_execution_targets 经 api.fetchApi("/prompt") 直发 ⇒ 执行引擎从本节点沿非 lazy 输入向上游拉整条流, 只跑本组。⚠️ 提交**不能**用 api.queuePrompt(0,1,[id])(第 3 参数是选项对象 {partialExecutionTargets}, 裸数组会被静默忽略、退化成全量提交)。⚠️ nodeType.prototype.onWidgetChanged 的包装必须在 beforeRegisterNodeDef 这一层只做一次, 写进 onNodeCreated 内部会随每次建节点叠加一层
         ├── route.js                    # total组路由节点: total 动态端口 + 假分支真正执行
         ├── fanout.js                  # 扇出选择(多对一镜像): total=组数=输入端口数(input_i 每组一个) + 输出=组数×组名数(标签=组名) + 选中项下拉选项联动(槽类型 STRING,INT: 可连线接多对一 选中项组名/索引, 索引直接选中所属索引组名) + 选中组分支真正执行 + 旧版 value 遗留输入槽加载时自动清理
         ├── selector.js                 # 多对一选择: items 展开输入端口 + 下拉联动
@@ -122,6 +126,7 @@ ComfyUI-FallingTS/
 | 包 | 节点 | 说明 |
 |------|------|------|
 | proceed | FallingTSContinue | 继续节点 (分段执行控制: any 输入 lazy + 节点缓存 + partial execution; 未放行时拉上游填缓存并阻塞下游, 点「继续」放行后上游不再重跑、用缓存继续下游。2030-场景旋镜 接在合成与合成预览之间: #1 原视角→73.image1, 58/59/60(右面/后面/左面 PreviewImageSave, 扇出三角度输出)→73.image2/3/4 实时直连(无需 LoadImage 加载已存图), 73→76.any→74(合成预览保存), 73/74 常开; 全量 Run 跑生成段+合成段(76 缓存合成结果+阻塞保存), 点 76「继续」只跑保存段, 不重跑生成与合成)。⚠️ **继续节点的下游若还要用到上游那张图, 必须从继续节点的输出接, 不能从继续节点上游的节点直接接**: partial 提交只把继续节点的**下游**输出节点纳入执行, 从上游直接接会让 ImageCompare / 合成这类节点把整条上游链重新拉回来重跑(主生成段白跑, 分段执行失去意义); 从继续节点接则走它的 `_data_cache`, 上游不重跑。实测 2026-09-22: `00110_万物建模2.1` / `00200_场景首帧2.1` 的 `ImageCompare.image_a` 原本直连「主结果 保存/预览」(继续节点上游), 已改为接继续节点输出 —— 对照原版 `0011_万物建模` / `0020_场景首帧` / `0021_场景拉镜` 三处, 一直是正确接法) |
+| run-group | FallingTSRunGroup | **分组运行** (「一条工作流里并列多条独立流」时, 每条流的全部输出节点收拢到一个本节点, 点它浮窗上的「▶ 运行本组」只跑那一条流, **替代「继续」闸门**)。左侧 `input1..inputN`(N = `total`, 最多 50)是 **ANY 且非 lazy** 输入 —— 只声明归属, 真正生效的是提交时的 `partial_execution_targets = [本节点 id]`: `OUTPUT_NODE = True` 让本节点能被 partial 列表接受(`execution.py` 的 `validate_prompt` 只把 `OUTPUT_NODE` 且在本轮 partial 列表里的节点加入 `outputs`), 而非 lazy 输入让执行引擎从本节点**沿输入边向上游遍历**、把本组整条流拉起来(若声明 lazy, 引擎不向上游遍历, 整条流不会被执行 —— 这正是「继续」节点用缓存跳过上游的机制, 本节点要的恰好相反)。**无任何输出**(`RETURN_TYPES = ()`, `execute` 返回 `{}`, 与内置 `CheckpointSave` 同款)⇒ 前端不显示输出端口、不产出数据。`IS_CHANGED` 返回 `float("NaN")` 避免连点时被全局执行缓存跳过。前端 `web/js/run_group.js`: total 联动增删端口 + 按存档 `onConfigure` 对齐 + 追加「▶ 运行本组」按钮; 提交走 `api.fetchApi("/prompt")` 直发(⚠️ **不能**写 `api.queuePrompt(0,1,[id])` —— `api.queuePrompt` 第 3 参数是**选项对象** `{partialExecutionTargets}`, 传裸数组会被静默忽略、退化成**全量提交**, 两套流都会跑; 走 `api.fetchApi` 还能吃到 `auto_save_image.js` 的工作流名注入)。实测 2026-10-15 `0016_建模拆图`: 只提交四宫组时 `/history` 的 outputs 仅 `1011..1014`, 九宫 9 个节点 `did_run` 全假; 反向同理 |
 | route | FallingTSRoute | 路由节点 (total组路由, 参考分组开关: 1个 switch + total 组数, 每组 = 为假时_i/为真时_i 输入 + 输出_i) |
 | fanout | FallingTSFanout | 扇出选择 (多对一的镜像: items 逗号分隔组名(与多对一同源), total 组数(最少 1, 最多 50) = 左侧输入端口数(每组一个 input_i), 右侧输出 = 组数 × 组名数量(每组每个组名一个, 标签=组名), selection 选中项(下拉框, 选项=组名, 可连线直接接多对一 选中项组名/索引, 索引直接选中所属索引组名)选中第 k 个组名 → 每组 input_i 路由到该组该组名对应的输出, 第 i 组其余输出 None; partial 提交时每组选中组名输出下游输出节点真正执行; 提交时按 partial_execution_targets 拦截未选中分支: partial 提交剔除未选中组名槽位下游输出节点, 全量 Run(图无继续节点)显式列「全部输出节点-未选中分支下游输出节点」提交, 未选中分支下游根本不执行(selection 连线时值运行时才定, 不拦截, 靠下游 None 容忍兜底)) |
 | selector | FallingTSSelector | 多对一选择 (多组切换, 通用 ANY: items 逗号分隔组名, total 组数(最少 1), 左侧输入 = 组数 × 组名数量(第1组在前第2组在后), 下拉选一个组名, 右侧各组 选中值 输出各自该组名的输入, 顶部固定 选中项/索引) |
@@ -163,7 +168,7 @@ ComfyUI-FallingTS/
 
 ⚠️ **V3 节点的 hidden 不进 `execute` 实参** —— `execution.py` 的 `get_finalized_class_inputs` 把 hidden 单独摘出,只能经 `cls.hidden.<name>` 取(`HiddenHolder.__getattr__` 对未知键返回 None)。所以 `preview-video` / `preview-audio` 的 `execute` 里**不能**写 `prompt=None` 形参(写了恒为 None, 静默失效),prompt 一律从 `cls.hidden.prompt` 读;`preview-image` 是 V1 节点(`"hidden": {"prompt": "PROMPT"}`),prompt 才是真正的 execute 实参。**加/改任何依赖 hidden 的 V3 节点逻辑前先确认这一点。**
 
-### None 容忍约定(全部 22 节点)
+### None 容忍约定(全部 23 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -182,7 +187,7 @@ ComfyUI-FallingTS/
 - **世界模型 —— 360 视频/全景源**(world-panorama 两节点):`video`+`images` 全空 → `panorama=None`;`panorama=None` → `images/extrinsics/intrinsics` 全 None;**故意不做 sticky** —— 回放上一次的长图/视角会把另一段视频的世界模型张冠李戴(与 video-components 同一条理由);`WorldRefinePLY` 则相反: 它是**输出类**节点, `images=None` 时回放**上次产出的 PLY 路径**(无产出则空串, 下游视口显示 not found 不崩), 这样单独点视口节点不会把整条重建链拉回来重跑;
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
-### 前端状态与后端同步约定(全部 22 节点)
+### 前端状态与后端同步约定(全部 23 节点)
 
 **核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
 

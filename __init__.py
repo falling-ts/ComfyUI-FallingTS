@@ -25,6 +25,8 @@ from switch.nodes import FallingTSSwitchNode
 from route.nodes import FallingTSRouteNode
 from mdtable.nodes import FallingTSMarkDownTableNode
 
+# run-group 目录名含连字符, 不能写 `from run-group.nodes import`, 需经 importlib 按名加载
+RunGroupNode = import_module("run-group.nodes").FallingTSRunGroupNode
 # preview-video 目录名含连字符, 不能写 `from preview-video.nodes import`, 需经 importlib 按名加载
 PreviewVideoNode = import_module("preview-video.nodes").PreviewVideoNode
 # preview-image 目录名同样含连字符, 需经 importlib 按名加载
@@ -53,6 +55,7 @@ __all__ = [
     "inject",
     "comfy_entrypoint",
     "FallingTSContinueNode",
+    "RunGroupNode",
     "FallingTSRouteNode",
     "FallingTSSelectorNode",
     "FallingTSTableNode",
