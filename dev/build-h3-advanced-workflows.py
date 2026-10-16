@@ -5,6 +5,26 @@
 
 给 11 个 H3 工作流接上三类高阶技能, 每一项都可切换/可旁路:
 
+### 改造 0: 档位 turbo LoRA 重调(4步 600ema / 8步 v1.0 非768)
+
+按 `LORA_SWAP` 白名单把档位加速 LoRA 换成用户指定的两个, 并**同步改 shift**:
+
+    4步: 各种 768p/544p 系 LoRA  → turbo_v4_step600_ema_pruned_comfyui  (FL2VA)
+                                 → ref2v_turbo_4step_v0.1_v4_step600_dareties  (Ref2VA)
+    8步: 768p 系 LoRA            → fl2v_turbo_8step_v1.0_comfyui          (FL2VA)
+                                 → ref2v_turbo_8step_v1.0_768p (Ref2VA 无 544p 版, 保持)
+
+⚠️ **LoRA 与 shift 是成对绑定的铁律**: 上面四个 LoRA 全属官方 **544p 档 ⇒ shift = 12/3**,
+而原有 6 个工作流挂 768p 系 LoRA 配的是 **6/3**。换 LoRA 不改 shift **不会有任何报错**,
+只会画面/音频结构性崩坏(采样计划被换掉了)。依据官方 Model specs 表:
+<https://github.com/ModelTC/Minimax-H3-Turbo>。
+
+⚠️ **谱系不可跨**: FL2VA 与 Ref2VA 各一套。本机 ref2v 侧只有 768p 的 8step(官方也只列了
+768p 那一行), 故 ref2v 的 8 步保持原样, 只换 4 步。
+
+白名单式替换(精确表, 非正则)的理由: 去油/风格 LoRA 也在 `LoraLoaderModelOnly` 里,
+正则匹配极易误伤。
+
 ### 技能一: 去油(塑料感)
 
 在 MODEL 链的**公共分叉点** `MiniMaxH3MemoryEfficientSageAttentionPatch` 之后插入两个
@@ -138,6 +158,50 @@ LORA_REALISM_STRENGTH = 0.8          # 官方推荐 1.0; 本机主流 0.75-0.9, 
 LORA_CINEMA = "Minimax-H3真实电影质感V0.1-解决张量报错.safetensors"
 LORA_CINEMA_STRENGTH = 0.3           # 本机 17 个工作流主力 0.2/0.5, 取 0.3 偏保守
 TRIGGER = "r34l1sm"
+
+# ─── 档位 turbo LoRA 重调(2026-10-16 用户指定) ──────────────────────────────
+#
+# 用户要求: **4 步用效果最好的 600ema, 8 步用最好的 v1.0 非 768 版**。
+#
+# ⚠️⚠️ **LoRA 与 shift 是成对绑定的铁律**: 蒸馏 LoRA 只对它训练时那条 sigma 网格
+#      成立。600ema 与非 768 的 8step v1.0 都属官方 **544p 档 ⇒ 配方 shift = 12/3**;
+#      而本机原有 6 个工作流挂的是 768p 系 LoRA, 配的是 **6/3**。换 LoRA 不改 shift
+#      **不会有任何报错**, 只会画面/音频结构性崩坏(采样计划被换掉了)。
+#      依据: 官方 Model specs 表 <https://github.com/ModelTC/Minimax-H3-Turbo>。
+#
+# 谱系: FL2VA 与 Ref2VA 各一套, **不能跨谱系混用**。本机 ref2v 侧只有 768p 的 8step
+#      (无 544p 版), 故 ref2v 的 8 步保持原样, 只换 4 步。
+LORA_4STEP_FL2V = "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors"
+LORA_8STEP_FL2V = "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+LORA_4STEP_REF2V = "minimax_h3_ref2v_turbo_4step_v0.1_v4_step600_dareties_fro0995.safetensors"
+LORA_8STEP_REF2V = "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+
+# 544p 档的统一 shift 配方(上面四个 LoRA 全部属这一档)
+SHIFT_544P = (12.0, 3.0)
+
+# 原 LoRA → (目标 LoRA, 谱系, 档位名)。**白名单式替换** —— 只动这张表里列出的文件,
+# 去油 LoRA / 风格 LoRA / 其它任何 LoRA 一概不碰(正则匹配容易误伤, 故用精确表)。
+LORA_SWAP = {
+    # ── FL2VA 4 步档 ──
+    "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors": (LORA_4STEP_FL2V, "fl2v", "4步"),
+    "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors": (LORA_4STEP_FL2V, "fl2v", "4步"),
+    "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors": (LORA_4STEP_FL2V, "fl2v", "4步"),
+    "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors": (LORA_4STEP_FL2V, "fl2v", "4步"),
+    "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy-kj-convert.safetensors": (LORA_4STEP_FL2V, "fl2v", "4步"),
+    "minimax_h3_fl2v_turbo_4step_v0.1_comfyui_alpha8-T8-convert.safetensors": (LORA_4STEP_FL2V, "fl2v", "4步"),
+    # ── FL2VA 8 步档 ──
+    "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": (LORA_8STEP_FL2V, "fl2v", "8步"),
+    "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": (LORA_8STEP_FL2V, "fl2v", "8步"),
+    # ── Ref2VA 4 步档(ref2v 侧唯一的 600 谱系) ──
+    "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": (LORA_4STEP_REF2V, "ref2v", "4步"),
+    "minimax_h3_ref2v_turbo_4step_v0.1_bf16.safetensors": (LORA_4STEP_REF2V, "ref2v", "4步"),
+    # ── Ref2VA 8 步档: 本机无 544p 版, 保持 768p 不变(故是恒等映射) ──
+    "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": (LORA_8STEP_REF2V, "ref2v", "8步"),
+}
+
+# 档位 LoRA 的强度: 一律 1.0(官方与社区主力取值), 不做二次衰减 —— 真正的去油/质感
+# 是去油链那两个风格 LoRA 的职责, 不要把两者混为一谈。
+STEP_LORA_STRENGTH = 1.0
 
 # ─── 二采尺寸联动 ───────────────────────────────────────────────────────────
 #
@@ -409,12 +473,103 @@ def fork_point(wf: dict) -> dict | None:
 
 
 def shift_values(wf: dict) -> tuple[float, float]:
-    """从工作流现读一采的 shift(video/audio), 不硬编码 —— 这是 LoRA 的训练配方。"""
+    """从工作流现读一采的 shift(video/audio), 不硬编码 —— 这是 LoRA 的训练配方。
+
+    ⚠️ 本函数在 `build_tier_lora()` **之前**调用才有意义(那时读到的还是原有值)。
+    二采的 shift 必须与一采一致, 而一采已被改成 544p 档的 12/3。
+    """
     n = find_first(wf, "MiniMaxH3SigmaShift")
     if n and n.get("widgets_values"):
         w = n["widgets_values"]
         return float(w[0]), float(w[1])
     return 12.0, 3.0
+
+
+# ─── 改造 0: 档位 turbo LoRA 重调 + shift 同步 ─────────────────────────────
+
+
+def _lora_name_of(node: dict) -> str | None:
+    """读 LoRA 节点的文件名 —— `widgets_values[0]` 与 `widgets_values_named` 两个镜像必须同步改。
+
+    ⚠️ 前端序列化同时写这两处; 只改一处会让**前端显示的是旧值、提交的是新值**
+    (或反过来), 排查起来极难。
+    """
+    w = node.get("widgets_values")
+    if isinstance(w, list) and w and isinstance(w[0], str):
+        return w[0]
+    wn = node.get("widgets_values_named")
+    if isinstance(wn, dict):
+        v = wn.get("lora_name")
+        if isinstance(v, str):
+            return v
+    return None
+
+
+def _set_lora_name(node: dict, name: str, strength: float) -> None:
+    """同时写 `widgets_values` 与 `widgets_values_named` 两个镜像。"""
+    w = node.get("widgets_values")
+    if isinstance(w, list) and w:
+        w[0] = name
+        if len(w) > 1:
+            w[1] = strength
+    else:
+        node["widgets_values"] = [name, strength]
+    wn = node.get("widgets_values_named")
+    if isinstance(wn, dict):
+        wn["lora_name"] = name
+        wn["strength_model"] = strength
+
+
+def _set_shift(node: dict, sv: float, sa: float) -> None:
+    """同时写 shift 的两个镜像。"""
+    node["widgets_values"] = [sv, sa]
+    wn = node.get("widgets_values_named")
+    if isinstance(wn, dict):
+        wn["shift_video"] = sv
+        wn["shift_audio"] = sa
+
+
+def build_tier_lora(wf: dict) -> list:
+    """把档位 turbo LoRA 换成用户指定的两个, 并**同步改 shift**。
+
+    返回变更日志(供调用方打印/校验)。
+
+    ⚠️ 这一步必须在 `build_deoil()` **之前**做: 去油链要读 Sage 的位置来改接, 而档位
+    LoRA 在 Sage 之后 —— 顺序其实无强耦合, 但先改档位能保证 `shift_values()` 读到的是
+    **最终**配方(二采要用它做音频 sigma 对齐)。
+    """
+    log = []
+    by = {n["id"]: n for n in wf["nodes"]}
+
+    for n in wf["nodes"]:
+        if n["type"] != "LoraLoaderModelOnly":
+            continue
+        old = _lora_name_of(n)
+        if old is None or old not in LORA_SWAP:
+            continue
+        new, lineage, tier = LORA_SWAP[old]
+        if old != new:
+            _set_lora_name(n, new, STEP_LORA_STRENGTH)
+            log.append(f"#{n['id']} {tier} LoRA({lineage}): {old} → {new}")
+        else:
+            # 恒等(如 ref2v 8 步无 544p 版, 保持 768p), 只确认强度
+            _set_lora_name(n, new, STEP_LORA_STRENGTH)
+            log.append(f"#{n['id']} {tier} LoRA({lineage}): 保持 {new}(本机无对应 544p 版)")
+
+        # ── 该 LoRA 直连的 SigmaShift: 改成 544p 档配方 ──
+        #
+        # 拓扑: `LoRA → SigmaShift(model 输入) → 选择器`。这里按**边**找, 不按 id 猜,
+        # 所以 0014/0032/0044 那种「Shift 还兼接 BlockSparseAttention」的形态也能覆盖。
+        for l in wf["links"]:
+            if l[1] != n["id"] or l[2] != 0:
+                continue
+            sh = by.get(l[3])
+            if sh is None or sh["type"] != "MiniMaxH3SigmaShift":
+                continue
+            _set_shift(sh, *SHIFT_544P)
+            log.append(f"    #{sh['id']} SigmaShift → {SHIFT_544P[0]:g}/{SHIFT_544P[1]:g}")
+
+    return log
 
 
 # ─── 改造 1: 去油 LoRA + 触发词 ─────────────────────────────────────────────
@@ -960,6 +1115,35 @@ def process(name: str) -> tuple[int, list]:
     if problems:
         return 0, problems
 
+    # ── 改造 0: 档位 turbo LoRA 重调(4步 600ema / 8步 v1.0 非768) + shift 同步 ──
+    #
+    # 放在最前面: 二采要用**最终**的 shift 做音频 sigma 对齐(见 build_pass2)。
+    tier_log = build_tier_lora(wf)
+    if not tier_log:
+        problems.append("没有匹配到任何可替换的档位 turbo LoRA(白名单为空 —— 检查基线)")
+    # ⚠️ 换完 LoRA 必须核对 shift。**只校验「档位 LoRA 直连的那个 SigmaShift」** ——
+    #    不能遍历全部 SigmaShift: 0014/0032/0044 里 #23 还兼接 BlockSparseAttention,
+    #    虽是同一节点但语义不同, 用「全部节点」口径会把不相干的节点也报成错。
+    by_id = {n["id"]: n for n in wf["nodes"]}
+    for l in wf["links"]:
+        if l[2] != 0:
+            continue
+        src = by_id.get(l[1])
+        dst = by_id.get(l[3])
+        if src is None or dst is None or src["type"] != "LoraLoaderModelOnly":
+            continue
+        if dst["type"] != "MiniMaxH3SigmaShift":
+            continue
+        if _lora_name_of(src) not in (LORA_4STEP_FL2V, LORA_8STEP_FL2V,
+                                      LORA_4STEP_REF2V, LORA_8STEP_REF2V):
+            continue
+        w = dst.get("widgets_values") or []
+        if len(w) >= 2 and (float(w[0]), float(w[1])) != SHIFT_544P:
+            problems.append(
+                f"#{dst['id']} SigmaShift 仍为 {w[0]}/{w[1]}, 但 #{src['id']} 已换成 544p 系 LoRA"
+                f"(应 {SHIFT_544P[0]:g}/{SHIFT_544P[1]:g}) —— 配错不报错, 只会画面/音频崩坏"
+            )
+
     # ── 技能一 + 技能二: 去油 LoRA 与前置触发词 ──
     try:
         build_deoil(wf, b)
@@ -1003,6 +1187,34 @@ def process(name: str) -> tuple[int, list]:
     return len(b.added), problems
 
 
+def load_out(name: str) -> dict:
+    """读**改造后**落盘的工作流(供 main 打印档位核对用)。"""
+    return json.loads((WF_DIR / (name + ".json")).read_text(encoding="utf-8"))
+
+
+def report_tier(wf: dict) -> list:
+    """列出每个档位 LoRA 与其直连的 shift —— 这是「换 LoRA 必须同步改 shift」的现场证据。
+
+    只报**白名单内的档位 LoRA**, 去油/风格 LoRA 不参与(它们不吃 shift 配方)。
+    """
+    by = {n["id"]: n for n in wf["nodes"]}
+    applied = {v[0] for v in LORA_SWAP.values()}
+    out = []
+    for n in wf["nodes"]:
+        if n["type"] != "LoraLoaderModelOnly" or _lora_name_of(n) not in applied:
+            continue
+        name = _lora_name_of(n)
+        shifts = []
+        for l in wf["links"]:
+            if l[1] == n["id"] and l[2] == 0:
+                d = by.get(l[3])
+                if d is not None and d["type"] == "MiniMaxH3SigmaShift":
+                    w = d.get("widgets_values") or []
+                    shifts.append(f"{w[0]:g}/{w[1]:g}" if len(w) >= 2 else "?")
+        out.append(f"档位 LoRA #{n['id']} {name[:46]}  shift={','.join(shifts) or '未接'}")
+    return out
+
+
 def main() -> int:
     total = 0
     bad = 0
@@ -1014,6 +1226,8 @@ def main() -> int:
             print(f"[!] {name}: 新增 {n} 节点, 问题: {problems}")
         else:
             print(f"[ok] {name}: 新增 {n} 节点")
+        for line in report_tier(load_out(name)):
+            print(f"       {line}")
     print(f"\n合计新增 {total} 节点; {bad} 个工作流有问题")
     return 1 if bad else 0
 
