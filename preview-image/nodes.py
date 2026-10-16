@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import random
 import string
@@ -28,7 +29,7 @@ import folder_paths
 from comfy.cli_args import args
 from comfy_extras.nodes_images import _encode_image, inject_png_metadata, inject_exr_metadata
 
-from output_subdir import resolve_subdir, safe_dir_name
+from output_subdir import md_table_original_image, resolve_subdir, safe_dir_name
 
 
 # 最近一次预览的图片数据缓存: 缓存键 -> {"images": [张量...], "prompt": ..., "extra_pnginfo": ...}
@@ -115,6 +116,31 @@ def _safe_dir_name(name) -> str:
     return safe_dir_name(name)
 
 
+def _is_overwrite_on(value) -> bool:
+    """判断「覆盖原图」开关是否真的被打开 —— 只认布尔真值。
+
+    **不能写成 `bool(value)`**: 本控件是后加到槽位尾部的, 老存档按位置恢复时该槽会落到旧结构
+    里属于「保存按钮」的占位值(`None`/`''`), 甚至字符串 `"false"` 这类文本; 而 Python 里
+    `bool(None) is False`、`bool('') is False` 虽侥幸正确, `bool('false') is True` 却是反的
+    —— 一旦把文本当开关打开, 保存就会去覆盖原图。所以这里**白名单式**判真: 只有真正的布尔
+    `True`、数值 1、或文本 "true"/"1"/"on"/"yes"(大小写不敏感)才算开, 其余一律当关。
+    调用方拿到 False 就退回默认保存行为, 与「其它情况 true/false 都当 false」一致。
+
+    参数:
+        value: 前端 POST 的 body 值, 或 execute 缓存里的值; 类型不定(布尔/字符串/数字/None)。
+
+    返回:
+        bool: 开关是否真的打开。
+    """
+    if value is True:
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "on", "yes")
+    return False
+
+
 def _workflow_output_dir(workflow_name, prompt=None) -> str:
     """取保存目录: output 下按子目录名建目录, 不存在则创建; 名字非法时退回 output 根。
 
@@ -136,6 +162,44 @@ def _workflow_output_dir(workflow_name, prompt=None) -> str:
     os.makedirs(target, exist_ok=True)
     return target
 
+
+def _original_image_path(prompt) -> str:
+    """解析「覆盖原图」的目标文件绝对路径; 无法确定时返回空串。
+
+    命中条件(全部满足才算可覆盖, 否则调用方退回默认保存行为):
+    ① 工作流里存在 `FallingTSMarkDownTable` 节点, 且它选中行的「原图」列非空;
+    ② 该值能解析到一个**真实存在的文件**(`@{表名/ID}` 引用经 mdtable 的资源解析规则
+       在 output/input 里定位, 与节点内预览取值同一套口径);
+    ③ 该文件的扩展名是**本节点能无损写出的格式**(.png / .exr)。覆盖是"就地替换", 写回必须
+       沿用原扩展名(引用按扩展名过滤, 改名就再也命中不了), 而本节点的编码器只支持 png 与 exr
+       (`_encode_image`)—— 对 .jpg/.webp 这类目标, 用 png 数据去顶替会让文件内容与扩展名不符,
+       故一律放弃覆盖、退回默认落盘(宁可多出一份产物, 也不写出扩展名说谎的文件)。
+
+    延迟引入 mdtable.nodes 的原因: 它 import 了 server/aiohttp 这一层, 而本模块也被自动保存
+    节点复用; 放在函数内按需引入可避免加载顺序上的耦合(该模块在本进程里一定是已加载的,
+    因为要用到「原图」列就必然挂着 FallingTSMarkDownTable 节点)。
+
+    参数:
+        prompt (dict|None): 该节点 execute 时缓存的 API prompt。
+
+    返回:
+        str: 可覆盖的目标文件绝对路径; 不满足条件时返回空串(调用方按默认行为保存)。
+    """
+    raw = md_table_original_image(prompt)
+    if not raw:
+        return ""
+    md_nodes = importlib.import_module("mdtable.nodes")
+    try:
+        # 按图片扩展名解析: 「原图」列约定是图片, 与 mdtable 的 IMAGE 字段同口径
+        path = md_nodes.resolve_media_path(raw, md_nodes._IMAGE_EXTS)
+    except Exception:
+        return ""
+    if not path or not os.path.isfile(path):
+        return ""
+    # 只有扩展名与"能无损写出的编码"一致时才允许就地替换(见上文 ③)
+    if os.path.splitext(path)[1].lower() not in (".png", ".exr"):
+        return ""
+    return path
 
 
 class PreviewImageSaveNode:
@@ -197,6 +261,20 @@ class PreviewImageSaveNode:
                         "tooltip": "输入色彩空间: png → sRGB; exr → sRGB/HDR/HDR PQ/linear/HDR LogC3/HDR ACEScct",
                     },
                 ),
+                # 放在最后一个控件位(此前只有 5 个控件): 旧存档按 widgets_values 的**下标**恢复,
+                # 新控件缀在尾部就不会让前缀/后缀/格式/位深/色彩空间的值整体错位。
+                "overwrite_original": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": (
+                            "覆盖原图: 为真且工作流带 md 数据表、选中行的「原图」列能解析到真实文件时, "
+                            "把本次结果按原文件名与原扩展名写回那个文件(就地替换); "
+                            "为假、没有 md 表、原图列为空或解析不到文件时, 一律按默认行为"
+                            "写 output/<表名>/<文件名>"
+                        ),
+                    },
+                ),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -245,6 +323,7 @@ class PreviewImageSaveNode:
         prompt,
         extra_pnginfo,
         workflow_name=None,
+        overwrite_path=None,
     ) -> None:
         """按格式编码并写 output: 文件名 {prefix}.{format}, 同名直接覆盖, 无 _序号 后缀。
 
@@ -257,7 +336,11 @@ class PreviewImageSaveNode:
             prompt (dict|None): 工作流 prompt(注入元数据; 同时用于解析产物子目录名);
             extra_pnginfo (dict|None): 额外元数据;
             workflow_name (str|None): 当前工作流名; 非空时在 output 下建同名子目录再写
-                (工作流里有 md 数据表节点时改用表文件名, 见 _workflow_output_dir)。
+                (工作流里有 md 数据表节点时改用表文件名, 见 _workflow_output_dir);
+            overwrite_path (str|None): 「覆盖原图」的目标文件绝对路径; 非空时**只写这一个文件**
+                (原地替换 md 表「原图」列指向的那张图), 此时 filename_prefix / workflow_name 都不参与
+                定名。多图批次下只落第一张 —— 覆盖是"一张源图被一张结果替换"的语义, 一张源文件
+                装不下多张结果, 后续张若也写同一路径只会互相覆盖, 故显式只取首张。
 
         返回:
             None: 直接写文件到 output(或其子目录)目录。
@@ -271,8 +354,13 @@ class PreviewImageSaveNode:
                     encoded = inject_png_metadata(encoded, prompt, extra_pnginfo)
                 elif file_format == "exr":
                     encoded = inject_exr_metadata(encoded, prompt, extra_pnginfo, colorspace)
-            name = filename_prefix.replace("%batch_num%", str(batch_number))
-            full_path = os.path.join(output_dir, f"{name}.{file_format}")
+            if overwrite_path:
+                if batch_number:
+                    break
+                full_path = overwrite_path
+            else:
+                name = filename_prefix.replace("%batch_num%", str(batch_number))
+                full_path = os.path.join(output_dir, f"{name}.{file_format}")
             with open(full_path, "wb") as f:
                 f.write(encoded)
 
@@ -307,6 +395,7 @@ class PreviewImageSaveNode:
         format: str = "png",
         bit_depth: str = "8-bit",
         input_color_space: str = "sRGB",
+        overwrite_original: bool = False,
         prompt=None,
         extra_pnginfo=None,
         id: str | None = None,
@@ -325,6 +414,9 @@ class PreviewImageSaveNode:
             format (str, 默认 "png"): png/exr(控件);
             bit_depth (str, 默认 "8-bit"): 位深(控件);
             input_color_space (str, 默认 "sRGB"): 输入色彩空间(控件);
+            overwrite_original (bool, 默认 False): 「覆盖原图」开关(控件)。本方法只把它连同 prompt
+                一起缓存, 真正的覆盖判定在点「保存」时由 _original_image_path 做 —— 缓存它是因为
+                保存路由不重跑工作流, 拿不到控件值;
             prompt (dict|None): 工作流 prompt(缓存, 供保存时注入元数据);
             extra_pnginfo (dict|None): 额外元数据(同上);
             id (str | None, 默认 None): 节点唯一 ID, 用作缓存键的一部分(另一半是工作流作用域, 见 _workflow_scope)。
@@ -348,12 +440,14 @@ class PreviewImageSaveNode:
         # 缓存最近一次预览的图片数据(供「保存」直接写 output, 无需重跑)
         # filename_prefix/filename_suffix 一并缓存: 这些输入可能被上游连线(如 MDTable 的 ID 列),
         # 此时 widget 里只是占位符, 实际值在 execute 收到的入参里 —— 保存用它而非占位符。
+        # overwrite_original 同缓存: 保存走 HTTP 路由、不重跑工作流, 那里取不到控件值。
         _last_output[_scoped_key(id, scope)] = {
             "images": list(images),
             "prompt": prompt,
             "extra_pnginfo": extra_pnginfo,
             "filename_prefix": filename_prefix,
             "filename_suffix": filename_suffix,
+            "overwrite_original": _is_overwrite_on(overwrite_original),
         }
 
         results = []
@@ -477,6 +571,20 @@ async def _handle_save(request: web.Request) -> web.Response:
     bit_depth = str(data.get("bit_depth", "8-bit"))
     colorspace = str(data.get("input_color_space", "sRGB"))
 
+    # 「覆盖原图」: 只有在开关为真**且** md 选中行的「原图」列能解析到真实文件时才成立 ——
+    # 开关为假、工作流没有 md 表、原图列为空或解析不到文件, 三者任一都退回默认保存行为
+    # (这也是"其它情况 true/false 都当 false"的落点: 判定权完全在本函数, 不看开关单独成立)。
+    overwrite_path = ""
+    overwrite_on = data.get("overwrite_original")
+    if overwrite_on is None:
+        overwrite_on = cache.get("overwrite_original")
+    if _is_overwrite_on(overwrite_on):
+        overwrite_path = _original_image_path(cache.get("prompt"))
+        if overwrite_path:
+            # 覆盖是按原文件就地替换, 编码格式必须跟着原扩展名走(不能听控件里的 format, 否则
+            # 会把 exr 目标写成 png)。_original_image_path 已保证只返回 .png/.exr 两种目标。
+            file_format = "exr" if overwrite_path.lower().endswith(".exr") else "png"
+
     node = PreviewImageSaveNode()
     node._save_batch_to_output(
         cache["images"],
@@ -487,7 +595,15 @@ async def _handle_save(request: web.Request) -> web.Response:
         cache.get("prompt"),
         cache.get("extra_pnginfo"),
         data.get("workflow_name"),
+        overwrite_path or None,
     )
+    if overwrite_path:
+        return web.json_response(
+            {
+                "status": "ok",
+                "message": f"已覆盖原图 {len(cache['images'])} 张: {overwrite_path}",
+            }
+        )
     saved_dir = resolve_subdir(data.get("workflow_name"), cache.get("prompt"))
     where = f"{saved_dir}/" if saved_dir else ""
     return web.json_response(

@@ -360,6 +360,10 @@ app.registerExtension({
               format: getWidget("format") ?? "png",
               bit_depth: getWidget("bit_depth") ?? "8-bit",
               input_color_space: getWidget("input_color_space") ?? "sRGB",
+              // 「覆盖原图」开关: 后端只有在它为真**且** md 选中行的「原图」列能解析到真实文件时
+              // 才就地覆盖那个文件; 开关假、无 md 表、原图列空、解析不到文件, 一律走默认保存
+              // (所以后端是唯一判定方, 这里只如实上报控件值)
+              overwrite_original: getWidget("overwrite_original") ?? false,
               // 当前工作流名: 后端据此在 output 下建同名子目录再保存(取不到则由后端回退 output 根)
               workflow_name: currentWorkflowName(),
               // 当前工作流根 id: 后端据此定位「本次执行」的预览缓存 —— 不带就会拿别的工作流
@@ -386,13 +390,14 @@ app.registerExtension({
 
       // ── 旧版 widgets_values 迁移 ──
       // 旧结构: [前缀, 格式, 位深, 色彩空间, 保存按钮] (5 槽, 无 suffix);
-      // 新结构: [前缀, suffix, 格式, 位深, 色彩空间, 保存按钮] (6 槽, suffix 紧挨前缀)。
-      // suffix 插入到第 2 位后, 按位置恢复会整体错位(suffix 吃格式、格式吃位深...)。
+      // 旧新结构: [前缀, suffix, 格式, 位深, 色彩空间, 保存按钮] (6 槽);
+      // 现结构: [前缀, suffix, 格式, 位深, 色彩空间, 覆盖原图, 保存按钮] (7 槽)。
+      // 新控件一律缀在**尾部控件的最后** —— 按位置恢复时前面的值不会错位。
       // 新版前端保存的文件带 widgets_values_named(含 filename_suffix 键) → 位置已是新序, 跳过;
       // 其余按旧形状(5 槽)检测, 逐项按名还原, 并重写 info.widgets_values 保持序列化一致。
       const prevOnConfigure = node.onConfigure;
       /**
-       * 加载迁移钩子: 旧 5 槽 widgets_values 按名还原到新 6 槽结构。
+       * 加载迁移钩子: 旧 5 槽 widgets_values 按名还原到新 7 槽结构。
        * @param {object} info 节点序列化数据
        * @returns {*} 原 onConfigure 的返回值
        */
@@ -400,6 +405,11 @@ app.registerExtension({
         prevOnConfigure?.call(this, info);
         // 后端是唯一事实来源: 从它读回预览图并重建前端(刷新不丢)
         restoreImages(node);
+        // 「覆盖原图」是后加的第 6 个控件: 老存档按位置恢复时, 这个槽会接到旧结构里
+        // 属于保存按钮的占位值(null/undefined), 布尔控件拿到非布尔值会显示异常 ——
+        // 非布尔一律归位到默认值 false(即"保持现有行为", 不会误触发覆盖)。
+        const ow = node.widgets?.find((x) => x.name === "overwrite_original");
+        if (ow && typeof ow.value !== "boolean") ow.value = false;
         const named = info?.widgets_values_named;
         const isNewFormat = named && typeof named === "object" && "filename_suffix" in named;
         if (isNewFormat) return;
@@ -414,9 +424,10 @@ app.registerExtension({
         set("format", wv[1]);
         set("bit_depth", wv[2]);
         set("input_color_space", wv[3]);
+        set("overwrite_original", false);
         // 触发 format 回调按恢复值联动位深/色彩空间选项(旧 exr 文件需 32-bit float 等选项就位)
         node.widgets?.find((x) => x.name === "format")?.callback?.(wv[1]);
-        info.widgets_values = [wv[0], "", wv[1], wv[2], wv[3], wv[4]];
+        info.widgets_values = [wv[0], "", wv[1], wv[2], wv[3], false, wv[4]];
       };
     };
   },

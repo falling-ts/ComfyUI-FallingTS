@@ -187,3 +187,39 @@ def resolve_subdir(workflow_name, prompt=None) -> str:
         str: 子目录名; 空串表示不建子目录(退回 output 根)。
     """
     return md_table_name(prompt) or safe_dir_name(workflow_name)
+
+
+def md_table_original_image(prompt) -> str:
+    """从 API prompt 的 md 数据表节点里取「原图」列的值(未解析的原始文本)。
+
+    取「原图」列而非其它字段的理由: 该列按约定就是这一行待编辑的源图, 「覆盖原图」要覆盖的
+    正是它 —— 与 `@{表名/ID}` 的产物落盘口径同源。列名按「原图 / 原视频 / 原音频 / 原声音」
+    依次匹配(IMAGE/VIDEO/AUDIO 三类表的源列命名不同), 命中第一个非缺失的列名即返回。
+
+    同图出现多个 md 表节点时取节点 id 最小的那个(与 md_table_name 同口径, 保证结果确定)。
+
+    参数:
+        prompt (dict|None): 引擎注入的 API prompt {节点 id: {"class_type":..., "inputs": {...}}}。
+
+    返回:
+        str: 「原图」列的原始值(可能是 `@{表名/ID}` 引用、绝对/相对路径, 或空串);
+             工作流里没有 md 表节点 / 该行该列为空时返回空串。
+    """
+    if not isinstance(prompt, dict):
+        return ""
+    for node_id in sorted(prompt, key=_node_order):
+        node = prompt.get(node_id)
+        if not isinstance(node, dict) or node.get("class_type") != MD_TABLE_CLASS:
+            continue
+        data = node.get("inputs", {}).get("data")
+        if not isinstance(data, dict):
+            continue
+        selected = data.get("selected")
+        values = selected.get("values") if isinstance(selected, dict) else None
+        if not isinstance(values, dict):
+            continue
+        # 先按确切列名找, 再按前缀兜底(表间列名不完全统一: 原视频/原音频/原声音)
+        for key in ("原图", "原视频", "原音频", "原声音"):
+            if key in values:
+                return str(values.get(key) or "").strip()
+    return ""

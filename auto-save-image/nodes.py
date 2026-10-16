@@ -104,6 +104,7 @@ class AutoSaveImageNode(PreviewImageSaveNode):
         format: str = "png",
         bit_depth: str = "8-bit",
         input_color_space: str = "sRGB",
+        overwrite_original: bool = False,
         prompt=None,
         extra_pnginfo=None,
         id: str | None = None,
@@ -121,6 +122,9 @@ class AutoSaveImageNode(PreviewImageSaveNode):
             format (str, 默认 "png"): png/exr;
             bit_depth (str, 默认 "8-bit"): 位深(png→8/16-bit, exr→16/32-bit float);
             input_color_space (str, 默认 "sRGB"): 输入色彩空间(png→sRGB, exr→sRGB/HDR/HDR PQ/linear/HDR LogC3/HDR ACEScct);
+            overwrite_original (bool, 默认 False): 「覆盖原图」开关; 与「预览图片」同一口径 ——
+                为真且 md 选中行的「原图」列能解析到真实文件时才就地覆盖, 其余情况一律走默认落盘
+                (本节点继承父类的 INPUT_TYPES, 故必须接受这个同参数, 否则引擎传参会 TypeError);
             prompt (dict|None): 工作流 prompt(注入元数据 + 解析 md 表子目录);
             extra_pnginfo (dict|None): 额外元数据(兼取当前工作流名, 见 workflow_name_from_extra);
             id (str|None): 节点唯一 ID, 用作预览缓存键的一部分(另一半是工作流作用域)。
@@ -151,11 +155,23 @@ class AutoSaveImageNode(PreviewImageSaveNode):
             "extra_pnginfo": extra_pnginfo,
             "filename_prefix": filename_prefix,
             "filename_suffix": filename_suffix,
+            "overwrite_original": _PI._is_overwrite_on(overwrite_original),
         }
 
         # 自动保存: 前缀 + 后缀拼接后整体作文件名(同名覆盖, 无 _序号); 子目录优先 md 表文件名
         workflow_name = workflow_name_from_extra(extra_pnginfo)
         name = filename_prefix + filename_suffix
+        # 「覆盖原图」与「预览图片」同一口径: 开关为真且 md 选中行的「原图」列解析到真实文件时
+        # 才就地覆盖那一个文件, 其余情况一律按默认落盘(这是"其它情况 true/false 都当 false")。
+        # 判定走 _is_overwrite_on 白名单, 不写裸 if —— 该控件在槽位尾部, 老存档可能喂进
+        # None/''/'false' 这类占位值, 裸判会把文本误当"开"。
+        overwrite_path = (
+            _PI._original_image_path(prompt) if _PI._is_overwrite_on(overwrite_original) else ""
+        )
+        if overwrite_path:
+            # 编码格式跟着原扩展名走(不能听控件里的 format, 否则会把 exr 目标写成 png);
+            # _original_image_path 已保证只返回 .png/.exr 两种目标
+            file_format = "exr" if overwrite_path.lower().endswith(".exr") else "png"
         self._save_batch_to_output(
             images,
             name,
@@ -165,15 +181,19 @@ class AutoSaveImageNode(PreviewImageSaveNode):
             prompt,
             extra_pnginfo,
             workflow_name,
+            overwrite_path or None,
         )
-        where = _PI.resolve_subdir(workflow_name, prompt)
-        logger.info(
-            "[FallingTS] 自动保存图片 %d 张: %s%s.%s",
-            len(images),
-            f"{where}/" if where else "",
-            name,
-            file_format,
-        )
+        if overwrite_path:
+            logger.info("[FallingTS] 自动保存覆盖原图 %d 张: %s", len(images), overwrite_path)
+        else:
+            where = _PI.resolve_subdir(workflow_name, prompt)
+            logger.info(
+                "[FallingTS] 自动保存图片 %d 张: %s%s.%s",
+                len(images),
+                f"{where}/" if where else "",
+                name,
+                file_format,
+            )
 
         results = []
         for image in images:
