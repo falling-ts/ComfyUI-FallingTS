@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import io as _io
+import importlib
 import logging
 import os
 import random
@@ -171,6 +172,67 @@ def _resolve_cache_key(node_id, workflow_id=None) -> str:
         if existing.endswith(suffix):
             return existing
     return nid
+
+
+def _upstream_continue_pending(cls) -> bool:
+    """判断本节点的上游链上是否还有「继续节点」尚未拿到数据(缓存为空)。
+
+    为什么需要这个判断(2026-10-18 修「首帧场景点继续提示没有上游数据」):
+
+    本节点的 video 是 lazy, 引擎构建执行列表时不沿这条边向上游遍历。已「完成」且
+    有选中帧时 check_lazy_status 返回 [], 于是本节点的整条上游(含继续节点)**都不在
+    执行列表里**。若继续节点的 _data_cache 此时是空的, 那个继续节点就再没有机会执行,
+    点它「继续」会恒返回 400「没有上游数据」—— 而且 _done 跨 Run 持久, 用户先 Run
+    一次也救不回来, 只能重启进程。
+
+    实测 0031_首帧场景: #186(二采预览) 完成后全量 Run 只跑 10 秒(未完成时要 170 秒),
+    可达节点从 68 个掉到 14 个, /proceed/state 显示 data_cache 为空, 点 #192 恒 400。
+
+    所以已「完成」时还要多问一句: 上游有没有等着被填充的继续节点?
+    有 -> 照旧拉一次上游(把上游跑到继续节点, 它自己会缓存并阻塞), 保住继续节点的可用性。
+    没有 -> 才真正跳过上游, 保持「点完成只跑下游」的原语义。
+
+    参数:
+        cls: PreviewVideo 的类对象(取其 hidden.prompt 拿本轮提交的 prompt 图)。
+
+    返回:
+        bool: 上游存在缓存为空的继续节点返回 True; 否则(含拿不到 prompt 图)False。
+    """
+    try:
+        # 继续节点模块与入口 importlib 加载的是同一模块对象, 直接按名取类即可
+        proceed = importlib.import_module("proceed.nodes")
+        continue_cls = proceed.FallingTSContinueNode
+        cache = continue_cls._data_cache
+    except Exception:  # noqa: BLE001 - 拿不到插件内部状态时保守跳过, 不阻断预览
+        return False
+    prompt = getattr(cls.hidden, "prompt", None)
+    if not isinstance(prompt, dict):
+        return False
+    nid = str(getattr(cls.hidden, "unique_id", "") or "")
+    if not nid or nid not in prompt:
+        return False
+    # 从本节点沿输入边向上游 BFS, 找第一个缓存为空的 FallingTSContinue
+    seen: set[str] = set()
+    stack = [nid]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        node = prompt.get(cur)
+        if not isinstance(node, dict):
+            continue
+        for value in (node.get("inputs") or {}).values():
+            if not (isinstance(value, list) and len(value) == 2):
+                continue
+            src = str(value[0])
+            src_node = prompt.get(src)
+            if not isinstance(src_node, dict):
+                continue
+            if src_node.get("class_type") == "FallingTSContinue" and src not in cache:
+                return True
+            stack.append(src)
+    return False
 
 
 def _safe_dir_name(name) -> str:
@@ -580,8 +642,13 @@ class PreviewVideoNode(IO.ComfyNode):
         key = _resolve_cache_key(nid_str, _workflow_scope(getattr(cls.hidden, "extra_pnginfo", None)))
         cached = _last_output.get(key) or {}
         if key in _done and (cached.get("selected_frames") or []):
-            return []  # 已「完成」且有选中帧: 不拉上游, execute 从缓存取
-        return ["video"]  # 未完成: 拉上游, 生成/更新缓存的视频
+            # 已「完成」且有选中帧: 默认不拉上游, execute 从缓存取。
+            # ⚠️ 但若上游链上的继续节点还等着被跑(见 _upstream_continue_pending),
+            # 必须拉一次 —— 否则那条 lazy 边把整条上游挡在执行列表外, 继续节点永远
+            # 填不上缓存, 点它「继续」恒 400。拉这一次不会重跑下游, 只是把上游跑到继续节点。
+            if not _upstream_continue_pending(cls):
+                return []
+        return ["video"]  # 未完成 / 上游有继续节点待跑: 拉上游, 生成/更新缓存的视频
 
     @classmethod
     def fingerprint_inputs(cls, **kwargs):

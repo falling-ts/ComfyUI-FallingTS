@@ -112,9 +112,28 @@ class FallingTSContinueNode:
 
         放行语义:
         - 未放行(首次 Run / 上一段刚放行到本节点): 上游必须执行以产生数据 -> 返回 ["any"] 拉上游, 填缓存;
-        - 已放行(点过「继续」): 上游不应重跑, 数据来自节点缓存 -> 返回 [] 不拉, 引擎给 any=None,
-          execute 里 None 不会覆盖缓存;
+        - 已放行且**已有缓存**(点过「继续」): 上游不应重跑, 数据来自节点缓存 -> 返回 [] 不拉,
+          引擎给 any=None, execute 里 None 不会覆盖缓存;
+        - 已放行但**缓存为空**: 拉上游自愈(见下方"自愈"说明);
         - 没连线: 根本没有上游可拉, 返回 [] —— 避免对不存在的输入 make_input_strong_link 抛 NodeInputError。
+
+        ⚠️ 自愈(2026-10-18 修「首帧场景点继续提示没有上游数据」):
+        「已放行」不再单独等于「不拉上游」—— 还要看缓存里到底有没有数据。
+        只按 _released 判断会有个死角: 一旦某次运行 reset 清空了 _data_cache 而本节点又
+        没机会执行(见下方"上游可执行性"说明), 缓存就是空的; 此时再点「继续」,
+        路由会以 400 拒绝, 而放行位却还留着 -> 永久卡死, 除非重启进程。
+        改成"缓存空就拉上游"后, 只要本节点被执行到就必然把缓存填回来, 状态自愈。
+
+        ⚠️ 上游可执行性(这条才是「点继续恒 400」真正的根因):
+        本节点的 any 是 lazy, 引擎构建执行列表时不会沿这条边向上游遍历; 因此本节点能否
+        被执行, 完全取决于**下游**有没有一条非 lazy 的路把它拉进执行列表。
+        当下游的 PreviewVideo 已点过「完成」且有选中帧时, 它的 check_lazy_status 返回 [],
+        不拉自己的 video 上游 -> 本节点连同整条上游都被排除在执行列表外 -> 本节点从不执行
+        -> 缓存永远填不上。实测 0031_首帧场景: #186(二采预览) 完成后全量 Run 只需 10 秒
+        (未完成时要 170 秒), 可达节点从 68 个掉到 14 个, /proceed/state 显示
+        data_cache 为空, 点 #192「继续」恒 400。
+        而 _done 跨 Run 持久(前端 Run 只调 /proceed/reset, 不调 /preview-video/reset),
+        所以"先 Run 一次再点继续"注定失败 —— 必须在 PreviewVideo 侧解掉(见其 check_lazy_status)。
 
         参数:
             any (Any, 默认 MISSING): 上游数据, 由引擎按输入名注入:
@@ -128,9 +147,9 @@ class FallingTSContinueNode:
         """
         if any is MISSING:
             return []          # 没连线: 无上游可拉
-        if id in self._released:
-            return []          # 已放行: 不拉上游, execute 从 _data_cache 取缓存
-        return ["any"]         # 未放行: 拉上游, 填缓存后再阻塞
+        if id in self._released and id in self._data_cache:
+            return []          # 已放行且有缓存: 不拉上游, execute 从 _data_cache 取缓存
+        return ["any"]         # 未放行 或 已放行但缓存空: 拉上游, 填缓存后再阻塞/放行
 
     def execute(self, any: Any = None, id: str | None = None):  # noqa: A002
         """节点执行入口(分段执行的核心逻辑)。
@@ -216,6 +235,30 @@ async def _handle_reset(request: web.Request) -> web.Response:
     # 递增重置代际: 强制继续节点重新执行(见 IS_CHANGED), 避免同进程重跑时被全局执行缓存跳过
     FallingTSContinueNode._reset_generation += 1
     return web.json_response({"status": "ok"})
+
+
+@PromptServer.instance.routes.get("/proceed/state")
+async def _handle_state(request: web.Request) -> web.Response:
+    """HTTP 路由: 只读查询各继续节点的内部状态(排查「没有上游数据」用)。
+
+    返回 _released(已放行的节点)与 _data_cache 的键(值只报类型, 不序列化张量),
+    以及 _reset_generation。前端不调用本路由, 仅供诊断。
+
+    参数:
+        request (web.Request): GET /proceed/state 请求, 不读取参数。
+
+    返回:
+        web.Response (JSON): {"released": [...], "data_cache": {id: 类型名}, "generation": int}。
+    """
+    return web.json_response(
+        {
+            "released": sorted(FallingTSContinueNode._released),
+            "data_cache": {
+                k: type(v).__name__ for k, v in FallingTSContinueNode._data_cache.items()
+            },
+            "generation": FallingTSContinueNode._reset_generation,
+        }
+    )
 
 
 NODE_CLASS_MAPPINGS = {
