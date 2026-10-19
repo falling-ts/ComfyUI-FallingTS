@@ -21,9 +21,36 @@ function getTotal(node) {
   return Math.min(MAX_GROUPS, Math.max(1, v));
 }
 
+/** 组输入端口名: false_i / true_i。switch/total 等 widget 端口不匹配。 */
+const GROUP_RE = /^(false|true)_(\d+)$/;
+
+/**
+ * 判断输入端口是否为组端口(false_i / true_i), 而非 switch/total 这类 widget 端口。
+ *
+ * @param {object} inp 输入端口对象
+ * @returns {boolean} 是组端口返回 true
+ */
+function isGroupInput(inp) {
+  return GROUP_RE.test(inp?.name ?? "");
+}
+
+/**
+ * 取组端口的组号(1 起); 非组端口返回 NaN。
+ *
+ * @param {object} inp 输入端口对象
+ * @returns {number} 组号
+ */
+function groupIndexOf(inp) {
+  return Number(GROUP_RE.exec(inp?.name ?? "")?.[2]);
+}
+
 /**
  * 按 total 对齐节点端口: 输入每 2 个一组(false_i, true_i), 输出 output_1..output_total。
- * 未使用的输入/输出端口被删除, 不进入 prompt。
+ * 未使用且未连线的端口被删除, 不进入 prompt。
+ *
+ * ⚠️ 只按端口名识别组端口, 不再用 inputs.length 计数: 旧版工作流把 switch/total 也
+ * 序列化进 inputs(共 4 个端口), 早先按 total*2 计数会从末尾裁掉 false_1/true_1 并
+ * 连带断开它们的连线(0031_首帧场景 丢 link 395/398 事故的根因)。
  *
  * @param {LGraphNode} node 分组开关节点对象
  * @returns {void}
@@ -31,23 +58,33 @@ function getTotal(node) {
 function syncGroups(node) {
   const total = getTotal(node);
 
-  // 组输入: 每 2 个一组 (false_i, true_i)
-  const wantInputs = total * 2;
-  while ((node.inputs?.length ?? 0) > wantInputs) {
-    node.removeInput(node.inputs.length - 1);
-  }
-  while ((node.inputs?.length ?? 0) < wantInputs) {
-    const idx = node.inputs.length;
-    const g = Math.floor(idx / 2) + 1;
-    node.addInput(idx % 2 === 0 ? `false_${g}` : `true_${g}`, "*");
-  }
-  for (let i = 0; i < wantInputs; i++) {
-    const g = Math.floor(i / 2) + 1;
-    node.inputs[i].localized_name = (i % 2 === 0 ? "\u4e3a\u5047\u65f6 " : "\u4e3a\u771f\u65f6 ") + g;
+  // 组输入: 每 2 个一组 (false_i, true_i)。
+  // 先删多余组端口 —— 仅限组号 > total 且未连线; 已连线的保留(后端只取 i<=total, 多留无害)。
+  for (let i = node.inputs.length - 1; i >= 0; i--) {
+    const inp = node.inputs[i];
+    if (isGroupInput(inp) && groupIndexOf(inp) > total && inp.link == null) {
+      node.removeInput(i);
+    }
   }
 
-  // 输出: output_1..output_total
+  // 再补缺失组端口: 保证 false_1/true_1 .. false_total/true_total 齐全。
+  for (let g = 1; g <= total; g++) {
+    for (const side of ["false", "true"]) {
+      const name = `${side}_${g}`;
+      if (!node.inputs.some((inp) => inp.name === name)) node.addInput(name, "*");
+    }
+  }
+
+  // 统一本地化名(只处理组端口, widget 端口保持后端给的名字)
+  for (const inp of node.inputs) {
+    if (!isGroupInput(inp)) continue;
+    inp.localized_name =
+      (inp.name.startsWith("false") ? "\u4e3a\u5047\u65f6 " : "\u4e3a\u771f\u65f6 ") + groupIndexOf(inp);
+  }
+
+  // 输出: output_1..output_total; 末尾已连线的输出保留, 不放空
   while ((node.outputs?.length ?? 0) > total) {
+    if (node.outputs[node.outputs.length - 1].links?.length) break;
     node.removeOutput(node.outputs.length - 1);
   }
   while ((node.outputs?.length ?? 0) < total) {
