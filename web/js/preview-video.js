@@ -761,17 +761,49 @@ app.registerExtension({
         }
       });
 
-      // ── 完成: 无帧 = 预加载上游; 有帧 = 置完成后 partial 只跑下游 ──
+      // ── 完成: 无帧 = 视频已缓存则提示截帧, 否则只跑到本节点为止; 有帧 = 置完成后 partial 只跑下游 ──
       node.addWidget("button", "完成", null, async () => {
         const frames = node._fallingtsFrameList?.state?.frames ?? [];
         try {
           if (frames.length === 0) {
+            // 无选中帧的「完成」= 让视频就绪供截帧。旧实现走 app.queuePrompt 全量提交,
+            // 该入口被 proceed.js 包装过、会先 POST /proceed/reset 清空**全部**继续节点的
+            // 放行态与 _data_cache ⇒ 之后点「继续」恒 400「没有上游数据」(与 e8b5d21 同源),
+            // 且整图从头发跑一遍(实测 0031 跑了 18 与 186 两条链共 10 个输出节点)。
+            //
+            // 现在分两步, 都不经 app.queuePrompt:
+            // ① 后端已有视频缓存 = 截帧与保存都能直接用, 无需重跑任何上游, 只提示去截帧;
+            //    (本节点没截过帧但后端正缓存着视频, 是「刷新过页面」的常态 —— 前端 frame_list
+            //    按设计刷新即清空, 而后端 _last_output 还在)
+            // ② 确实没有视频才以本节点自身为唯一 partial 目标重跑: 引擎从本节点沿输入边
+            //    向上游只拉本段生成链, 继续节点在旁支(不输入本节点)故不被触及,
+            //    上游缓存/放行态原样保留。上游真有继续节点时(如二采预览), 那个继续节点
+            //    会照旧把它自己的分段语义走完, 不会从整图最开头跑。
+            let hasVideo = false;
             try {
-              await fetch("/preview-video/reset", { method: "POST" });
+              const wid = encodeURIComponent(currentWorkflowId());
+              const st = await fetch(`/preview-video/state/${node.id}?workflow_id=${wid}`);
+              if (st.ok) hasVideo = !!(await st.json())?.has_video;
             } catch {
-              /* 忽略 */
+              /* 查不到状态就按"没有视频"走, 由下面的部分提交兜底 */
             }
-            await app.queuePrompt(0, 1);
+            if (hasVideo) {
+              app.extensionManager.toast.add({
+                severity: "info",
+                summary: "视频已就绪, 请截帧后再点完成",
+                life: 3000,
+              });
+              restoreFrames(node, node._fallingtsFrameList);
+              restoreVideo(node);
+              return;
+            }
+            try {
+              await submitPartial(node, [String(node.id)]);
+            } catch (err) {
+              console.error("[FallingTS] 预加载失败:", err);
+              app.extensionManager.toast.add({ severity: "error", summary: "预加载失败: 无法提交任务", life: 3000 });
+              return;
+            }
             app.extensionManager.toast.add({
               severity: "info",
               summary: "已开始生成视频, 播放后可截帧",

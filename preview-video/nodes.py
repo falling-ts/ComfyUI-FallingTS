@@ -523,25 +523,32 @@ class PreviewVideoNode(IO.ComfyNode):
         wid = _workflow_scope(getattr(cls.hidden, "extra_pnginfo", None))
         key = _resolve_cache_key(nid_str, wid)
         prefix = str(filename_prefix)
-        blocked = [ExecutionBlocker(None)] * (_FIXED_OUTPUTS + MAX_FRAMES)
+        # 阻断槽: video(0) 与选中帧(3 起)恒挡; audio(1)/prefix(2) 只在「连缓存都没有」时挡。
+        # ⚠️ prefix 被各保存节点的 filename_prefix 接线(0031 的 157/158/159/160 都接它),
+        # 未「完成」就挡掉会让下游 AutoSaveImage 连输入都拿不到、整条保存/合成链永远不执行
+        # ⇒ 四图/八图合成从不落盘。与「加载视频」同口径: 拆音/落盘都不需要截帧。
+        no_cache = [ExecutionBlocker(None)] * (_FIXED_OUTPUTS + MAX_FRAMES)
 
         if video is None:
             # 无值: lazy 未拉上游 / 扇出未选中分支 -> 回放上次预览。
             cached = _last_output.get(key)
             if not cached or not cached.get("video"):
-                return IO.NodeOutput(*blocked)
+                return IO.NodeOutput(*no_cache)
             # 回放同样要保证 temp 文件真的还在: 不在就现场重编码一份; 编不出则不发预览事件,
             # 输出照旧(下游拿到的是缓存的视频/帧, 不依赖这份 temp)
             got = _ensure_temp_preview(cached)
             frames = _frames_from_cache(cached, cached.get("selected_frames") or [])
             if key not in _done:
-                # 未完成: 预览仍发出, 但输出全部 block(下游节点不执行)
+                # 未完成: 预览仍发出, video 与选中帧阻断; audio/prefix 照常透传给下游
+                outs = (ExecutionBlocker(None), cached.get("audio"), prefix) + tuple(
+                    ExecutionBlocker(None) for _ in range(MAX_FRAMES)
+                )
                 if got:
                     return IO.NodeOutput(
-                        *blocked,
+                        *outs,
                         ui=UI.PreviewVideo([UI.SavedResult(got[0], got[1], IO.FolderType.temp)]),
                     )
-                return IO.NodeOutput(*blocked)
+                return IO.NodeOutput(*outs)
             if got:
                 return IO.NodeOutput(
                     cached.get("video"),
@@ -588,10 +595,13 @@ class PreviewVideoNode(IO.ComfyNode):
             else None
         )
         if key not in _done:
-            # 未「完成」(继续语义): 阻断下游(合成/保存都不跑, "到预览节点就停止断掉"),
-            # 但 UI.PreviewVideo 预览事件仍照常发出, 视频照常供播放/截帧。
-            # 首次 Run 即此态: 上游全部执行, 到此断开。
-            return IO.NodeOutput(*blocked, ui=ui) if ui else IO.NodeOutput(*blocked)
+            # 未「完成」(继续语义): video 与选中帧阻断下游(合成/保存都不跑, "到预览节点就停止断掉"),
+            # 但 audio 与 prefix 照常输出(拆音/落盘不需要截帧, 与「加载视频」同口径),
+            # UI.PreviewVideo 预览事件仍照常发出, 视频照常供播放/截帧。首次 Run 即此态。
+            outs = (ExecutionBlocker(None), parts["audio"], prefix) + tuple(
+                ExecutionBlocker(None) for _ in range(MAX_FRAMES)
+            )
+            return IO.NodeOutput(*outs, ui=ui) if ui else IO.NodeOutput(*outs)
         if ui:
             return IO.NodeOutput(
                 video,

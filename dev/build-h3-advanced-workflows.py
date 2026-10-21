@@ -77,7 +77,7 @@ LoRA 与一个开关:
                                                         ↓
                                         独立的 VAEDecode / VAEDecodeAudio → CreateVideo → 二采预览
 
-**纯视频**(0013/0014/0030/0031/0032/0033, 无 audio VAE):
+**纯视频**(0013/0014/0030/0031/0032, 无 audio VAE):
 
     一采 SamplerCustomAdvanced → MiniMaxH3LatentUpscale → MiniMaxH3AddNoise(video)
        → SamplerCustomAdvanced(二采) → 独立的 VAEDecode → CreateVideo → 二采预览
@@ -86,7 +86,7 @@ LoRA 与一个开关:
 AV latent)。
 
 **二采自己解码、自己出一个预览节点, 一采的 PreviewVideo 原样保留** —— 画布上同时有两个
-产物可直接对比; 而且**不切断**原有下游(0030/0033 的截帧链仍吃一采的帧, 行为完全不变)。
+产物可直接对比; 而且**不切断**原有下游(0030 的截帧链仍吃一采的帧, 行为完全不变)。
 
 **scale_by 随尺寸档位联动**: `FallingTSSelector` 的 `total` 从 2 扩到 3, 新增一组
 `scale_by`。480p→1.6、544p→1.4、768p→1.0, 三个值都精确落在 H3 原生 1344×768
@@ -137,7 +137,6 @@ TARGETS = [
     "0030_文生场景",
     "0031_首帧场景",
     "0032_参考场景",
-    "0033_OrbitSheets场景",
     "0040_文生视频",
     "0041_首帧视频",
     "0042_首尾视频",
@@ -423,7 +422,7 @@ def find_size_selector(wf: dict) -> dict | None:
     """尺寸档位选择器 = 第一组输入端口有 9 个(9 个尺寸档)的 FallingTSSelector。
 
     ⚠️ **不能只认「widgets[0] 以 `默认,` 开头」**: 步数选择器的 items 是 `默认,8步,4步`,
-    同样以「默认,」开头 ⇒ 0030/0031/0032/0033 都会误抓到步数选择器, 于是脚本去扩它的
+    同样以「默认,」开头 ⇒ 0030/0031/0032 都会误抓到步数选择器, 于是脚本去扩它的
     total, 把步数档扩成尺寸档(0031 因此报「Sage 没有 MODEL 消费者」这类看似无关的错)。
     可靠的判据是**第一组端口数 == len(SIZE_ITEMS 的档位数)**: 尺寸选择器固定 9 档 18 端口,
     步数选择器只有 3 档 6 端口。
@@ -463,7 +462,7 @@ def fork_point(wf: dict) -> dict | None:
     """4 步链 / 8 步链 / 20 步官方档三条支路的**公共分叉点**。
 
     ⚠️ 实测各工作流的 MODEL 链形状不同:
-      - 0013/0014/0031/0032/0033/0040/0041/0042/0044: Sage → LowVRAMAttention → {4step, 8step, …}
+      - 0013/0014/0031/0032/0040/0041/0042/0044: Sage → LowVRAMAttention → {4step, 8step, …}
       - 0030/0043:                                    Sage → {EasyCache(20步档), 4step, 8step}
     所以**不能**统一取 LowVRAMAttention(0030/0043 根本没有这个节点)。
     唯一对所有工作流都成立的公共分叉点就是 `MiniMaxH3MemoryEfficientSageAttentionPatch`:
@@ -649,7 +648,6 @@ def prompt_injection_point(wf: dict) -> tuple[dict, int, dict, int, int] | None:
 
     ⚠️ 各工作流的提示词入口不同:
       - 0013/0014/0030/0031/0032/0041/0042/0043/0044: H3 生成节点的 `prompt` 输入
-      - 0033: `OrbitSheetsLocationPrompt` 喂 H3 的 `prompt`
       - 0040: 没有 H3 生成节点, 走 `CLIPTextEncode#20` 的 `text` 输入
     统一做法: 找「有 prompt/text 输入且已连线」的节点, 在其上游插拼接。
     """
@@ -719,7 +717,7 @@ def build_pass2(wf: dict, b: Builder, size_sel: dict) -> dict | None:
 
     设计取舍: **二采自己解码、自己出一个预览节点**, 一采的 PreviewVideo 原样保留。
     于是画布上同时有两个产物 —— 一采(原始)与二采(提 token 后), 可直接对比;
-    而且**不切断**原有下游(0030/0033 的截帧链仍吃一采的帧, 行为完全不变)。
+    而且**不切断**原有下游(0030 的截帧链仍吃一采的帧, 行为完全不变)。
     """
     p1 = find_pass1_sampler(wf)
     if p1 is None:
@@ -791,7 +789,7 @@ def build_pass2(wf: dict, b: Builder, size_sel: dict) -> dict | None:
 
     # ── 分离 AV latent(仅带音频的工作流) ──
     #
-    # ⚠️ 纯视频工作流(0013/0014/0030/0031/0032/0033)的一采 latent **没有音频分量**,
+    # ⚠️ 纯视频工作流(0013/0014/0030/0031/0032)的一采 latent **没有音频分量**,
     #    不能走 LTXVSeparateAVLatent —— 那条路要求联合 AV latent。这些直接对 latent
     #    做纯视频放大 + 纯视频加噪, 二采后仍用同一个 VAEDecode。
     audio = has_audio(wf)
@@ -1042,7 +1040,7 @@ def has_audio(wf: dict) -> bool:
       - **带音频**(0040/0041/0042/0043/0044): 有 `VAEDecodeAudio` 与 audio VAE,
         一采 latent 是**联合 AV latent**, 二采必须走 `LTXVSeparateAVLatent` /
         `MiniMaxH3ShiftSigmas` / `LTXVConcatAVLatent` 那条 AV 路径。
-      - **纯视频**(0013/0014/0030/0031/0032/0033): 只有 `VAEDecode`, 没有 audio VAE,
+      - **纯视频**(0013/0014/0030/0031/0032): 只有 `VAEDecode`, 没有 audio VAE,
         latent 里没有音频分量 —— 二采**不能**去接音频支路, 否则 `LTXVSeparateAVLatent`
         会拿不到音频而报错 / 产出坏数据。这些走纯视频路径。
     """

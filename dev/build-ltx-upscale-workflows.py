@@ -165,14 +165,23 @@ def strip_tail(wf: dict) -> int:
 
     识别靠**标题前缀** `TITLE_PREFIX` —— 本脚本新建的每个节点标题都带它, 而工作流原有节点
     都不会以它为前缀, 因此不会误删; 也无需在增删节点时同步维护任何白名单。
+
+    ⚠️ **加一道形态闸门**: 0030/0031/0032 的二采是早期手工搭的 LTX 潜空间放大链(标题现在
+    也叫 `LTX二采 · xxx`), 但它**没有** `EmptyLTXVLatentVideo` / `LTXAddVideoICLoRAGuide` 这
+    两个本脚本必建的节点。只看标题前缀会把它们当自家链删掉。故要求「组内出现本脚本的标志
+    节点」才认领 —— 那两节点同时缺失就说明这段不是本脚本建的。
     """
-    doomed = {
+    tagged = {
         n["id"]
         for n in wf["nodes"]
         if (n.get("title") or "").startswith(TITLE_PREFIX)
     }
-    if not doomed:
+    if not tagged:
         return 0
+    types = {n["type"] for n in wf["nodes"] if n["id"] in tagged}
+    if not {"EmptyLTXVLatentVideo", "LTXAddVideoICLoRAGuide"} <= types:
+        return 0
+    doomed = tagged
     wf["links"] = [l for l in wf["links"] if l[1] not in doomed and l[3] not in doomed]
     wf["nodes"] = [n for n in wf["nodes"] if n["id"] not in doomed]
     # 端口引用也要跟着清: 被删节点连过的下游, 其 inputs[].link 仍指着已删的连线

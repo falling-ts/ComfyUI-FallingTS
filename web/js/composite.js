@@ -3,7 +3,7 @@
 // - 标注是节点内 label1..labelN 表单文本框 (后端 required 文本控件), 按 total 自动扩充/收缩:
 //   超出 total 的文本框被移除 (不进入提交载荷), 新增加自动补齐 (默认空串 = 不画);
 // - 左侧未连接的图端口 = 该格底色空格占位; 标注文本框空串 = 不画;
-// - 加载工作流时自动迁移旧版 widgets_values (旧版 7 槽 / 中间版 12 槽 -> 新版基础 4 槽首部,
+// - 加载工作流时自动迁移旧版 widgets_values (旧版 7 槽 / 中间版 12 槽 -> 新版基础 5 槽首部,
 //   标注文本框紧跟基础槽之后, 前缀序对齐无需特殊处理)。
 import { app } from "../../../scripts/app.js";
 
@@ -80,7 +80,7 @@ function dropWidget(node, w) {
  * - 左侧只保留 image1..imageN 图端口 (超出的从尾部删除, 不足的从尾部补齐, 中文标签 图1..图N);
  * - 标注表单文本框只保留 label1..labelN (超出 total 的被移除而不进提交载荷, 不足的新增补齐),
  *   标题 标注1..标注N;
- * 不变量: widgets 序恒为 [total, font_size, padding, background_color, label1..labelN] 前缀序,
+ * 不变量: widgets 序恒为 [total, font_size, padding, background_color, match_input_size, label1..labelN] 前缀序,
  * 保证保存的 widgets_values 按位置套用仍然对齐。
  * @param {LGraphNode} node
  */
@@ -90,7 +90,7 @@ function syncNode(node) {
 
 /**
  * 按给定 total 对齐图端口与标注文本框 (syncNode 与加载期预对齐共用内部实现)。
- * 契约: 端口/控件维持 [image1..imageN | total, font_size, padding, background_color, label1..labelN] 顺序,
+ * 契约: 端口/控件维持 [image1..imageN | total, font_size, padding, background_color, match_input_size, label1..labelN] 顺序,
  * 与保存的 widgets_values 逐位对应, 保证按位置套用值时每一格都能命中已有控件。
  * @param {LGraphNode} node
  * @param {number} total 目标数量 (调用方已夹到 1..MAX_SLOTS)
@@ -204,20 +204,33 @@ app.registerExtension({
        * - 旧版 7 槽 (label1..4/font_size/padding/bg): 标注成为表单文本框, 取尾部三槽并在首部插入 total=4
        *   (旧标注文案舍弃: 未填写 = 不画);
        * - 中间版 12 槽 (total + 旧 label1..8 + font/padding/bg): 取首部 total 与尾部三槽。
-       * 其余格式 (新版基础 4 槽 / 基础 4 槽 + N 个标注文本框, 前缀序) 按位置直接套用, 无需迁移。
+       * 其余格式 (基础槽 + N 个标注文本框) 按位置直接套用, 仅在缺 match_input_size 时补 False。
+       *
+       * 判定口径: 基础槽数已是 5 (含 match_input_size), 故「旧 4 槽存档」必然是
+       * len = 4 + total 而不是 5 + total —— 用 wv.length - total 反推基础槽数最稳,
+       * 比按长度硬编码更不容易被 total 变化带偏。
        */
       node.onConfigure = function (info) {
         const wv = info?.widgets_values;
-        // 新版格式特征: wv[1] 是数字 (font_size); 旧版/中间版 wv[1] 是字符串 (label)。
-        // 7 槽 = 旧版 [label1..label4, font, padding, bg]; 12 槽 = 中间版 [total, label1..label8, font, padding, bg]。
-        // 新版 (total=3 → 7 槽 / total=8 → 12 槽) 的 wv[1] 是数字, 按位置直接套用, 不迁移,
-        // 否则 12 槽会被误当中间版: font/padding/bg 取错位置 (wv[9..11]) 且 label1..labelN 全丢。
-        if (Array.isArray(wv) && wv.length === 7 && typeof wv[1] !== "number") {
-          const [, , , , fs, pd, bg] = wv;
-          info.widgets_values = [DEFAULT_TOTAL, fs, pd, bg];
-        } else if (Array.isArray(wv) && wv.length === 12 && typeof wv[1] !== "number") {
-          const [tt, , , , , , , , , fs, pd, bg] = wv;
-          info.widgets_values = [tt ?? DEFAULT_TOTAL, fs, pd, bg];
+        if (Array.isArray(wv) && typeof wv[1] !== "number") {
+          // wv[1] 不是数字 => 旧格式 (新版 wv[1] 恒为 font_size 数字)
+          if (wv.length === 7) {
+            // 旧版 7 槽: label1..4 + font/padding/bg
+            const [, , , , fs, pd, bg] = wv;
+            info.widgets_values = [DEFAULT_TOTAL, fs, pd, bg, false];
+          } else if (wv.length === 12) {
+            // 中间版 12 槽: total + label1..8 + font/padding/bg
+            const [tt, , , , , , , , , fs, pd, bg] = wv;
+            info.widgets_values = [tt ?? DEFAULT_TOTAL, fs, pd, bg, false];
+          }
+        } else if (Array.isArray(wv) && wv.length) {
+          // 新版/旧版基础槽: 旧存档只有 4 个基础槽 (无 match_input_size),
+          // 需在第 4 槽后插入 False, 否则 label1 会顶到 match_input_size 上、标注整体左移一位
+          const savedTotal = Math.trunc(Number(wv[0]));
+          const total = Number.isFinite(savedTotal) && savedTotal >= 1 ? savedTotal : DEFAULT_TOTAL;
+          if (wv.length === 4 + total) {
+            info.widgets_values = [wv[0], wv[1], wv[2], wv[3], false, ...wv.slice(4)];
+          }
         }
         // 关键时序: 先按保存的 total 预对齐端口/标注文本框, 再由 prevOnConfigure 套值——
         // 创建时构造器已把控件裁到默认 total (4), 若直接按位置套用 widgets_values,

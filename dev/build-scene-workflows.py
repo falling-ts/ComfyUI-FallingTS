@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生场景工作流的「预览视频 → 0035 后续链」拼接: 0030 / 0031 / 0032 / 0033。
+"""生场景工作流的「预览视频 → 0035 后续链」拼接: 0030 / 0031 / 0032。
 
 ## 做什么
 
@@ -47,8 +47,8 @@ PREVIEW_VIDEO = "PreviewVideo"
 COMPOSITE = "FallingTSImageComposite"
 AUTO_SAVE_IMAGE = "AutoSaveImage"
 
-# 要拼接的目标工作流(按用户确认的范围: 四个「生场景」流)
-TARGETS = ["0030_文生场景", "0031_首帧场景", "0032_参考场景", "0033_OrbitSheets场景"]
+# 要拼接的目标工作流(按用户确认的范围: 三个「生场景」流)
+TARGETS = ["0030_文生场景", "0031_首帧场景", "0032_参考场景"]
 
 # 0035 的链: 8 个单向保存(后缀 → 标题), 顺序即 image_1..image_8 的分配顺序
 SINGLE_SAVES = [
@@ -147,7 +147,7 @@ def tail_templates() -> dict:
 def strip_tail(wf: dict) -> int:
     """删掉本脚本上次插入的尾部节点及其连线。
 
-    只认 TAIL_TITLES 里那几个精确标题, 不误删工作流原有节点(0030~0033 原本没有这些标题)。
+    只认 TAIL_TITLES 里那几个精确标题, 不误删工作流原有节点(0030~0032 原本没有这些标题)。
     返回删掉的节点数。
     """
     doomed = {
@@ -240,7 +240,7 @@ def build(name: str) -> dict:
     pv = node_by_type(wf, PREVIEW_VIDEO)[0]
     tpl = tail_templates()
 
-    # ① 预览视频: 补齐 audio/prefix + 选中帧端口(0030~0033 原本只有 video 一个输出)
+    # ① 预览视频: 补齐 audio/prefix + 选中帧端口(0030~0032 原本只有 video 一个输出)
     old_out = pv.get("outputs") or []
     # 保留原有 video 端口的连线(它就是 CreateVideo 的结果), 其余重建
     new_outputs = [

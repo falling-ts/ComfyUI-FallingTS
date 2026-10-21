@@ -9,7 +9,10 @@
 # - 左侧只有 total 张图端口 image1..imageN (标签 图1..图N); 标注是节点内 label1..labelN 表单文本框 (按 total 自动扩充);
 # - 网格列数 = ceil(sqrt(total)): total=4 时 2x2 (与原四图合成一致),
 #   total=6 时 3 列 x 2 行; total=8 时 3 列 x 3 行 (最后一格留空);
-# - 统一尺寸 (取非空图最大高宽), 每张子图左上角 CJK 白字黑描边标注, 拼成单图输出。
+# - 统一尺寸 (取非空图最大高宽), 每张子图左上角 CJK 白字黑描边标注, 拼成单图输出;
+# - match_input_size = False (默认): 输出合并后的完整尺寸;
+#   match_input_size = True: 合并完成后整张缩放到「第一张有值输入图」的尺寸 (W*cols 与 H*rows
+#   那套网格尺寸按比例压回单图尺寸), 便于把 8 张 1920 宽的合成结果压回 1920 宽。
 
 from __future__ import annotations
 
@@ -103,7 +106,7 @@ class FallingTSImageCompositeNode:
         返回:
             dict:
             - "required".total: 图片张数 (最少 1, 不设上限; 超过 MAX_TOTAL 按 MAX_TOTAL 合成, 前端据此增删图端口、扩充标注文本框);
-            - "required".font_size/padding/background_color;
+            - "required".font_size/padding/background_color/match_input_size;
             - "optional".label1..labelMAX (widget 随 total 进/出提交载荷, 缺省 = 回退默认标注): 各图标注 (节点内表单文本框, 按 total 扩充; 空串 = 不画, None = 默认标注 _DEFAULT_LABELS);
             - "optional".image1..imageMAX: 各图端口 (左侧; 未连接 = 该格底色空格占位);
             - "hidden"."id": 节点唯一 ID (合成结果缓存键)。
@@ -132,6 +135,15 @@ class FallingTSImageCompositeNode:
             "STRING",
             {"default": "#000000", "multiline": False, "tooltip": "间距底色 (十六进制, 如 #000000)"},
         )
+        # 位置必须在 background_color 之后、label1 之前: widgets_values 按位置套用,
+        # 排在标注之后会随 total 变化而错位
+        required["match_input_size"] = (
+            "BOOLEAN",
+            {
+                "default": False,
+                "tooltip": "开启后把合并结果压缩到第一张输入图的尺寸 (单图尺寸); 关闭则输出合并后的完整尺寸",
+            },
+        )
         optional = {}
         for i in range(1, MAX_TOTAL + 1):
             optional[f"image{i}"] = ("IMAGE", {"tooltip": f"图 {i} (未连接 = 该格底色空格占位)"})
@@ -155,7 +167,7 @@ class FallingTSImageCompositeNode:
             return DEFAULT_TOTAL
         return min(MAX_TOTAL, max(1, t))
 
-    def composite(self, total=DEFAULT_TOTAL, font_size=8.0, padding=6, background_color="#000000", id=None, **kwargs):
+    def composite(self, total=DEFAULT_TOTAL, font_size=8.0, padding=6, background_color="#000000", match_input_size=False, id=None, **kwargs):
         """统一尺寸 + 左上角标注, N 图网格合成为单张图。
 
         None 容忍 (输入一律安全降级, 不崩溃):
@@ -165,6 +177,10 @@ class FallingTSImageCompositeNode:
         - total None -> DEFAULT_TOTAL; 各 label None -> 默认标注 (图 1~4 为 前面/右面/
           后面/左面, 图 5~8 为 上面/下面/近处/远处), 空串 = 不画;
         - font_size None -> 8.0; padding None -> 6; background_color None -> #000000。
+
+        match_input_size=True 时, 网格拼完后整张缩放到「第一张有值输入图」的尺寸
+        (以 image1 为准, image1 未连接则取其后第一张有值的图); 标注随整张同比缩小,
+        故给缩略图用的小字号需要相应调大 font_size。
 
         参数 id: 节点唯一 ID (隐藏参数 UNIQUE_ID), 用作本节点合成结果缓存键。
         """
@@ -224,6 +240,12 @@ class FallingTSImageCompositeNode:
         for idx, tile in enumerate(tiles):
             row, col = divmod(idx, cols)
             canvas.paste(tile, (gap * (col + 1) + col * width, gap * (row + 1) + row * height))
+        # 压缩到单图尺寸: 以第一张有值输入图的 (宽, 高) 为准 (present 已按 image1..imageN 顺序排列)
+        if match_input_size:
+            first = present[0]
+            target = (int(first.shape[1]), int(first.shape[0]))
+            if canvas.size != target:
+                canvas = canvas.resize(target, Image.Resampling.LANCZOS)
         arr = np.asarray(canvas).astype(np.float32) / 255.0
         out = torch.from_numpy(arr[np.newaxis, ...])
         if id is not None:
