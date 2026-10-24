@@ -51,12 +51,25 @@
 
 const { app } = window.comfyAPI.app;
 
-/** 扩展行为开关(改完刷新页面即可生效) */
+/**
+ * 扩展行为开关(改完刷新页面即可生效)。
+ *
+ * ⚠️ 2026-10-24 前端 1.55.18 起两个开关都默认关闭:
+ * 新版前端打开工作流不再经过 `app.loadGraphData`(改成 store 内部直接原地复用 rootGraph,
+ * 实测 loadGraphData 一次都不被调用), 而 --enable-manager 之外的正常启动仍会通过这条路
+ * 塞默认图。于是本扩展在启动瞬间清空画布(blankCanvas → app.clean)后, 新版加载链路拿到的
+ * 就是一张空图 —— 表现为「节点连线和画布全崩」: 画布空白、点开任何工作流节点数都是 0、
+ * 标签也不新增。
+ *
+ * 既然拦截点已与新前端错位, 继续默认开启只会稳定破坏画布。两个开关改为 false 即恢复
+ * 原生行为(启动自动打开 + 关闭时补默认图), 等于「本扩展不介入」。要重新启用需先按新版
+ * 前端重做拦截点(store 层面, 而非 app.loadGraphData)。
+ */
 const OPTIONS = {
   /** 关闭最后一个工作流后不再自动打开默认/空白工作流 */
-  suppressOnClose: true,
+  suppressOnClose: false,
   /** 页面加载后不自动打开默认工作流(每次刷新都是空白画布 + 0 标签) */
-  suppressOnStartup: true,
+  suppressOnStartup: false,
 };
 
 const LOG = '[NoAutoWorkflow]';
@@ -86,8 +99,15 @@ const BLANK_GRAPH = {
   version: 0.4,
 };
 
-/** 启动时间窗: 只在这个窗口内把"空图 + 无任何工作流"的加载当成启动自动打开 */
-const STARTUP_WINDOW_MS = 20000;
+/**
+ * 启动时间窗: 只在这个窗口内把"空图 + 无任何工作流"的加载当成启动自动打开。
+ *
+ * ⚠️ 旧值是 20000ms, 太宽了 —— 页面起来后 20 秒内用户点开任何工作流都会落进这个窗口,
+ * 一旦再叠加上"新版单参签名导致第 4 实参恒为 undefined", 就会被误判成 startup 并拦掉
+ * (表现为画布空白、节点数 0)。启动自动打开实际发生在首屏渲染阶段(通常 <3s), 收紧到 6s
+ * 并配合"当前无任何工作流 + 空图"两道状态判据才不会误伤正常打开。
+ */
+const STARTUP_WINDOW_MS = 6000;
 const bootAt = Date.now();
 
 /**
@@ -266,12 +286,20 @@ function classifyAutoOpen(args) {
   if (userInteracted) return null;
   if (ws.activeWorkflow) return null;
   if ((ws.openWorkflows?.length ?? 0) > 0) return null;
-  // 零实参调用在启动路径之外只有 legacy 菜单的 "Load default workflow?" 按钮, 已被上面的
-  // userInteracted 挡掉
-  if (args.length === 0) return 'startup';
-  // 未完成新手引导时的启动分支: loadBlankWorkflow() → loadGraphData(blankGraph)
-  if (Date.now() - bootAt < STARTUP_WINDOW_MS && isEmptyGraph(graphData)) {
-    return 'startup-blank';
+  // 只认「启动窗口内」的自动打开。⚠️ 不能再用 args.length / 第 4 实参判断:
+  // 前端 1.55.x 把 loadGraphData 改成了单参签名 `async function (data)`, 调用方也不再
+  // 传第 4 实参(工作流改由 afterLoadNewGraph → activateLoadedWorkflow 内部认领)。旧逻辑
+  // 于是把用户点开的正常工作流也当成 `startup` 拦掉 —— 画布空白、标签不新增、节点数 0。
+  if (Date.now() - bootAt > STARTUP_WINDOW_MS) return null;
+
+  // 启动自动打开只发生在首屏, 且此时画布上不会已经有节点。用「图里已有节点」做最后一道
+  // 否决: 用户点开的工作流必然带着节点, 绝不能因为"打开列表还空着"就被当成启动。
+  const rootNodes = app?.rootGraph?._nodes;
+  if (Array.isArray(rootNodes) && rootNodes.length > 0) return null;
+
+  // 启动路径要么零实参(默认图), 要么 loadBlankWorkflow() 传空图(graphData 为 undefined 也算)
+  if (args.length === 0 || graphData == null || isEmptyGraph(graphData)) {
+    return args.length === 0 ? 'startup' : 'startup-blank';
   }
   return null;
 }
@@ -315,11 +343,17 @@ function suppressAutoOpen(original, args, kind) {
 /**
  * 接管 app.loadGraphData(幂等)。
  *
+ * ⚠️ 2026-10-24: 前端 1.55.18 起本钩子已停用。新版打开工作流不再经过 app.loadGraphData
+ * (store 内部原地复用 rootGraph), 而启动时这里仍会 blankCanvas() → app.clean() 清空画布,
+ * 于是「点开任何工作流都是空白画布 + 0 节点」。两个 OPTIONS 开关都为 false 时直接返回,
+ * 不挂任何钩子。
+ *
  * @returns {boolean} 已接管返回 true
  */
 function installLoadGraphDataHook() {
   if (loadGraphDataHooked) return true;
   if (isDisabledByQuery()) return false;
+  if (!OPTIONS.suppressOnClose && !OPTIONS.suppressOnStartup) return false;
   if (typeof app?.loadGraphData !== 'function') return false;
 
   const original = app.loadGraphData;
