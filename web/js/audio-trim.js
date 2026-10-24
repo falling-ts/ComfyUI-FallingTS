@@ -837,12 +837,10 @@ app.registerExtension({
             return;
           }
           // 释放上一段用过的生成模型内存(可选, 失败不影响)
+          // ⚠️ 用自建路由而不是 POST /free: /free 只 set_flag, 要到下一次 prompt 跑完才被消费,
+          // 与"提交前腾显存"的意图正好错开, 等于没卸。
           try {
-            await fetch("/free", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ unload_models: true, free_memory: true }),
-            });
+            await fetch("/fallingts_auto_unload/unload", { method: "POST" });
           } catch {
             /* 忽略 */
           }

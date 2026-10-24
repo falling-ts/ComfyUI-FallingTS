@@ -183,14 +183,13 @@ app.registerExtension({
       }
 
       /* 1.5 释放 ComfyUI 模型缓存: 进入本段前, 上一段用过的生成模型(如 H3)不再需要,
-            先 /free 卸载可释放 10GB+ 内存与显存, 避免与本段模型争抢导致 Windows 换页变慢。
+            先卸载可释放 10GB+ 显存。⚠️ 不能用 POST /free: 它只 set_flag, 而 main.py 在执行完
+            当前 prompt 之后才 get_flags() 消费 ⇒ 提交前置旗等于"本次跑完才卸载", 与本段要
+            抢显存的诉求正好错开, 等于没卸。这里直调自建路由, 队列为空时同步逐出全部模型
+            (与「跑完自动卸载」同一个后端函数)。
             仅本段(partial)提交前调用; 失败仅影响性能, 不阻断流程。 */
       try {
-        await fetch("/free", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ unload_models: true, free_memory: true }),
-        });
+        await fetch("/fallingts_auto_unload/unload", { method: "POST" });
       } catch {
         /* 忽略 */
       }

@@ -347,7 +347,9 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 需求: **每次工作流跑完(成功)且队列为空时**, 自动卸载全部已加载模型, 释放显存(等效内置「卸载模型」按钮, 但自动触发)。
 
-**为什么不用内置的 `POST /free`**: /free 只是**置旗**(`unload_models`), 旗标在 prompt 主循环里**下一次 prompt 执行完之后**才被消费 ⇒ 单次"跑完"永远不会生效。故自建路由直调旗标最终调用的核心函数: `comfy.model_management.unload_all_models()`(对每个设备 `free_memory(1e30)` 强逐全部已加载模型, 逐不动就逐能逐的, 不抛异常) → `gc.collect()` → `soft_empty_cache()`(sync + empty_cache + ipc_collect)。
+**为什么不用内置的 `POST /free`**: /free 只是**置旗**(`unload_models`), 旗标在 prompt 主循环里**下一次 prompt 执行完之后**才被消费(`main.py`: `flags = q.get_flags()` 在 prompt 执行完才读) ⇒ 单次"跑完"永远不会生效。故自建路由直调旗标最终调用的核心函数: `comfy.model_management.unload_all_models()`(对每个设备 `free_memory(1e30)` 强逐全部已加载模型, 逐不动就逐能逐的, 不抛异常) → `gc.collect()` → `soft_empty_cache()`(sync + empty_cache + ipc_collect)。
+
+⚠️ **同一个坑在"提交前腾显存"处也踩过(2026-10-24 修)**: `proceed.js` 的「继续」、`preview-video.js`/`load_video.js` 的「完成」、`audio-trim.js` 的「截段」原先都在 **partial 提交之前**发 `POST /free`, 本意是"进入本段前先把上一段模型逐掉"。但置旗要到**本段跑完之后**才被消费, 与本段要抢显存的诉求正好错开 ⇒ 等于没卸。现四处统一改为直调 `POST /fallingts_auto_unload/unload`(队列为空时同步逐出, 与"跑完自动卸载"同一个后端函数)。**凡是要"在某个时刻立刻卸"的地方一律用这条路由, 不要用 `/free`。**
 
 **挂点**: 前端总线 `execution_success` 事件(每个 prompt 成功完成后触发, 含继续/截帧的 partial 提交) → `POST /fallingts_auto_unload/unload`。后端是"卸不卸"的唯一裁决者:
 
