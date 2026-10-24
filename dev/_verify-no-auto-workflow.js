@@ -9,6 +9,11 @@
 //   1 启动不自动打开; 2 关非活动标签不误伤; 3 关最后一个不残留;
 //   4 关闭后再开正常工作流; 5 显式「加载默认工作流」命令照常执行。
 // 断言失败退出码 1。
+//
+// ⚠️ 节点数的判据是 `activeWorkflow.activeState.nodes.length`(工作流存档内容), **不是**
+//    `app.rootGraph._nodes.length` —— 前端 1.55.18 起画布渲染走 Vue 节点层, `rootGraph` 在
+//    打开工作流后仍停在启动时的默认图(实测恒为 10 个节点、与真实工作流 41/28/39 无关),
+//    用它做断言会得出"节点数 0 / 恒 10"的错误结论。
 
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -60,8 +65,12 @@ window.__verify = (async function () {
   var cmd = pinia._s.get('command');
   var app = window.comfyAPI.app.app;
   function snap(tag) {
+    var aw = wf.activeWorkflow;
+    var st = aw && aw.activeState;
     out.steps.push({ tag: tag, open: wf.openWorkflows.map(function (w) { return w.path; }),
-      active: wf.activeWorkflow && wf.activeWorkflow.path, nodes: app.rootGraph._nodes.length });
+      active: aw && aw.path,
+      nodes: st && st.nodes ? st.nodes.length : 0,
+      links: st && st.links ? st.links.length : 0 });
   }
   var pick = function (s) { return wf.workflows.filter(function (w) { return w.path.indexOf(s) >= 0; })[0]; };
   await wf.loadWorkflows();
@@ -144,6 +153,12 @@ function empty(s) { return s.open && s.open.length === 0 && !s.active && s.nodes
     if (!empty(last)) fails.push('关最后一个应无残留: ' + JSON.stringify(last));
     if (!(reopened.open && reopened.open.length === 1 && reopened.active && reopened.active.indexOf('0020_') >= 0)) fails.push('关闭后重开失败: ' + JSON.stringify(reopened));
     if (!(explicit.active && explicit.nodes > 0)) fails.push('显式加载默认工作流被误拦: ' + JSON.stringify(explicit));
+    // ⚠️ 回归护栏: 拦截路径绝不能把画布/workflow 清空。打开真实工作流后必须带节点与连线,
+    //    这正是 1.55.18 上 blankCanvas() → app.clean() 造成「画布空白、节点数 0」的地方。
+    if (!(two.nodes > 0)) fails.push('打开工作流后节点数为 0(拦截把图清空了): ' + JSON.stringify(two));
+    if (!(two.links > 0)) fails.push('打开工作流后连线数为 0(拦截把图清空了): ' + JSON.stringify(two));
+    if (!(inactive.nodes > 0)) fails.push('关闭无关标签后活动工作流节点数归零: ' + JSON.stringify(inactive));
+    if (!(reopened.nodes > 0)) fails.push('关闭后再打开的工作流节点数为 0: ' + JSON.stringify(reopened));
   }
   if (fails.length) {
     console.log('=== FAIL ===');

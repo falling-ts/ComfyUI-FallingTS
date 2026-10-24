@@ -290,9 +290,14 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 1. **识别关闭最后一个**: 给 `workflow` store 的 `getMostRecentWorkflow` 挂前哨 —— 上游在塞默认工作流之前**同步**调它找下一个标签, 且它只被 `closeWorkflow` 调用; 判定条件 `返回值 == null && openWorkflows.length === 1`(此刻打开列表里还只有那一个工作流, 新标签是随后才塞进来的)。标记用布尔量(上游 `getMostRecentWorkflow` → `loadDefaultWorkflow` 之间是同步的, 不跨 await), 再用一个 `setTimeout(…, 0)` 兜底复位防异常路径残留。⚠️ **不要再用 `removeDraft` 做这个前哨**: 1.52.7 时上游是"先 removeDraft/close 再判 `openWorkflows.length === 1`", 1.53.x 反过来把塞默认工作流提到最前 —— 触发 removeDraft 时新 `Unsaved Workflow` 已经进列表, 两条判据同时落空(2026-10-11 实测失效并修复)。
 2. **识别启动自动打开**: 零实参的 `loadGraphData()` 在启动路径之外只有 legacy 菜单的 `Load default workflow?` 按钮; 另有未完成新手引导时的 `loadBlankWorkflow() → loadGraphData(空白图)`, 用"启动 20s 时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。两者都再加一道 **`userInteracted`**(首次 `pointerdown`/`keydown` 即置真)—— 启动自动打开必然发生在任何交互之前, 一旦用户碰过页面, 之后的加载都算用户意图(否则刷新后 20 秒内按 Ctrl+N「New Blank Workflow」会被误拦)。
-3. **拦截后绝不新建标签**: 把**当前活动工作流**当作第 4 实参传进去 —— `activateLoadedWorkflow` 里的 `workflowStore.openWorkflow()` 会因 `isActive()` 直接返回, 不走 `createNewTemporary`(与 `workflow_reload_button.js` 注释里记的坑同源), 同时把载荷换成 `blankGraph` 让画布清空。
+3. **拦截后绝不新建标签、也绝不改动画布**: 直接 `return Promise.resolve()`, 不调用原 `loadGraphData`。
+   ⚠️ **2026-10-24 重做(关键)**: 旧实现是"再加载一次 `blankGraph`"或 `blankCanvas() → app.clean()` 来清画布。
+   前端 **1.55.18** 起 `loadGraphData` 改为**原地复用同一个 `rootGraph`**(`rootGraph.configure(e)`),
+   而拦截动作与紧接着的真实加载**共用同一条 async 队列**, 于是清空落在真实加载**之后** ⇒
+   用户点开的工作流被清成空图: 画布空白、标签异常的"节点数 0、连线全没"(实测复现)。
+   现在**一律不碰画布**: 启动分支单纯不加载(启动时根图本来就空), 关闭分支什么都不加载。
 4. **收尾**: 关完之后 `activeWorkflow` 仍指着那个已不在 `openWorkflows` 里的旧对象, 用一次性 `setTimeout` 兜底置空(前端源码里 `activeWorkflow` 到处都有 `?.` / `if (!activeWorkflow) return` 守卫, `useWorkflowPersistenceV2` 的 `restoreState` 也显式处理空值, 所以 `null` 是安全状态)。
-5. ⚠️ `blankCanvas()` 必须用官方的 `app.isGraphReady` 判据 —— 直接读 `app.rootGraph` 会在图未初始化时打一行 `console.error('ComfyApp graph accessed before initialization')`。
+5. ⚠️ **判据别用 `app.rootGraph._nodes`**: 1.55.18 起画布渲染走 Vue 节点层, 打开工作流后 `rootGraph` 仍停在启动时的默认图(实测恒 10 个节点, 与真实工作流 41/28/39 无关) —— 拿它做断言会得出"节点数 0 / 恒 10"的错误结论。**正确口径是 `activeWorkflow.activeState.nodes/links`**。
 
 **调试**: URL 加 `?noAutoWorkflow=off` 可临时停用本扩展做对照。
 **验证**(2026-10-11 重建为 Node 版, 零第三方依赖): `node custom_nodes\ComfyUI-FallingTS\dev\_verify-no-auto-workflow.js`(无头 Edge + CDP 真跑; `--off` 跑基线对照, `--port N` 换调试端口, `--wait MS` 调等待)。对真实 8188 实例跑五个场景: ① 启动不自动打开 ② 关非活动标签不误伤 ③ 关最后一个(点真实 `data-testid=close-workflow-button`)无残留 ④ 关闭后重开真实工作流正常 ⑤ 显式 `Comfy.LoadDefaultWorkflow` 命令照常执行(用户意图不拦); 断言失败退出 1。实测(2026-10-11, 扩展启用): ③ 后 `open=[] / active=null / nodes=0`; `--off` 基线: 启动后 `open=['workflows/Unsaved Workflow.json']`、`nodes=10`, 关最后一个仍残留 → 证明脚本真能抓到该 bug。

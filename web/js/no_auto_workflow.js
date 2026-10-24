@@ -42,9 +42,11 @@
 //      b) 页面启动: 零实参的 loadGraphData() 在整个前端只有启动这一处(其余调用都至少带图数据);
 //         另有未完成新手引导时的启动分支 loadBlankWorkflow() → loadGraphData(空白图),
 //         用"启动时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。
-//   3. 拦截后绝不新建标签: 把当前活动工作流当作第 4 实参传给 loadGraphData ——
-//      activateLoadedWorkflow 里的 workflowStore.openWorkflow() 会因 isActive() 直接返回,
-//      不会 createNewTemporary(这一招正是本插件 workflow_reload_button.js 注释里记过的坑)。
+//   3. 拦截后绝不新建标签、也绝不改动画布: 直接不调用原 loadGraphData。
+//      ⚠️ 早期实现是"再加载一次空图"或"app.clean() 清一遍画布", 在 1.55.18 上会**清掉
+//      紧接着真实加载的内容**(新版原地复用同一个 rootGraph, 清空动作落在真实加载之后),
+//      表现为「画布空白 / 点开任何工作流节点数都是 0 / 连线全没」。现版本一律不碰画布,
+//      详见 suppressAutoOpen 的注释。
 //   4. 关完之后 activeWorkflow 仍指着那个已不在 openWorkflows 里的旧对象, 用一次性兜底置空;
 //      前端源码里 activeWorkflow 到处都有 `?.` / `if (!activeWorkflow) return` 守卫,
 //      null 是安全状态(useWorkflowPersistenceV2 的 restoreState 也显式处理了空值)。
@@ -54,22 +56,17 @@ const { app } = window.comfyAPI.app;
 /**
  * 扩展行为开关(改完刷新页面即可生效)。
  *
- * ⚠️ 2026-10-24 前端 1.55.18 起两个开关都默认关闭:
- * 新版前端打开工作流不再经过 `app.loadGraphData`(改成 store 内部直接原地复用 rootGraph,
- * 实测 loadGraphData 一次都不被调用), 而 --enable-manager 之外的正常启动仍会通过这条路
- * 塞默认图。于是本扩展在启动瞬间清空画布(blankCanvas → app.clean)后, 新版加载链路拿到的
- * 就是一张空图 —— 表现为「节点连线和画布全崩」: 画布空白、点开任何工作流节点数都是 0、
- * 标签也不新增。
- *
- * 既然拦截点已与新前端错位, 继续默认开启只会稳定破坏画布。两个开关改为 false 即恢复
- * 原生行为(启动自动打开 + 关闭时补默认图), 等于「本扩展不介入」。要重新启用需先按新版
- * 前端重做拦截点(store 层面, 而非 app.loadGraphData)。
+ * 2026-10-24: 两个开关重新置为 true, 但拦截方式已重做 —— 不再触碰画布, 只"不加载"。
+ * 上一版之所以被迫关闭, 是因为它在拦截时清空画布(app.clean / 空图重载), 而前端 1.55.18
+ * 改为**原地复用同一个 rootGraph**(`rootGraph.configure(e)`), 清空动作会落在真实加载之后,
+ * 把用户点开的工作流清成空图。现在拦截路径完全无副作用: 启动/关闭时**不加载任何东西**,
+ * 画布交给下一次真实加载, 因此既有「不自动打开」的行为, 又不会破坏任何后续加载。
  */
 const OPTIONS = {
   /** 关闭最后一个工作流后不再自动打开默认/空白工作流 */
-  suppressOnClose: false,
+  suppressOnClose: true,
   /** 页面加载后不自动打开默认工作流(每次刷新都是空白画布 + 0 标签) */
-  suppressOnStartup: false,
+  suppressOnStartup: true,
 };
 
 const LOG = '[NoAutoWorkflow]';
@@ -87,25 +84,12 @@ function isDisabledByQuery() {
   }
 }
 
-/** 与前端 src/scripts/defaultGraph.ts 的 blankGraph 逐字一致 */
-const BLANK_GRAPH = {
-  last_node_id: 0,
-  last_link_id: 0,
-  nodes: [],
-  links: [],
-  groups: [],
-  config: {},
-  extra: {},
-  version: 0.4,
-};
-
 /**
  * 启动时间窗: 只在这个窗口内把"空图 + 无任何工作流"的加载当成启动自动打开。
  *
- * ⚠️ 旧值是 20000ms, 太宽了 —— 页面起来后 20 秒内用户点开任何工作流都会落进这个窗口,
- * 一旦再叠加上"新版单参签名导致第 4 实参恒为 undefined", 就会被误判成 startup 并拦掉
- * (表现为画布空白、节点数 0)。启动自动打开实际发生在首屏渲染阶段(通常 <3s), 收紧到 6s
- * 并配合"当前无任何工作流 + 空图"两道状态判据才不会误伤正常打开。
+ * ⚠️ 旧值是 20000ms, 太宽了 —— 页面起来后 20 秒内用户点开任何工作流都会落进这个窗口。
+ * 启动自动打开实际发生在首屏渲染阶段(通常 <3s), 收紧到 6s 并配合"当前无任何工作流 +
+ * 空图"两道状态判据才不会误伤正常打开。
  */
 const STARTUP_WINDOW_MS = 6000;
 const bootAt = Date.now();
@@ -160,24 +144,6 @@ function getStore(id) {
  */
 function workflowStore() {
   return getStore('workflow');
-}
-
-/**
- * 只清空画布, 不建任何工作流。等价于 loadGraphData 里 `canvas.setGraph(rootGraph)` + `clean()`
- * 那两步, 用于"启动时不加载任何东西"的分支。
- *
- * @returns {void}
- */
-function blankCanvas() {
-  try {
-    // isGraphReady 是官方的"安全判据" —— 直接读 app.rootGraph 会在图未初始化时
-    // 打一行 console.error('ComfyApp graph accessed before initialization')
-    if (!app.canvas || !app.isGraphReady) return;
-    app.canvas.setGraph(app.rootGraph);
-    app.clean();
-  } catch (e) {
-    console.warn(LOG, '清空画布失败', e);
-  }
 }
 
 /**
@@ -307,46 +273,43 @@ function classifyAutoOpen(args) {
 /**
  * 拦截"自动打开工作流", 换成"保持不打开任何工作流"。
  *
- * @param {Function} original 原始 app.loadGraphData
- * @param {Array} args 原始实参
+ * ⚠️ 关键约束(2026-10-24 实测): 这里**绝不能调用 `app.clean()`**(旧版 `blankCanvas()` 就是
+ * 它), 也不能再走一次 `loadGraphData(BLANK_GRAPH, true, ...)`。原因是前端 1.55.18 的
+ * `loadGraphData` 开头有一段:
+ *
+ *     t && (this.canvas.setGraph(this.rootGraph), this.clean())
+ *
+ * `clean()` 会 `this.rootGraph.clear()` —— 清的是**同一个 rootGraph 对象**(新版不再新建图,
+ * 而是原地 `rootGraph.configure(e)` 复用)。而本拦截发生在关闭/启动链路里, 与紧接着的真实
+ * 加载**共用同一条 async 队列**, 于是清空动作落在真实加载之后 ⇒ 用户点开的工作流被清成空图,
+ * 表现为「画布空白 / 节点数 0 / 连线全没」。
+ *
+ * 因此现在的做法是**只做状态回收, 一律不碰画布**:
+ *   - startup: 直接不加载。启动时画布本来就是空的(根图无节点), 无需再清;
+ *   - close-last: 什么都不加载。关闭方(`closeWorkflow`)自己会把活动工作流从
+ *     `openWorkflows` 里摘掉, 这里只需在之后把悬空的 `activeWorkflow` 置空。
+ * 画布的最终内容由下一次真实加载决定, 本扩展不再产生任何中间态。
+ *
  * @param {string} kind classifyAutoOpen 的判定结果
  * @returns {Promise<void>} 与原调用同样可 await
  */
-function suppressAutoOpen(original, args, kind) {
-  if (kind !== 'close-last') {
-    // 启动: 本来就没有任何工作流, 不加载即可(画布清一遍保证干净)
-    blankCanvas();
-    return Promise.resolve();
+function suppressAutoOpen(kind) {
+  // 两种情形都不加载任何东西: 不新建标签、不刷新画布、不改 rootGraph。
+  if (kind === 'close-last') {
+    // 关闭链路后续还要摘活动标签/清预览, 用一次性兜底把悬空的 activeWorkflow 置空
+    setTimeout(reapDetachedActiveWorkflow, 0);
+    setTimeout(reapDetachedActiveWorkflow, 120);
   }
-
-  // close-last: 清空画布但绝不新建标签。
-  // 把"当前活动工作流"当第 4 实参传进去, activateLoadedWorkflow → workflowStore.openWorkflow()
-  // 会因 isActive() 直接返回, 不会走 createNewTemporary。
-  const ws = workflowStore();
-  const active = ws?.activeWorkflow;
-  let pending;
-  if (active) {
-    pending = Promise.resolve(
-      original.call(app, BLANK_GRAPH, true, true, active, args[4] ?? {})
-    );
-  } else {
-    blankCanvas();
-    pending = Promise.resolve();
-  }
-
-  // 外层 closeWorkflow 之后还要选下一个 / 真正关闭 / 清预览才结束, 用一次性兜底收尾
-  setTimeout(reapDetachedActiveWorkflow, 0);
-  setTimeout(reapDetachedActiveWorkflow, 120);
-  return pending;
+  return Promise.resolve();
 }
 
 /**
  * 接管 app.loadGraphData(幂等)。
  *
- * ⚠️ 2026-10-24: 前端 1.55.18 起本钩子已停用。新版打开工作流不再经过 app.loadGraphData
- * (store 内部原地复用 rootGraph), 而启动时这里仍会 blankCanvas() → app.clean() 清空画布,
- * 于是「点开任何工作流都是空白画布 + 0 节点」。两个 OPTIONS 开关都为 false 时直接返回,
- * 不挂任何钩子。
+ * 前端 1.55.18 仍然从这里进出: 打开工作流走 store 的 `openWorkflow` → `Q.loadGraphData(...)`,
+ * 关闭后补图走 `loadDefaultWorkflow=()=>queueWorkflowLoad(()=>Q.loadGraphData(oI))`,
+ * 启动走 `loadBlankWorkflow()` / 零实参。所以包这一层依然有效 —— 上一版"钩子失效"的判断
+ * 是错的, 真正的故障是拦截动作本身会清空画布(见 suppressAutoOpen)。
  *
  * @returns {boolean} 已接管返回 true
  */
@@ -367,7 +330,7 @@ function installLoadGraphDataHook() {
     if (!kind) return original.apply(app, args);
 
     console.log(LOG, `拦截自动打开工作流(${kind}) → 保持"不打开任何工作流"`);
-    return suppressAutoOpen(original, args, kind);
+    return suppressAutoOpen(kind);
   };
 
   loadGraphDataHooked = true;
