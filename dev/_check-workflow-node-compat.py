@@ -10,7 +10,8 @@ UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 oi = json.load(urllib.request.urlopen("http://127.0.0.1:8188/object_info", timeout=120))
 registered = set(oi.keys())
 
-root = r"D:\AI\Comfy"
+# 工作区根由本文件位置反推(dev/ -> 插件 -> custom_nodes -> 工作区根), 项目搬家后自动跟随
+root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 used = {}
 for path in sorted(glob.glob(os.path.join(root, "workflows", "*.json"))):
     try:
