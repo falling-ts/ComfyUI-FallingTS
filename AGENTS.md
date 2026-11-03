@@ -11,7 +11,7 @@ ComfyUI-FallingTS/
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
 ├── AGENTS.md                   # AI 编码指南(本文件)
-├── CLAUDE.md                   # Claude Code 垫片,内容为 @AGENTS.md
+├── CLAUDE.md                   # 历史兼容垫片,内容为 @AGENTS.md(本工作区统一用 WorkBuddy)
 ├── README.md                   # 项目说明
 ├── LICENSE                     # 许可证
 ├── .gitignore                  # git 忽略规则
@@ -19,7 +19,7 @@ ComfyUI-FallingTS/
 ├── .agents/                    # 智能体配置目录
 │   └── rules/
 │       └── project.md          # 项目开发规范 (API 使用/节点开发/错误处理/异步执行)
-├── .claude                     # 指向 .agents 的相对符号链接 (Claude Code 兼容垫片)
+├── .claude                     # 指向 .agents 的相对符号链接(历史兼容垫片,仅为兼容旧链接保留)
 ├── locales/
 │   └── zh/
 │       └── nodeDefs.json       # 中文节点定义/显示名
@@ -379,11 +379,11 @@ ComfyUI 在服务端缓存每个节点的输出(`caches.outputs`), 同进程内�
 
 | 路径 | 类型 | 相对目标 | 实际指向 |
 |------|------|------|------|
-| `.claude` | SymbolicLink(目录级) | `.agents` | 根 `.agents`(智能体配置目录,Claude Code 兼容垫片,2026-08-13 建) |
+| `.claude` | SymbolicLink(目录级) | `.agents` | 根 `.agents`(智能体配置目录;`.claude` 为 2026-08-13 建的历史兼容垫片) |
 
 ## 项目规则 (`.agents/rules/`)
 
-> `.claude` 是指向 `.agents` 的相对符号链接;Claude Code 经 `.claude/rules/` 读取的规则,实际存放在 `.agents/rules/`。
+> `.claude` 是指向 `.agents` 的相对符号链接,仅为兼容旧路径保留;规则文件的实际位置是 `.agents/rules/`。本工作区统一使用 WorkBuddy。
 
 | 规则文件 | 说明 |
 |---------|------|
