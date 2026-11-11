@@ -12,16 +12,22 @@ registered = set(oi.keys())
 
 # 工作区根由本文件位置反推(dev/ -> 插件 -> custom_nodes -> 工作区根), 项目搬家后自动跟随
 root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# 工作流两处并存(2026-11-11 起): stories/workflows 为纳入版本管理的主目录,
+# 根 workflows/ 保留 0060~0064 的无数据表版, 两边都要扫
+WF_DIRS = [os.path.join(root, "stories", "workflows"), os.path.join(root, "workflows")]
 used = {}
-for path in sorted(glob.glob(os.path.join(root, "workflows", "*.json"))):
-    try:
-        wf = json.load(open(path, encoding="utf-8"))
-    except Exception as e:
-        print("SKIP(unreadable)", os.path.basename(path), e); continue
-    for n in wf.get("nodes", []):
-        t = n.get("type")
-        if t:
-            used.setdefault(t, []).append(os.path.basename(path))
+for wf_dir in WF_DIRS:
+    files = sorted(glob.glob(os.path.join(wf_dir, "*.json")))
+    print("scan", os.path.relpath(wf_dir, root), len(files), "files")
+    for path in files:
+        try:
+            wf = json.load(open(path, encoding="utf-8"))
+        except Exception as e:
+            print("SKIP(unreadable)", os.path.basename(path), e); continue
+        for n in wf.get("nodes", []):
+            t = n.get("type")
+            if t:
+                used.setdefault(t, []).append(os.path.basename(path))
 
 missing = {}
 for t, files in sorted(used.items()):
