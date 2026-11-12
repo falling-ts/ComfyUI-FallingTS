@@ -59,6 +59,8 @@ async function getTarget() {
 const SCENARIOS = `
 window.__verify = (async function () {
   var out = { steps: [], logs: [] };
+  window.__verifyDump = out;
+  try {
   var el = document.getElementById('vue-app');
   var pinia = el.__vue_app__.config.globalProperties.$pinia;
   var wf = pinia._s.get('workflow');
@@ -67,15 +69,31 @@ window.__verify = (async function () {
   function snap(tag) {
     var aw = wf.activeWorkflow;
     var st = aw && aw.activeState;
+    var rg = app.rootGraph;
     out.steps.push({ tag: tag, open: wf.openWorkflows.map(function (w) { return w.path; }),
       active: aw && aw.path,
       nodes: st && st.nodes ? st.nodes.length : 0,
-      links: st && st.links ? st.links.length : 0 });
+      links: st && st.links ? st.links.length : 0,
+      // 画布真实节点数: 关闭最后一个工作流后必须为 0(2026-11-12 新增, 治"标签空了画布还留着旧图")
+      canvasNodes: rg && rg._nodes ? rg._nodes.length : -1,
+      canvasLinks: rg && rg.links ? Object.keys(rg.links).length : -1,
+      graphId: rg && rg.id });
   }
-  var pick = function (s) { return wf.workflows.filter(function (w) { return w.path.indexOf(s) >= 0; })[0]; };
+  var pick = function (s) {
+    var list = (wf.workflows && wf.workflows.value) ? wf.workflows.value : wf.workflows;
+    if (!list) return undefined;
+    for (var i = 0; i < list.length; i++) if (list[i] && String(list[i].path).indexOf(s) >= 0) return list[i];
+    return undefined;
+  };
   await wf.loadWorkflows();
+  await new Promise(function (r) { setTimeout(r, 1500); });
   snap('startup');
-  var a = pick('0011_'), b = pick('0012_');
+  var a = pick('0060_'), b = pick('0061_'), c = pick('0062_');
+  if (!a || !b || !c) {
+    out.missing = { a: !!a, b: !!b, c: !!c,
+      available: (function(){ var l=(wf.workflows&&wf.workflows.value)?wf.workflows.value:wf.workflows; return l?l.map(function(w){return w.path}):[] })() };
+    return JSON.stringify(out);
+  }
   await wf.openWorkflow(a);
   await new Promise(function (r) { setTimeout(r, 1200); });
   await wf.openWorkflow(b);
@@ -88,7 +106,6 @@ window.__verify = (async function () {
   if (btn) { btn.click(); } else { out.noButton = true; }
   await new Promise(function (r) { setTimeout(r, 4000); });
   snap('closed-last');
-  var c = pick('0020_');
   await wf.openWorkflow(c);
   await new Promise(function (r) { setTimeout(r, 2500); });
   snap('reopened');
@@ -96,6 +113,10 @@ window.__verify = (async function () {
   await new Promise(function (r) { setTimeout(r, 4000); });
   snap('explicit-default');
   return JSON.stringify(out);
+  } catch (e) {
+    window.__verifyError = (e && e.stack) || String(e);
+    throw e;
+  }
 })();
 'ready';
 `;
@@ -127,6 +148,16 @@ function empty(s) { return s.open && s.open.length === 0 && !s.active && s.nodes
   await sleep(WAIT);
   await send('Runtime.evaluate', { expression: SCENARIOS, returnByValue: true });
   const res = await send('Runtime.evaluate', { expression: 'window.__verify', returnByValue: true, awaitPromise: true });
+  // 场景脚本是 async IIFE: reject 时重抛进 window.__verifyError, 这里先把真实原因打出来,
+  // 否则外层只能看到一个 "[object Object] is not valid JSON" 的 JSON.parse 报错(实测踩过)。
+  if (res.exceptionDetails || typeof res.result.value !== 'string') {
+    const e = await send('Runtime.evaluate', { expression: 'String(window.__verifyError || "")', returnByValue: true });
+    console.error('场景脚本失败:', (res.exceptionDetails && res.exceptionDetails.text) || '', e.result && e.result.value);
+    const dump = await send('Runtime.evaluate', { expression: 'JSON.stringify(window.__verifyDump || null)', returnByValue: true });
+    console.error('已走过的步骤:', dump.result && dump.result.value);
+    try { child.kill(); } catch (x) {}
+    process.exit(1);
+  }
   const out = JSON.parse(res.result.value);
   const noAuto = logs.filter((l) => /NoAutoWorkflow/i.test(l.text)).map((l) => l.text);
   try { child.kill(); } catch (e) {}
@@ -134,9 +165,18 @@ function empty(s) { return s.open && s.open.length === 0 && !s.active && s.nodes
   console.log('=== NoAutoWorkflow 日志 ===');
   for (const l of noAuto) console.log(l);
   console.log('=== 场景快照 ===');
-  for (const s of out.steps) console.log(s.tag + ': open=' + JSON.stringify(s.open) + ' active=' + s.active + ' nodes=' + s.nodes);
+  for (const s of out.steps) console.log(s.tag + ': open=' + JSON.stringify(s.open) + ' active=' + s.active + ' nodes=' + s.nodes + ' canvas=' + s.canvasNodes);
 
   const fails = [];
+  // 钩子必须真的装上, 否则"关闭后清空画布"这条新行为根本没生效(静默失败最难查)
+  if (!noAuto.some((l) => /closeWorkflow 钩子已就位/.test(l))) {
+    fails.push('closeWorkflow 钩子未安装(关闭后不会清空画布)');
+  }
+  if (out.missing) {
+    console.log('=== SKIP ===');
+    console.log(' 工作流列表里找不到测试用的文件: ' + JSON.stringify(out.missing));
+    process.exit(2);
+  }
   const startup = step(out, 'startup');
   const two = step(out, 'two-open');
   const inactive = step(out, 'closed-inactive');
@@ -149,9 +189,14 @@ function empty(s) { return s.open && s.open.length === 0 && !s.active && s.nodes
   } else {
     if (!empty(startup)) fails.push('启动应空白: ' + JSON.stringify(startup));
     if (!(two.open && two.open.length === 2)) fails.push('应同时打开两个标签: ' + JSON.stringify(two.open));
-    if (!(inactive.open && inactive.open.length === 1 && inactive.open[0].indexOf('0012_') >= 0)) fails.push('关非活动标签误伤: ' + JSON.stringify(inactive));
+    if (!(inactive.open && inactive.open.length === 1 && inactive.open[0].indexOf('0061_') >= 0)) fails.push('关非活动标签误伤: ' + JSON.stringify(inactive));
+    // ⚠️ 2026-11-12: 关闭最后一个工作流后必须「一个都不剩」。
+    //    判据是 store 状态(openWorkflows 空 + activeWorkflow null), **不是** rootGraph._nodes:
+    //    headless Edge 下 rootGraph._nodes 恒为 0(工作流真实内容在 activeWorkflow.activeState),
+    //    拿它断言会得到"永远通过"的假阳性 —— 实测踩过。
+    //    canvasNodes 只作为诊断打印, 不参与断言。
     if (!empty(last)) fails.push('关最后一个应无残留: ' + JSON.stringify(last));
-    if (!(reopened.open && reopened.open.length === 1 && reopened.active && reopened.active.indexOf('0020_') >= 0)) fails.push('关闭后重开失败: ' + JSON.stringify(reopened));
+    if (!(reopened.open && reopened.open.length === 1 && reopened.active && reopened.active.indexOf('0062_') >= 0)) fails.push('关闭后重开失败: ' + JSON.stringify(reopened));
     if (!(explicit.active && explicit.nodes > 0)) fails.push('显式加载默认工作流被误拦: ' + JSON.stringify(explicit));
     // ⚠️ 回归护栏: 拦截路径绝不能把画布/workflow 清空。打开真实工作流后必须带节点与连线,
     //    这正是 1.55.18 上 blankCanvas() → app.clean() 造成「画布空白、节点数 0」的地方。

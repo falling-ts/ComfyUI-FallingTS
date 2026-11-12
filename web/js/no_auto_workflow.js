@@ -42,31 +42,47 @@
 //      b) 页面启动: 零实参的 loadGraphData() 在整个前端只有启动这一处(其余调用都至少带图数据);
 //         另有未完成新手引导时的启动分支 loadBlankWorkflow() → loadGraphData(空白图),
 //         用"启动时间窗 + 空图 + 无活动工作流 + 无打开工作流"共同限定。
-//   3. 拦截后绝不新建标签、也绝不改动画布: 直接不调用原 loadGraphData。
-//      ⚠️ 早期实现是"再加载一次空图"或"app.clean() 清一遍画布", 在 1.55.18 上会**清掉
-//      紧接着真实加载的内容**(新版原地复用同一个 rootGraph, 清空动作落在真实加载之后),
-//      表现为「画布空白 / 点开任何工作流节点数都是 0 / 连线全没」。现版本一律不碰画布,
-//      详见 suppressAutoOpen 的注释。
-//   4. 关完之后 activeWorkflow 仍指着那个已不在 openWorkflows 里的旧对象, 用一次性兜底置空;
+//   3. 关闭最后一个工作流时**清空画布**, 启动时不动画布。两条路径必须区别对待:
+//      a) close-last(关闭最后一个): 上游 closeWorkflow 不再塞默认工作流了(被本扩展拦掉),
+//         而清画布原本是**靠被拦掉的那条 loadDefaultWorkflow→clean() 顺带完成**的 ——
+//         于是画布上留着刚关掉那份图的节点, 标签栏却空了。这就是「打开关闭但画布不清空」的根因。
+//         修复见 installCloseWorkflowHook: 包住 store.closeWorkflow, 在**关闭真正成功后**
+//         判断 openWorkflows 是否已空, 是则清画布 + 置空 activeWorkflow。
+//      b) startup(页面启动): 画布本来就空, 清不清等价, 一律不碰最安全。
+//      ⚠️ 绝不能把清空放进 loadGraphData 拦截点(早期写法), 两点原因:
+//         ① 拦截那刻 store 还没摘掉标签, 关闭可能被用户取消(弹窗选「取消」), 清了就是误伤;
+//         ② 与上游后半段的 removeDraft / discardPreviewsForWorkflow 交错, 状态机不干净。
+//         前面说的「延迟清空会清掉真实加载」也仍未变 —— 任何 clear 都不能跨 await 落后于加载。
+//   4. 关完之后 activeWorkflow 仍指着那个已不在 openWorkflows 里的旧对象, 必须置空;
 //      前端源码里 activeWorkflow 到处都有 `?.` / `if (!activeWorkflow) return` 守卫,
 //      null 是安全状态(useWorkflowPersistenceV2 的 restoreState 也显式处理了空值)。
+//
+// ⚠️ 验收陷阱(2026-11-12 实测): 判断「画布有没有节点」**不能用 `app.rootGraph._nodes`**。
+//    在 headless Edge 下它恒为 0(工作流真实内容在 `activeWorkflow.activeState.nodes`, 0062 是 12),
+//    也从未走到 `rootGraph.configure()`。拿它做断言会得到"永远通过"的假阳性。
+//    可验的是**副作用探针**: 给 `rootGraph.clear` 装计数, 确认「关最后一个 = 1 次、
+//    关非活动标签 = 0 次」; 真实视觉上的画布清空需要人眼在浏览器里确认一次。
+
 
 const { app } = window.comfyAPI.app;
 
 /**
  * 扩展行为开关(改完刷新页面即可生效)。
  *
- * 2026-10-24: 两个开关重新置为 true, 但拦截方式已重做 —— 不再触碰画布, 只"不加载"。
- * 上一版之所以被迫关闭, 是因为它在拦截时清空画布(app.clean / 空图重载), 而前端 1.55.18
- * 改为**原地复用同一个 rootGraph**(`rootGraph.configure(e)`), 清空动作会落在真实加载之后,
- * 把用户点开的工作流清成空图。现在拦截路径完全无副作用: 启动/关闭时**不加载任何东西**,
- * 画布交给下一次真实加载, 因此既有「不自动打开」的行为, 又不会破坏任何后续加载。
+ * 2026-11-12: 补上「关闭最后一个工作流时清空画布」。此前只拦"自动打开"、不碰画布, 结果是
+ * **标签栏空了但画布上还留着刚关掉那份图的节点**(上游 closeWorkflow 只摘标签, 清画布原本是
+ * 靠它后续的 loadDefaultWorkflow→clean() 顺带完成, 那条已被拦掉 ⇒ 没人清)。
+ *
+ * 实现位置是 `installCloseWorkflowHook`(包 store.closeWorkflow), 不是 loadGraphData 拦截点 ——
+ * 那里能确定「关闭已成功」, 不会误伤用户取消关闭的场景。
  */
 const OPTIONS = {
   /** 关闭最后一个工作流后不再自动打开默认/空白工作流 */
   suppressOnClose: true,
   /** 页面加载后不自动打开默认工作流(每次刷新都是空白画布 + 0 标签) */
   suppressOnStartup: true,
+  /** 关闭最后一个工作流后把画布上的节点清空(否则标签空了画布还留着旧图) */
+  clearCanvasOnClose: true,
 };
 
 const LOG = '[NoAutoWorkflow]';
@@ -111,6 +127,9 @@ window.addEventListener('keydown', () => (userInteracted = true), {
 
 /** 已挂前哨的 store(避免重复包装) */
 const sentinelInstalled = new WeakSet();
+
+/** 已挂 closeWorkflow 钩子的 store(避免重复包装) */
+const closeHookInstalled = new WeakSet();
 
 /**
  * 是否正处于"关闭最后一个工作流"的同步块内(由 getMostRecentWorkflow 前哨写入)。
@@ -271,35 +290,102 @@ function classifyAutoOpen(args) {
 }
 
 /**
+ * 清空画布上的所有节点与连线。
+ *
+ * 关闭最后一个工作流后必须调用: 上游 `closeWorkflow` 只从 store 里摘标签, 而"清画布"原本
+ * 由它后续的 `loadDefaultWorkflow() → loadGraphData() → clean()` 顺带完成 —— 那条调用已被
+ * 本扩展拦掉, 于是画布会**留着刚关掉那份图的节点**, 出现"标签栏空了但画布还有图"的怪状。
+ *
+ * ⚠️ 必须**同步**执行(在拦截点当场清), 绝不能放进 setTimeout/await 之后:
+ * 前端 1.55.18+ 的 `loadGraphData` 原地复用同一个 `rootGraph`(`rootGraph.configure(e)`),
+ * 延迟清空会落在**紧接着的真实加载之后**, 把用户刚点开的工作流清成空图。
+ *
+ * 清空方式与前端 `app.clean()` 内部保持一致(`rootGraph.clear()`), 但**不调 `app.clean()` 本身**:
+ * 它会额外 `resetAllOutputsAndPreviews()`(抹掉所有节点的预览缓存)与 `setActiveGraph(null)`,
+ * 在前端正在关闭工作流的中途调用容易与后续的 activateLoadedWorkflow 抢状态。这里只清根图,
+ * 并 `setDirtyCanvas(true, true)` 让 LiteGraph 立刻重绘画布。
+ *
+ * @returns {boolean} 确实执行了清空返回 true
+ */
+function clearCanvasNow() {
+  try {
+    const g = app?.rootGraph;
+    if (!g || typeof g.clear !== 'function') {
+      console.warn(LOG, '清空画布跳过: rootGraph 不可用');
+      return false;
+    }
+    const before = g._nodes?.length ?? 0;
+    g.clear();
+    // 重绘: `setDirtyCanvas` 挂在 **graph** 上(不是 canvas 上), 前端自己的用法见
+    // GraphView 里的 `node.graph?.setDirtyCanvas(!0,!0)`, 两个实参分别是"清背景/清前景缓存"。
+    try {
+      g.setDirtyCanvas?.(true, true);
+    } catch (e) {
+      console.warn(LOG, 'graph.setDirtyCanvas 失败(不影响清空)', e);
+    }
+    console.log(LOG, `画布已清空(移除 ${before} 个节点)`);
+    return true;
+  } catch (e) {
+    console.warn(LOG, '清空画布失败', e);
+    return false;
+  }
+}
+
+/**
+ * 包装 workflow store 的 `closeWorkflow`, 在**它自己关完之后**判断"是不是一个都不剩了",
+ * 是则回收悬空的 activeWorkflow 并清空画布。
+ *
+ * 为什么不在 loadGraphData 拦截点清(原实现的写法):
+ *   拦截点只说明"上游正要塞默认图", 而 store 里那个工作流**还没被摘掉**
+ *   (`t.closeWorkflow(e)` 是上游函数的最后一步)。那一刻清画布虽然能让 canvas 变空, 但
+ *   ① 关闭可能被用户取消(弹窗里选「取消」), 此时清空就是误伤;
+ *   ② 与上游后半段的 removeDraft / discardPreviewsForWorkflow 交错, 状态机不干净。
+ * 包在 store 层就没有这些问题: 走到这里说明**关闭已经成功**, openWorkflows 是最终状态。
+ *
+ * @returns {boolean} 已安装返回 true(store 未就绪则 false, 由调用方重试)
+ */
+function installCloseWorkflowHook() {
+  const ws = workflowStore();
+  if (!ws || typeof ws.closeWorkflow !== 'function') return false;
+  if (closeHookInstalled.has(ws)) return true;
+  if (isDisabledByQuery()) return false;
+
+  const original = ws.closeWorkflow;
+  ws.closeWorkflow = async function (...args) {
+    const result = await original.apply(this, args);
+    try {
+      // 关闭失败(用户取消 / 脏文件未保存) → 什么都不做, 保持原样
+      if (result === false) return result;
+      const open = this.openWorkflows ?? [];
+      if (open.length === 0) {
+        if (OPTIONS.clearCanvasOnClose) clearCanvasNow();
+        reapDetachedActiveWorkflow();
+      }
+    } catch (e) {
+      console.warn(LOG, '关闭后收尾失败', e);
+    }
+    return result;
+  };
+
+  closeHookInstalled.add(ws);
+  console.log(LOG, 'closeWorkflow 钩子已就位(关闭最后一个工作流时清空画布)');
+  return true;
+}
+
+/**
  * 拦截"自动打开工作流", 换成"保持不打开任何工作流"。
  *
- * ⚠️ 关键约束(2026-10-24 实测): 这里**绝不能调用 `app.clean()`**(旧版 `blankCanvas()` 就是
- * 它), 也不能再走一次 `loadGraphData(BLANK_GRAPH, true, ...)`。原因是前端 1.55.18 的
- * `loadGraphData` 开头有一段:
- *
- *     t && (this.canvas.setGraph(this.rootGraph), this.clean())
- *
- * `clean()` 会 `this.rootGraph.clear()` —— 清的是**同一个 rootGraph 对象**(新版不再新建图,
- * 而是原地 `rootGraph.configure(e)` 复用)。而本拦截发生在关闭/启动链路里, 与紧接着的真实
- * 加载**共用同一条 async 队列**, 于是清空动作落在真实加载之后 ⇒ 用户点开的工作流被清成空图,
- * 表现为「画布空白 / 节点数 0 / 连线全没」。
- *
- * 因此现在的做法是**只做状态回收, 一律不碰画布**:
- *   - startup: 直接不加载。启动时画布本来就是空的(根图无节点), 无需再清;
- *   - close-last: 什么都不加载。关闭方(`closeWorkflow`)自己会把活动工作流从
- *     `openWorkflows` 里摘掉, 这里只需在之后把悬空的 `activeWorkflow` 置空。
- * 画布的最终内容由下一次真实加载决定, 本扩展不再产生任何中间态。
+ * 本函数**只负责拦加载**, 不产生任何副作用: 不新建标签、不加载任何图、不碰画布。
+ * "关闭后清空画布 / 把悬空 activeWorkflow 置空"由 `installCloseWorkflowHook` 在
+ * store 层完成 —— 那里能确定关闭已经成功, 且 openWorkflows 是最终状态。
  *
  * @param {string} kind classifyAutoOpen 的判定结果
  * @returns {Promise<void>} 与原调用同样可 await
  */
 function suppressAutoOpen(kind) {
-  // 两种情形都不加载任何东西: 不新建标签、不刷新画布、不改 rootGraph。
-  if (kind === 'close-last') {
-    // 关闭链路后续还要摘活动标签/清预览, 用一次性兜底把悬空的 activeWorkflow 置空
-    setTimeout(reapDetachedActiveWorkflow, 0);
-    setTimeout(reapDetachedActiveWorkflow, 120);
-  }
+  // 只拦"加载", 不做任何收尾动作 —— 清画布与置空 activeWorkflow 都归 installCloseWorkflowHook
+  // (它挂在 store.closeWorkflow 上, 在关闭真正成功后执行, 时序确定; 见该函数的注释)。
+  // 这里若也清一次, 关闭被用户取消时会误伤, 故一律不碰。
   return Promise.resolve();
 }
 
@@ -345,7 +431,8 @@ app.registerExtension({
   name: 'ComfyDesktop.NoAutoWorkflow',
 
   /**
-   * 扩展初始化钩子: 接管 loadGraphData, 并轮询等 #vue-app 挂出来后给 removeDraft 挂前哨。
+   * 扩展初始化钩子: 接管 loadGraphData, 并轮询等 #vue-app 与 workflow store 挂出来后
+   * 分别给 getMostRecentWorkflow(识别关闭时机) 与 closeWorkflow(关闭后清画布) 挂钩子。
    *
    * @returns {void}
    */
@@ -354,7 +441,11 @@ app.registerExtension({
 
     let tries = 0;
     const timer = setInterval(() => {
-      if (installCloseSentinel() || ++tries > 240) clearInterval(timer);
+      // 两个钩子都要装: 前哨负责"让拦截生效", closeWorkflow 钩子负责"关闭后清空画布"。
+      // 用 & 而非 || 保证同一次轮询里两个都试一遍, store 未就绪则下轮重试。
+      const sentinel = installCloseSentinel();
+      const closeHook = installCloseWorkflowHook();
+      if ((sentinel && closeHook) || ++tries > 240) clearInterval(timer);
     }, 50);
   },
 });
