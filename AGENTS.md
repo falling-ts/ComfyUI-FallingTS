@@ -6,7 +6,7 @@
 
 ```
 ComfyUI-FallingTS/
-├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 23 节点) + V3 ComfyExtension (DesktopPluginsExtension)
+├── plugin.py                   # 插件入口:V1 节点注册表 (NODE_CLASS_MAPPINGS, 24 节点) + V3 ComfyExtension (DesktopPluginsExtension)
 ├── __init__.py                 # 包初始化
 ├── numbered_subdirs.py         # 让文件列表/LoadImage 下拉/预览取到"数字开头子目录"里的文件
 ├── output_subdir.py            # 产物子目录名解析: 优先用工作流的 md 表文件名, 没有 md 表才用工作流名
@@ -43,6 +43,9 @@ ComfyUI-FallingTS/
 │   ├── __init__.py
 │   ├── nodes.py                # FallingTSMarkDownTableNode MarkDown 数据表
 │   └── parser.py               # 表格解析
+├── note/
+│   ├── __init__.py
+│   └── nodes.py                # FallingTSNoteNode (节点 id `FallingTSNote`) 笔记节点: 官方 Markdown Note 的可复制版。**后端只声明空壳**(无输入无输出, execute 返回 {}) —— 文本控件由前端 `web/js/note.js` 用 `ComfyWidgets.MARKDOWN` 现场加(与官方 `MarkdownNoteNode` 同一套 tiptap 渲染), 前端同时设 `isVirtualNode = true` ⇒ `graphToPrompt()` 的 `if (e.isVirtualNode) continue` 跳过它, **不进 prompt、不执行**(行为与官方 Note 一致)。反过来在后端注册是为了 `/object_info` 有定义 ⇒ 节点面板能搜到、工作流存给别人不报"缺失节点"(纯前端注册的节点只能在画布右键的 LiteGraph 搜索里找到)。⚠️ 后端**故意不声明 text 控件**: 后端只能给普通 STRING(纯文本框), 拿不到官方那套 markdown 渲染
 ├── fps/
 │   └── nodes.py                # FallingTSFrameRateConvertNode 帧率转换 (按目标帧率抽帧, 目标帧率未连接/None 原样透传)
 ├── composite/
@@ -96,6 +99,7 @@ ComfyUI-FallingTS/
         ├── load_combo_refresh.js        # 两个加载节点共用: combo 候选"点开即最新" —— 前端只在 ① NodeDef 注册 ② 点 refresh 按钮 ③ 跑完流程的 Auto-refresh 这三个时机拉候选, **"点开下拉"这一下不拉**(弹窗的 handleIsOpenUpdate 只刷新「已保存」那份资产列表), 于是新出现的子目录/文件必须手动点一次刷新才进列表(用户反馈的"第一次点开不显示子目录资源"); 本模块补上 节点创建后 / 在节点上按下鼠标 / 每 4 秒(页面可见时) 三个时机调 widget.refresh()。前提: remote 不设 control_after_refresh ⇒ 刷新只换候选、绝不改写已选值
         ├── load_image.js               # FallingTSLoadImage: 序列号(后端 /fallingts_load_image/next_sequence 按当前工作流名解析目录) + 「刷新序列号」按钮(两拍重排到 remote 追加的 Auto-refresh/refresh/upload 之后) + armComboRefresh(node,"image") + 短守护 —— 刷新改值已由后端不设 control_after_refresh 根治; 上游 onFirstLoad 在节点首次加载时仍会无条件把 image 值设成候选首项(候选按 mtime 倒序), 本扩展在 onConfigure 后 4 秒内只在"值被换成候选首项"时恢复成工作流存的值
         ├── md_table.js                 # MarkDown 数据表前端 (选文件/内嵌表格弹窗)
+        ├── note.js                     # FallingTSNote 前端: ① 用 `ComfyWidgets.MARKDOWN` 加官方同款 tiptap 渲染的文本控件(后端声明不了), 并把节点置 `isVirtualNode = true` ⇒ 不进 prompt; 官方同款柠檬黄配色; ② **右上角复制按钮** —— 把整段 markdown **原文**复制到**浏览器所在电脑**的剪贴板。⚠️ 三条硬结论(都实测过): (a) **必须 DOM 注入, 不能 canvas 绘制** —— 本机开了 Vue 节点渲染, `onDrawForeground` 实测调用 **0 次**, 节点是 `div[data-node-id]` 而非画布方块(canvas 绘制代码保留作关掉 Vue 时的回退); (b) 插入点是 `.lg-node-header .justify-between` —— 该行实测只有左侧一个带 `mr-auto` 的子元素(折叠按钮+标题), 追加第二个即自动靠右, 正是右上角; (c) 按钮**必须 `position:relative + z-index`** —— 节点四角各有一个透明 `opacity-0; pointer-events-auto` 的 20×20 缩放把手, 右上角那个正好压在标题栏右端, 同层级下后出现的赢 ⇒ 不抬层级的话真实鼠标点击全被把手吃掉(而程序化 `btn.click()` 走不到命中测试, 看起来是好的)。另: `pointerdown` 要 `stopPropagation + preventDefault`(标题栏是节点拖拽启动区, 不拦会把节点拖走); Vue 重渲染会丢按钮 ⇒ 用 MutationObserver 幂等补注入; 剪贴板 `navigator.clipboard` **只在 secure context 存在**(localhost/https), 局域网 `http://192.168.100.4:8188` **没有** ⇒ 必须留 `document.execCommand('copy')` 回退(textarea 不能在视口内, 也不能 `display:none`, 否则选不中)
         ├── media_lightbox_zoom.js      # 全屏预览缩放 (滚轮/拖拽/双击/快捷键)
         ├── node_image_middleclick.js   # 节点中键 → 全屏大图预览
         ├── preview-image.js            # PreviewImageSave 底部控件 + 保存按钮
@@ -134,6 +138,7 @@ ComfyUI-FallingTS/
 | table | FallingTSTable | 通用表格 (Excel 式; rows=None 如未连接 → 输出本节点最近一次输出行(sticky), 从未输出则回退默认表) |
 | switch | FallingTSSwitch | 分组开关 (total组)。⚠️ **`total` 必须等于真正接好线的组数**: 第 i 组没连线时 `kwargs.get("false_i")` 取到 None(引擎不传未连接的 optional 输入), 若这一路输出还接着 KSampler 的 `cfg`/`denoise` 这类必填数值, 下游就在 `math.isclose(cond_scale, 1.0)` 处以 `TypeError: must be real number, not NoneType` 崩掉 —— 报错完全看不出是开关的问题。2026-09-22 实测 `00110_万物建模2.1` / `00200_场景首帧2.1` 的「编辑 4步/40步 切换」正是 total=4 而第 4 组(cfg)悬空。**改 total 后逐组确认 `为假时i`/`为真时i` 都已连线**; 只用 3 组就别把 total 留成 4。一次性排查可用 stdin 就地脚本比对 `total` 与实际连线数 |
 | mdtable | FallingTSMarkDownTable | MarkDown 数据表 (data=None 如未连接 → 输出本节点最近一次输出(sticky), 从未输出则回退默认状态) |
+| note | FallingTSNote | **笔记 (官方 Markdown Note 的可复制版)**。官方 `Note`/`MarkdownNote` 是**纯前端虚拟节点**(前端 core 里 `LiteGraph.registerNodeType`, 不进 `/object_info`), 带 `isVirtualNode = true` ⇒ `graphToPrompt()` 的 `if (e.isVirtualNode) continue` 跳过它, 不进 prompt。本节点照抄这个行为, 但**后端也注册一份**(`/object_info` 有定义 ⇒ 节点面板能搜到、存档不报"缺失节点"; 纯前端注册的只能在画布右键的 LiteGraph 搜索找到): 后端类**只有空壳**(`INPUT_TYPES` 返回空的 required/optional, `RETURN_TYPES = ()`, `execute` 返回 `{}` 兜底), 文本控件由前端 `ComfyWidgets.MARKDOWN` 现场添加 —— 后端声明不了 MARKDOWN, 只能给普通 STRING。前端再把 `isVirtualNode` 置真并与官方 Note 同款柠檬黄配色。**右上角复制按钮**: 点一下把**整段 markdown 原文**(不是渲染后的富文本)写进**浏览器所在电脑**的剪贴板(= 访问服务的那台, 不是服务器), 剪贴板两条通道见 `web/js/note.js`。⚠️ 该节点**必须在前端把 `isVirtualNode` 置真** —— 否则空壳节点会被当成真节点提交, 详见 `web/js/note.js` 顶部注释 |
 | fps | FallingTSFrameRateConvert | 帧率转换 (图像序列按目标帧率抽帧: 步长 = max(1, round(source_fps/target_fps)), 每 stride 帧保留 1 帧, stride=1 原样透传; 目标帧率未连接/None 时原样透传不抽帧; **images=None → 输出本节点最近一次抽帧结果(sticky), 从未处理则透传 None**; 音频不动, 配合 CreateVideo 的 fps 参数输出) |
 | composite | FallingTSImageComposite | 多图合成 (total 驱动: total 最少 1 不设上限 默认 4 (端口口径 64), 左侧只有 image1..imageN 图端口, 标注是节点内 label1..labelN 表单文本框 (按 total 自动扩充), **前端按 total 动态增删 image_i 图端口、扩充 label_i 标注表单文本框 (未启用的图端口/文本框不进提交载荷)**, 与 switch/route/fanout/selector 同套机制; 图 image1..64 (optional, 未连接/None = 该格用底色空白占位, **total 图全空 → 输出本节点最近一次合成结果(sticky), 从未合成则输出 None**) + label1..64 (节点内表单文本框, widget 默认空串 = 不画, 值为 None 时才回退默认标注 前面/右面/后面/左面/上面/下面/近处/远处); 网格列数 = ceil(sqrt(total)) 行优先填充 (total=4 → 2×2, 与旧版布局一致), 统一尺寸 (取最大高宽), 每张子图左上角 CJK 白字黑描边标注, 合成单张图; 字号/间距/底色 None=默认 8/6/#000000, 底色非法值回退黑色; **`match_input_size`**(BOOLEAN, 默认 False) 排在 `background_color` 之后、`label1` 之前 —— **不能挪到标注之后**, 因为 `widgets_values` 按位置套用而 label 数量随 total 变化, 挪过去会整体错位; False = 输出合并后的完整尺寸 (如 8 张 1920×1088 → 5784×3288 ≈ 218MB), True = 网格拼完整张缩放到**第一张有值输入图的尺寸** (image1 优先, 未连接则取其后的第一张; 5784×3288 → 1920×1088 ≈ 24MB); 标注随整张同比缩小, 做缩略图时 font_size 需相应调大) |
 | load-image | FallingTSLoadImage | 加载图像 (来自输出): 内置 \`LoadImageOutput\` 的超集。① **下拉候选由自身路由 \`GET /fallingts_load_image/files\` 提供** —— 内置 \`/internal/files/output\` 用 \`os.scandir\` 只列 output 根一层, 而本工作区产物全落在数字目录(\`0010_灰度遮罩/\`、\`0011_万物建模/\` …)里 ⇒ 内置节点的下拉在本机基本是空的; 本路由按「媒体资产」侧栏同一口径扫描: output 根图片 + **数字目录(\`^\d+_\`)内部整棵子树的图片**(数字目录外如 \`clipspace/\` 不收, 隐藏文件/非图片不收), 按 mtime 倒序, 值形如 \`0010_灰度遮罩/00001_手部.png\`(**不带 " [output]" 标注** —— 前端给候选算预览图时一律拼 type=input 且不剥离标注, 带标注会让 /api/view 404; 本节点 \`load_image\`/\`IS_CHANGED\`/\`VALIDATE_INPUTS\` 用 \`default_dir=output\` 解析, 带标注的值仍按标注走), 前端 remote 组件直接当 \`widget.options.values\` 用(即弹窗「已导入/已保存」与「全部」两个分类的内容)。② **「名称」输入框排在 image 下拉之前** —— 内置刷新按钮由 remote 组件在 combo 之后 \`addWidget('button','refresh',...)\` 追加, 故名称框天然落在刷新按钮上方; 遮罩编辑器保存时前端把它带给 \`POST /fallingts_mask/rename\`, 成品按 \`0010_灰度遮罩/0000N_名称.png\` 落盘(编号 = 目录里已有 5 位编号最大值 + 1, 撞号顺延到下一个空号); 名称留空则退回旧口径(前端 base > 预览缓存 filename_prefix > \`mask-{ts}\`)。③ \`load_image\` / \`IS_CHANGED\` / \`VALIDATE_INPUTS\` 与内置 \`LoadImage\` 同一实现(视频/动图序列 + PIL 回退), 输出 IMAGE/MASK。④ remote **不设 `control_after_refresh`** —— 刷新按钮与跑完自动刷新只重新拉候选列表, 不再把已选值换成候选首项(内置 `LoadImageOutput` 设 `"first"`, 而候选按 mtime 倒序 ⇒ 刚保存的产物必然夺走选中权); 首次加载时上游 `onFirstLoad` 仍会无条件改值, 由前端 `web/js/load_image.js` 短守护(4s, 只认"被换成候选首项"这一种覆盖)恢复成存档值。⑤ **「序列号」+「刷新序列号」**(2026-10-02 加, 与「加载视频」同一套) —— 编号 = `output/<当前工作流名目录>/` 里已有 `数字_` 命名**文件**的最大编号 + 1(目录不存在/没有编号文件为 1, 显示成 5 位 `00001`), 可手改、按钮随时重算; 目录口径走共用的 `output_subdir`(有 md 数据表用表文件名, 没有才用工作流名), 路由 `GET /fallingts_load_image/next_sequence`。⚠️ 序列号排在 image **之后**且声明为 **optional**: V1 节点按 `widgets_values` 的**下标**恢复旧工作流, 插在中间会让老工作流的 image 值整体错位; optional 保证无头 API 不带该输入也能跑。⑥ **下拉候选在 `INPUT_TYPES` 里也现扫一份 `options`**(每次 `/object_info` 都重扫, 与 V3 的 `define_schema` 同口径) ⇒ 页面加载/新建节点时列表就已完整; 再配合前端 `load_combo_refresh.js`(节点创建 / 按下鼠标 / 每 4 秒 三个时机拉 remote) 彻底消除"第一次点开不显示子目录资源"。⑦ **prefix 输出**(2026-10-07, 输出 2 排在 IMAGE/MASK 之后): `<序列号>_<名称>`(口径同「加载视频」的 prefix, 取自 `output_subdir.sequence_prefix`), 接各保存节点的 `filename_prefix` —— 拆图这类工作流因此不必手输文件名前缀(`0016_建模拆图`); 改动后**必须重启 ComfyUI**(老实例 `/object_info` 仍报 2 个输出) |
@@ -169,7 +174,7 @@ ComfyUI-FallingTS/
 
 ⚠️ **V3 节点的 hidden 不进 `execute` 实参** —— `execution.py` 的 `get_finalized_class_inputs` 把 hidden 单独摘出,只能经 `cls.hidden.<name>` 取(`HiddenHolder.__getattr__` 对未知键返回 None)。所以 `preview-video` / `preview-audio` 的 `execute` 里**不能**写 `prompt=None` 形参(写了恒为 None, 静默失效),prompt 一律从 `cls.hidden.prompt` 读;`preview-image` 是 V1 节点(`"hidden": {"prompt": "PROMPT"}`),prompt 才是真正的 execute 实参。**加/改任何依赖 hidden 的 V3 节点逻辑前先确认这一点。**
 
-### None 容忍约定(全部 23 节点)
+### None 容忍约定(全部 24 节点)
 
 所有节点的 `execute` 输入均为 **None 容忍**:可选输入未连接时 ComfyUI 引擎不传该参数(靠函数默认值兜底),传参为 None 时走安全回退,**绝不崩溃**。
 
@@ -188,7 +193,7 @@ ComfyUI-FallingTS/
 - **世界模型 —— 360 视频/全景源**(world-panorama 两节点):`video`+`images` 全空 → `panorama=None`;`panorama=None` → `images/extrinsics/intrinsics` 全 None;**故意不做 sticky** —— 回放上一次的长图/视角会把另一段视频的世界模型张冠李戴(与 video-components 同一条理由);`WorldRefinePLY` 则相反: 它是**输出类**节点, `images=None` 时回放**上次产出的 PLY 路径**(无产出则空串, 下游视口显示 not found 不崩), 这样单独点视口节点不会把整条重建链拉回来重跑;
 - **继续类**(proceed):`any` 为 None(未拉取上游)时**不清 `_data_cache`**、不覆盖 `widgets_values`/`proceedState` 等节点数据——None 只表示"本次没有数据",不等于"清空"。`IS_CHANGED` 含 `_reset_generation`(每次 `/proceed/reset` 递增)+ 是否已放行 → 每次 Run 后继续节点必重新执行(重拉上游填 `_data_cache`),不被 ComfyUI 全局执行缓存跳过(否则同进程重跑同图时「继续」400「没有上游数据」)。
 
-### 前端状态与后端同步约定(全部 23 节点)
+### 前端状态与后端同步约定(全部 24 节点)
 
 **核心原则: 后端是唯一事实来源。前端页面加载/刷新后一律"从后端读回并重建", 绝不在加载时清后端状态。**
 

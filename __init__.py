@@ -24,6 +24,7 @@ from table.nodes import FallingTSTableNode
 from switch.nodes import FallingTSSwitchNode
 from route.nodes import FallingTSRouteNode
 from mdtable.nodes import FallingTSMarkDownTableNode
+from note.nodes import FallingTSNoteNode
 
 # run-group 目录名含连字符, 不能写 `from run-group.nodes import`, 需经 importlib 按名加载
 RunGroupNode = import_module("run-group.nodes").FallingTSRunGroupNode
@@ -61,6 +62,7 @@ __all__ = [
     "FallingTSTableNode",
     "FallingTSSwitchNode",
     "FallingTSMarkDownTableNode",
+    "FallingTSNoteNode",
     "PreviewVideoNode",
     "PreviewImageSaveNode",
     "LoadImageNode",

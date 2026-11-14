@@ -21,6 +21,7 @@ from switch.nodes import FallingTSSwitchNode
 from route.nodes import FallingTSRouteNode
 from fanout.nodes import FallingTSFanoutNode
 from mdtable.nodes import FallingTSMarkDownTableNode
+from note.nodes import FallingTSNoteNode
 from fps.nodes import FallingTSFrameRateConvertNode
 from composite.nodes import FallingTSImageCompositeNode
 # load-image 目录名含连字符, 需经 importlib 按名加载(加载图像: 来自输出 + 数字目录下拉 + 名称输入框)
@@ -72,6 +73,7 @@ NODE_CLASS_MAPPINGS: dict[str, type[IO.ComfyNode]] = {
     "FallingTSTable": FallingTSTableNode,
     "FallingTSSwitch": FallingTSSwitchNode,
     "FallingTSMarkDownTable": FallingTSMarkDownTableNode,
+    "FallingTSNote": FallingTSNoteNode,
     "FallingTSFrameRateConvert": FallingTSFrameRateConvertNode,
     "FallingTSImageComposite": FallingTSImageCompositeNode,
     "FallingTSLoadImage": LoadImageNode,
@@ -98,6 +100,7 @@ NODE_DISPLAY_NAME_MAPPINGS: dict[str, str] = {
     "FallingTSRoute": "FallingTS 路由节点 (total组)",
     "FallingTSFanout": "FallingTS 扇出选择 (total组)",
     "FallingTSMarkDownTable": "FallingTS MarkDown 数据表",
+    "FallingTSNote": "FallingTS 笔记 (Markdown 可复制)",
     "FallingTSFrameRateConvert": "FallingTS 帧率转换 (抽帧)",
     "FallingTSImageComposite": "FallingTS 四图合成 (2×2 带标注)",
     "FallingTSLoadImage": "FallingTS 加载图像 (来自输出)",
